@@ -22,6 +22,40 @@ interface AttachmentDao {
     @Query(
         """
         SELECT * FROM attachments
+        WHERE parent_item_id = :itemId AND sha256_checksum = :checksum
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+        """,
+    )
+    suspend fun findForItemByChecksum(itemId: String, checksum: String): AttachmentEntity?
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM attachments
+        WHERE local_encrypted_path = :localRelativePath
+           OR (:thumbnailRelativePath IS NOT NULL AND thumbnail_path = :thumbnailRelativePath)
+        """,
+    )
+    suspend fun countPathReferences(
+        localRelativePath: String,
+        thumbnailRelativePath: String?,
+    ): Int
+
+    @Query(
+        """
+        SELECT group_concat(original_filename, char(10))
+        FROM (
+            SELECT original_filename FROM attachments
+            WHERE parent_item_id = :itemId
+            ORDER BY created_at ASC, id ASC
+        )
+        """,
+    )
+    suspend fun getSearchableFilenames(itemId: String): String?
+
+    @Query(
+        """
+        SELECT * FROM attachments
         WHERE parent_item_id = :itemId
         ORDER BY created_at ASC, id ASC
         """,

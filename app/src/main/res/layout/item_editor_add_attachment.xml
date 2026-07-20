@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="@dimen/editor_attachment_card_width"
+    android:layout_height="match_parent"
+    android:layout_marginEnd="@dimen/space_s"
+    android:clickable="true"
+    android:contentDescription="@string/add_attachment"
+    android:focusable="true"
+    android:minWidth="@dimen/touch_target"
+    android:minHeight="@dimen/touch_target"
+    app:cardBackgroundColor="@color/vault_surface_variant"
+    app:cardCornerRadius="12dp"
+    app:cardElevation="0dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:drawablePadding="@dimen/space_xs"
+        android:gravity="center"
+        android:importantForAccessibility="no"
+        android:maxLines="1"
+        android:padding="@dimen/space_m"
+        android:text="@string/add_attachment_short"
+        android:textAppearance="?attr/textAppearanceLabelMedium"
+        app:drawableTint="@color/vault_on_surface_variant"
+        app:drawableTopCompat="@drawable/ic_add_attachment" />
+
+</com.google.android.material.card.MaterialCardView>

@@ -1,5 +1,7 @@
 package com.vaultnote.core.common.model
 
+import java.io.File
+
 enum class VaultItemType {
     NOTE,
     DOCUMENT,
@@ -51,6 +53,39 @@ enum class SyncOperationState {
 data class VaultTag(
     val id: String,
     val name: String,
+)
+
+data class VaultAttachment(
+    val id: String,
+    val parentItemId: String,
+    val displayName: String,
+    val mimeType: String,
+    val fileSizeBytes: Long,
+    val imageWidth: Int?,
+    val imageHeight: Int?,
+    val pdfPageCount: Int?,
+    val sha256Checksum: String,
+    val remotePath: String?,
+    val thumbnailFile: File?,
+    val encryptionFormatVersion: Int,
+    val uploadStatus: AttachmentUploadStatus,
+    val createdAtEpochMillis: Long,
+    val ocrState: OcrState,
+)
+
+data class AttachmentImportResult(
+    val attachment: VaultAttachment,
+    val wasDuplicate: Boolean,
+)
+
+data class AttachmentDeleteResult(
+    val cleanupPending: Boolean,
+    val syncDelayed: Boolean,
+)
+
+data class OpenableAttachment(
+    val attachment: VaultAttachment,
+    val contentFile: File,
 )
 
 data class VaultItemSummary(

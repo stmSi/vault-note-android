@@ -86,7 +86,7 @@
         android:layout_marginEnd="@dimen/space_m"
         android:hint="@string/note_body_hint"
         app:boxBackgroundMode="none"
-        app:layout_constraintBottom_toTopOf="@id/tags_container"
+        app:layout_constraintBottom_toTopOf="@id/attachments_section"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/title_container">
@@ -101,6 +101,62 @@
             android:saveEnabled="false"
             android:scrollbars="vertical" />
     </com.google.android.material.textfield.TextInputLayout>
+
+    <LinearLayout
+        android:id="@+id/attachments_section"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/tags_container"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="@dimen/space_m"
+            android:paddingEnd="@dimen/space_m">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/attachments"
+                android:textAppearance="?attr/textAppearanceTitleSmall" />
+
+            <ProgressBar
+                android:id="@+id/attachments_loading"
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:contentDescription="@string/loading_attachments" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/attachments_retry"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/touch_target"
+                android:text="@string/retry"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/attachments_list"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/editor_attachment_list_height"
+            android:clipToPadding="false"
+            android:contentDescription="@string/attachments"
+            android:orientation="horizontal"
+            android:overScrollMode="ifContentScrolls"
+            android:paddingStart="@dimen/space_m"
+            android:paddingTop="@dimen/space_s"
+            android:paddingEnd="@dimen/space_s"
+            android:paddingBottom="@dimen/space_s"
+            app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager" />
+    </LinearLayout>
 
     <com.google.android.material.textfield.TextInputLayout
         android:id="@+id/tags_container"

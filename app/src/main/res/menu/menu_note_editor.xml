@@ -12,6 +12,11 @@
         android:title="@string/favorite_note"
         app:showAsAction="ifRoom" />
     <item
+        android:id="@+id/action_add_attachment"
+        android:icon="@drawable/ic_add_attachment"
+        android:title="@string/add_attachment"
+        app:showAsAction="ifRoom" />
+    <item
         android:id="@+id/action_archive"
         android:icon="@drawable/ic_archive"
         android:title="@string/archive_note"

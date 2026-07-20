@@ -37,6 +37,12 @@ data class AttachmentEntity(
     val mimeType: String,
     @ColumnInfo(name = "file_size")
     val fileSize: Long,
+    @ColumnInfo(name = "image_width")
+    val imageWidth: Int?,
+    @ColumnInfo(name = "image_height")
+    val imageHeight: Int?,
+    @ColumnInfo(name = "pdf_page_count")
+    val pdfPageCount: Int?,
     @ColumnInfo(name = "sha256_checksum")
     val sha256Checksum: String,
     @ColumnInfo(name = "local_encrypted_path")

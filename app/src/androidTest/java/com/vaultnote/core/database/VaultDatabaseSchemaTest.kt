@@ -1,7 +1,6 @@
 package com.vaultnote.core.database
 
 import android.content.Context
-import androidx.room.Room
 import androidx.room.testing.MigrationTestHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
@@ -31,8 +30,8 @@ class VaultDatabaseSchemaTest {
     }
 
     @Test
-    fun versionOneExportCreatesAndValidatesCurrentSchema() {
-        migrationHelper.createDatabase(TEST_DATABASE_NAME, VaultDatabase.SCHEMA_VERSION).use { db ->
+    fun versionOneDataMigratesToVersionTwo() {
+        migrationHelper.createDatabase(TEST_DATABASE_NAME, 1).use { db ->
             db.execSQL(
                 """
                 INSERT INTO vault_items (
@@ -42,25 +41,105 @@ class VaultDatabaseSchemaTest {
                     conflict_origin_id
                 ) VALUES (
                     'item-1', 'NOTE', 'Schema fixture', 'Body', '', 0, 0, 0,
-                    1, 1, 1, NULL, NULL, NULL, 'PENDING', NULL, NULL
+                    1, 9, 7, 5, 4, 'server-v5', 'PENDING', 11, NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                INSERT INTO attachments (
+                    id, parent_item_id, original_filename, mime_type, file_size,
+                    sha256_checksum, local_encrypted_path, remote_path, thumbnail_path,
+                    encryption_format_version, upload_status, created_at, ocr_state,
+                    extracted_ocr_text, ocr_source_checksum, ocr_failure_code, ocr_updated_at
+                ) VALUES (
+                    'attachment-1', 'item-1', 'paper.pdf', 'application/pdf', 1234,
+                    'fixture-checksum', 'attachments/attachment-1.bin', NULL, NULL,
+                    1, 'PENDING', 2, 'NOT_APPLICABLE', '', NULL, NULL, NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                INSERT INTO search_documents (
+                    rowid, item_id, title, body, tags, attachment_filenames, ocr_text
+                ) VALUES (
+                    41, 'item-1', 'Schema fixture', 'Body', 'kept-tag', 'paper.pdf', ''
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                INSERT INTO sync_operations (
+                    operation_id, dedupe_key, item_id, attachment_id, operation_type,
+                    target_revision, state, attempt_count, next_attempt_at, lease_token,
+                    lease_expires_at, created_at, updated_at, last_error_code
+                ) VALUES (
+                    'operation-1', 'item:item-1', 'item-1', NULL, 'DELETE_ITEM',
+                    7, 'PENDING', 0, 10, NULL, NULL, 10, 10, NULL
                 )
                 """.trimIndent(),
             )
         }
 
-        val database = Room.databaseBuilder(context, VaultDatabase::class.java, TEST_DATABASE_NAME)
-            .addMigrations(*VaultDatabase.ALL_MIGRATIONS)
-            .build()
-        try {
-            val cursor = database.openHelper.readableDatabase.query(
-                "SELECT title FROM vault_items WHERE id = 'item-1'",
-            )
-            cursor.use {
-                assertEquals(true, it.moveToFirst())
-                assertEquals("Schema fixture", it.getString(0))
+        migrationHelper.runMigrationsAndValidate(
+            TEST_DATABASE_NAME,
+            VaultDatabase.SCHEMA_VERSION,
+            true,
+            *VaultDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query(
+                """
+                SELECT original_filename, file_size, image_width, image_height, pdf_page_count
+                FROM attachments WHERE id = 'attachment-1'
+                """.trimIndent(),
+            ).use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals("paper.pdf", cursor.getString(0))
+                assertEquals(1234L, cursor.getLong(1))
+                assertEquals(true, cursor.isNull(2))
+                assertEquals(true, cursor.isNull(3))
+                assertEquals(true, cursor.isNull(4))
             }
-        } finally {
-            database.close()
+            db.query(
+                """
+                SELECT title, local_revision, remote_revision, last_synced_revision,
+                       server_version_token, deleted_at
+                FROM vault_items WHERE id = 'item-1'
+                """.trimIndent(),
+            ).use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals("Schema fixture", cursor.getString(0))
+                assertEquals(7L, cursor.getLong(1))
+                assertEquals(5L, cursor.getLong(2))
+                assertEquals(4L, cursor.getLong(3))
+                assertEquals("server-v5", cursor.getString(4))
+                assertEquals(11L, cursor.getLong(5))
+            }
+            db.query(
+                """
+                SELECT tags, attachment_filenames FROM search_documents
+                WHERE item_id = 'item-1'
+                """.trimIndent(),
+            ).use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals("kept-tag", cursor.getString(0))
+                assertEquals("paper.pdf", cursor.getString(1))
+            }
+            db.query(
+                """
+                SELECT operation_type, target_revision FROM sync_operations
+                WHERE dedupe_key = 'item:item-1'
+                """.trimIndent(),
+            ).use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals("DELETE_ITEM", cursor.getString(0))
+                assertEquals(7L, cursor.getLong(1))
+            }
+            db.query("SELECT COUNT(*) FROM attachment_file_cleanup_journal").use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+            }
         }
     }
 
