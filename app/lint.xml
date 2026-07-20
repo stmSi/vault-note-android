@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- AGP 9.2.1 and Gradle 9.4.1 are a patched, mutually tested pair. -->
+    <issue id="AndroidGradlePluginVersion" severity="ignore" />
+</lint>

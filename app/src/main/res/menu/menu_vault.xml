@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <group android:checkableBehavior="single">
+        <item
+            android:id="@+id/action_active_notes"
+            android:checkable="true"
+            android:checked="true"
+            android:title="@string/notes_title"
+            app:showAsAction="never" />
+        <item
+            android:id="@+id/action_archived_notes"
+            android:checkable="true"
+            android:title="@string/archived_title"
+            app:showAsAction="never" />
+        <item
+            android:id="@+id/action_trash"
+            android:checkable="true"
+            android:title="@string/trash_title"
+            app:showAsAction="never" />
+    </group>
+</menu>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="vault_primary">#315DA8</color>
+    <color name="vault_on_primary">#FFFFFF</color>
+    <color name="vault_primary_container">#D8E2FF</color>
+    <color name="vault_on_primary_container">#001A41</color>
+    <color name="vault_background">#F9F9FF</color>
+    <color name="vault_on_background">#191C20</color>
+    <color name="vault_surface">#F9F9FF</color>
+    <color name="vault_on_surface">#191C20</color>
+    <color name="vault_surface_variant">#E1E2EC</color>
+    <color name="vault_on_surface_variant">#44474F</color>
+    <color name="vault_error">#BA1A1A</color>
+    <color name="vault_on_error">#FFFFFF</color>
+    <color name="vault_outline">#757780</color>
+    <color name="vault_splash_background">#F9F9FF</color>
+</resources>

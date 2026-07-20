@@ -1,0 +1,12 @@
+.gradle/
+.kotlin/
+.idea/
+local.properties
+keystore.properties
+*.jks
+*.keystore
+**/build/
+captures/
+*.iml
+.DS_Store
+/VaultNote Development Plan.pdf
