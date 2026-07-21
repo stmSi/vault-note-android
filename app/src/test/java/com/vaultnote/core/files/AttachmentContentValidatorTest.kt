@@ -1,7 +1,10 @@
 package com.vaultnote.core.files
 
+import android.graphics.Bitmap
+import android.graphics.Color
 import com.vaultnote.core.common.AppError
 import com.vaultnote.core.common.RepositoryResult
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.util.zip.ZipEntry
@@ -65,6 +68,68 @@ class AttachmentContentValidatorTest {
     }
 
     @Test
+    fun `accepts a JPEG with Samsung-style motion photo data`() = runTest {
+        val file = temporaryFolder.newFile("motion-photo.jpg").apply {
+            writeBytes(
+                minimalJpeg() +
+                    byteArrayOf(0x00, 0x00, 0x30, 0x0A, 0x10, 0x00, 0x00, 0x00) +
+                    "MotionPhoto_Data".toByteArray(StandardCharsets.US_ASCII) +
+                    minimalMp4() +
+                    "SEFT".toByteArray(StandardCharsets.US_ASCII),
+            )
+        }
+
+        val result = validator.validateStored(file, file.name, "image/jpeg")
+
+        assertTrue(result is RepositoryResult.Success)
+        assertEquals(AttachmentFormat.JPEG, (result as RepositoryResult.Success).value.format)
+    }
+
+    @Test
+    fun `accepts an ordinary JPEG produced by Android`() = runTest {
+        val file = temporaryFolder.newFile("camera.jpg").apply { writeBytes(androidJpeg()) }
+
+        val result = validator.validateStored(file, file.name, "image/jpeg")
+
+        assertTrue(result is RepositoryResult.Success)
+    }
+
+    @Test
+    fun `accepts a JPEG with a standard appended motion photo video`() = runTest {
+        val file = temporaryFolder.newFile("standard-motion.jpg").apply {
+            writeBytes(androidJpeg() + minimalMp4())
+        }
+
+        val result = validator.validateStored(file, file.name, "image/jpeg")
+
+        assertTrue(result is RepositoryResult.Success)
+    }
+
+    @Test
+    fun `rejects arbitrary non-image data appended to a JPEG`() = runTest {
+        val file = temporaryFolder.newFile("unsafe.jpg").apply {
+            writeBytes(minimalJpeg() + "not an image payload".toByteArray(StandardCharsets.US_ASCII))
+        }
+
+        val result = validator.validateStored(file, file.name, "image/jpeg")
+
+        assertTrue(result is RepositoryResult.Failure)
+        assertEquals(AppError.CorruptedFile, (result as RepositoryResult.Failure).error)
+    }
+
+    @Test
+    fun `rejects a truncated JPEG scan`() = runTest {
+        val file = temporaryFolder.newFile("truncated.jpg").apply {
+            writeBytes(minimalJpeg().dropLast(2).toByteArray())
+        }
+
+        val result = validator.validateStored(file, file.name, "image/jpeg")
+
+        assertTrue(result is RepositoryResult.Failure)
+        assertEquals(AppError.CorruptedFile, (result as RepositoryResult.Failure).error)
+    }
+
+    @Test
     fun `rejects malformed JSON during authoritative validation`() = runTest {
         val file = temporaryFolder.newFile("invalid.json").apply {
             writeText("{\"valid\": true} trailing", StandardCharsets.UTF_8)
@@ -121,4 +186,65 @@ class AttachmentContentValidatorTest {
         write(contents.toByteArray(StandardCharsets.UTF_8))
         closeEntry()
     }
+
+    private fun minimalJpeg(): ByteArray = byteArrayOf(
+        0xFF.toByte(),
+        0xD8.toByte(),
+        0xFF.toByte(),
+        0xDA.toByte(),
+        0x00,
+        0x02,
+        0x01,
+        0x02,
+        0xFF.toByte(),
+        0x00,
+        0x03,
+        0xFF.toByte(),
+        0xD9.toByte(),
+    )
+
+    private fun androidJpeg(): ByteArray {
+        val bitmap = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(Color.BLUE)
+        }
+        return try {
+            ByteArrayOutputStream().use { output ->
+                assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output))
+                output.toByteArray()
+            }
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    private fun minimalMp4(): ByteArray = byteArrayOf(
+        0x00,
+        0x00,
+        0x00,
+        0x10,
+        0x66,
+        0x74,
+        0x79,
+        0x70,
+        0x69,
+        0x73,
+        0x6F,
+        0x6D,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x0C,
+        0x6D,
+        0x64,
+        0x61,
+        0x74,
+        0x01,
+        0x02,
+        0x03,
+        0x04,
+    )
 }

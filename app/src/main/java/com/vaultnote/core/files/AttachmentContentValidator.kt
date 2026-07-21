@@ -10,6 +10,7 @@ import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
+import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
@@ -81,7 +82,7 @@ internal class AttachmentContentValidator {
         }
 
         val valid = when (expected) {
-            AttachmentFormat.JPEG -> hasExactTailMarker(file, JPEG_END)
+            AttachmentFormat.JPEG -> hasValidJpeg(file, job)
             AttachmentFormat.PNG -> hasExactTailMarker(file, PNG_END)
             AttachmentFormat.GIF -> hasGifTrailer(file)
             AttachmentFormat.WEBP -> hasValidWebpLength(file, sample.bytes)
@@ -438,6 +439,107 @@ internal class AttachmentContentValidator {
     private fun hasExactTailMarker(file: File, marker: ByteArray): Boolean =
         readFileTail(file, TAIL_VALIDATION_BYTES)?.endsWith(marker) == true
 
+    private fun hasValidJpeg(file: File, job: Job?): Boolean {
+        // Preserve broad compatibility for ordinary JPEG, MPO, and gain-map files.
+        if (hasExactTailMarker(file, JPEG_END)) return true
+        val jpegLength = parsedJpegLength(file, job) ?: return false
+        val fileLength = file.length()
+        if (jpegLength == fileLength) return true
+        if (hasOnlyBenignJpegPadding(file, jpegLength, fileLength)) return true
+        return hasMotionPhotoPayload(file, jpegLength, job)
+    }
+
+    /**
+     * Parses JPEG markers through the end of the entropy-coded scan instead of searching for an
+     * FF-D9 byte pair inside metadata or compressed image data.
+     */
+    private fun parsedJpegLength(file: File, job: Job?): Long? {
+        return try {
+            cancellationChecking(file.inputStream().buffered(STREAM_BUFFER_BYTES), job).use { input ->
+                parseJpeg(PositionedInput(input))
+            }
+        } catch (_: IOException) {
+            null
+        } catch (_: SecurityException) {
+            null
+        }
+    }
+
+    private fun parseJpeg(source: PositionedInput): Long? {
+        if (source.readByte() != JPEG_MARKER_PREFIX || source.readByte() != JPEG_SOI_MARKER) {
+            return null
+        }
+        var inEntropyData = false
+        while (true) {
+            val marker = if (inEntropyData) {
+                source.readEntropyMarker()
+            } else {
+                source.readMarker()
+            } ?: return null
+            when {
+                marker == JPEG_EOI_MARKER -> return source.position
+                marker == JPEG_SOI_MARKER || marker == JPEG_STUFFED_BYTE -> return null
+                marker == JPEG_TEMPORARY_MARKER || marker in JPEG_RESTART_MARKERS -> Unit
+                else -> {
+                    val segmentLength = source.readUnsignedShort() ?: return null
+                    if (segmentLength < JPEG_SEGMENT_LENGTH_BYTES) return null
+                    if (!source.skipFully((segmentLength - JPEG_SEGMENT_LENGTH_BYTES).toLong())) {
+                        return null
+                    }
+                    inEntropyData = marker == JPEG_START_OF_SCAN_MARKER
+                }
+            }
+            if (marker != JPEG_START_OF_SCAN_MARKER && marker !in JPEG_RESTART_MARKERS) {
+                inEntropyData = false
+            }
+        }
+    }
+
+    private fun hasOnlyBenignJpegPadding(file: File, start: Long, end: Long): Boolean {
+        val length = end - start
+        if (length !in 1..MAX_BENIGN_JPEG_PADDING_BYTES.toLong()) return false
+        return try {
+            RandomAccessFile(file, "r").use { source ->
+                source.seek(start)
+                repeat(length.toInt()) {
+                    if (source.read() !in BENIGN_JPEG_PADDING_BYTES) return false
+                }
+                true
+            }
+        } catch (_: IOException) {
+            false
+        } catch (_: SecurityException) {
+            false
+        }
+    }
+
+    private fun hasMotionPhotoPayload(file: File, jpegEnd: Long, job: Job?): Boolean {
+        if (file.length() - jpegEnd < MINIMUM_MOTION_PHOTO_TRAILER_BYTES) return false
+        return try {
+            RandomAccessFile(file, "r").use { source ->
+                source.seek(jpegEnd)
+                val ftyp = StreamingMarker(FTYP_MARKER)
+                val mdat = StreamingMarker(MDAT_MARKER)
+                val buffer = ByteArray(STREAM_BUFFER_BYTES)
+                while (true) {
+                    job?.ensureActive()
+                    val count = source.read(buffer)
+                    if (count < 0) break
+                    for (index in 0 until count) {
+                        val value = buffer[index]
+                        ftyp.accept(value)
+                        mdat.accept(value)
+                    }
+                }
+                ftyp.found && mdat.found
+            }
+        } catch (_: IOException) {
+            false
+        } catch (_: SecurityException) {
+            false
+        }
+    }
+
     private fun hasGifTrailer(file: File): Boolean =
         readFileTail(file, TAIL_VALIDATION_BYTES)?.lastOrNull() == GIF_TRAILER
 
@@ -571,6 +673,75 @@ internal class AttachmentContentValidator {
             }
         }
 
+    private class PositionedInput(private val input: InputStream) {
+        var position: Long = 0L
+            private set
+
+        fun readByte(): Int {
+            val value = input.read()
+            if (value >= 0) position += 1L
+            return value
+        }
+
+        fun readUnsignedShort(): Int? {
+            val high = readByte()
+            val low = readByte()
+            if (high < 0 || low < 0) return null
+            return (high shl 8) or low
+        }
+
+        fun readMarker(): Int? {
+            if (readByte() != JPEG_MARKER_PREFIX) return null
+            var marker = readByte()
+            while (marker == JPEG_MARKER_PREFIX) marker = readByte()
+            return marker.takeIf { it >= 0 }
+        }
+
+        fun readEntropyMarker(): Int? {
+            while (true) {
+                val value = readByte()
+                if (value < 0) return null
+                if (value != JPEG_MARKER_PREFIX) continue
+                var marker = readByte()
+                while (marker == JPEG_MARKER_PREFIX) marker = readByte()
+                if (marker < 0) return null
+                if (marker != JPEG_STUFFED_BYTE && marker !in JPEG_RESTART_MARKERS) return marker
+            }
+        }
+
+        fun skipFully(byteCount: Long): Boolean {
+            var remaining = byteCount
+            while (remaining > 0L) {
+                val skipped = input.skip(remaining)
+                if (skipped > 0L) {
+                    position += skipped
+                    remaining -= skipped
+                } else if (readByte() < 0) {
+                    return false
+                } else {
+                    remaining -= 1L
+                }
+            }
+            return true
+        }
+    }
+
+    private class StreamingMarker(private val marker: ByteArray) {
+        private var matchedBytes = 0
+        var found: Boolean = false
+            private set
+
+        fun accept(value: Byte) {
+            if (found) return
+            matchedBytes = when {
+                value == marker[matchedBytes] -> matchedBytes + 1
+                value == marker[0] -> 1
+                else -> 0
+            }
+            if (matchedBytes == marker.size) found = true
+        }
+    }
+
     companion object {
         private const val MAX_CONTAINER_ENTRIES = 4_096
         private const val MAX_CONTAINER_EXPANDED_BYTES = 512L * 1024L * 1024L
@@ -581,6 +752,17 @@ internal class AttachmentContentValidator {
         private const val PDF_TAIL_VALIDATION_BYTES = 4 * 1024
         private const val HEIF_BRAND_SCAN_BYTES = 128
         private const val STREAM_BUFFER_BYTES = 64 * 1024
+        private const val JPEG_MARKER_PREFIX = 0xFF
+        private const val JPEG_STUFFED_BYTE = 0x00
+        private const val JPEG_TEMPORARY_MARKER = 0x01
+        private const val JPEG_SOI_MARKER = 0xD8
+        private const val JPEG_EOI_MARKER = 0xD9
+        private const val JPEG_START_OF_SCAN_MARKER = 0xDA
+        private const val JPEG_SEGMENT_LENGTH_BYTES = 2
+        private val JPEG_RESTART_MARKERS = 0xD0..0xD7
+        private const val MAX_BENIGN_JPEG_PADDING_BYTES = 4 * 1024
+        private val BENIGN_JPEG_PADDING_BYTES = setOf(0x00, 0x09, 0x0A, 0x0D, 0x20)
+        private const val MINIMUM_MOTION_PHOTO_TRAILER_BYTES = 16L
         private const val UTF8_BOM_CODE_POINT = 0xFEFF
         private const val DOCX_MAIN_CONTENT_TYPE =
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
@@ -609,6 +791,7 @@ internal class AttachmentContentValidator {
         private val ZIP_LOCAL_HEADER = byteArrayOf(0x50, 0x4B, 0x03, 0x04)
         private val ZIP_EMPTY_HEADER = byteArrayOf(0x50, 0x4B, 0x05, 0x06)
         private val FTYP_MARKER = "ftyp".toByteArray(StandardCharsets.US_ASCII)
+        private val MDAT_MARKER = "mdat".toByteArray(StandardCharsets.US_ASCII)
         private val HEIF_BRANDS = setOf("heic", "heix", "hevc", "hevx", "mif1", "msf1")
             .map { it.toByteArray(StandardCharsets.US_ASCII) }
     }
