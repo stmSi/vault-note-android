@@ -17,6 +17,11 @@
         android:title="@string/add_attachment"
         app:showAsAction="ifRoom" />
     <item
+        android:id="@+id/action_color"
+        android:icon="@drawable/ic_palette"
+        android:title="@string/choose_item_color"
+        app:showAsAction="never" />
+    <item
         android:id="@+id/action_archive"
         android:icon="@drawable/ic_archive"
         android:title="@string/archive_note"

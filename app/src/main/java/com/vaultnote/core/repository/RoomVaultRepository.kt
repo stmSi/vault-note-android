@@ -11,6 +11,7 @@ import com.vaultnote.core.common.model.ItemSyncStatus
 import com.vaultnote.core.common.model.SyncOperationState
 import com.vaultnote.core.common.model.SyncOperationType
 import com.vaultnote.core.common.model.VaultItemSummary
+import com.vaultnote.core.common.model.VaultItemColor
 import com.vaultnote.core.common.model.VaultItemType
 import com.vaultnote.core.common.model.VaultNote
 import com.vaultnote.core.common.model.VaultTag
@@ -97,6 +98,7 @@ class RoomVaultRepository(
             val item = VaultItemEntity(
                 id = idGenerator.newId(),
                 type = VaultItemType.NOTE,
+                color = VaultItemColor.DEFAULT,
                 title = title,
                 body = body,
                 ocrText = "",
@@ -201,6 +203,14 @@ class RoomVaultRepository(
             operationName = OPERATION_SET_FAVORITE,
             isUnchanged = { it.isFavorite == isFavorite },
             transform = { item -> item.copy(isFavorite = isFavorite) },
+        )
+
+    override suspend fun setColor(id: String, color: VaultItemColor): RepositoryResult<Unit> =
+        updateBooleanProperty(
+            id = id,
+            operationName = OPERATION_SET_COLOR,
+            isUnchanged = { it.color == color },
+            transform = { item -> item.copy(color = color) },
         )
 
     override suspend fun setArchived(id: String, isArchived: Boolean): RepositoryResult<Unit> =
@@ -589,6 +599,7 @@ class RoomVaultRepository(
     private fun VaultItemSummaryWithTags.toDomain(): VaultItemSummary = VaultItemSummary(
         id = item.id,
         type = item.type,
+        color = item.color,
         title = item.title,
         bodyPreview = item.bodyPreview,
         isPinned = item.isPinned,
@@ -597,6 +608,7 @@ class RoomVaultRepository(
         createdAtEpochMillis = item.createdAt,
         updatedAtEpochMillis = item.updatedAt,
         syncStatus = item.syncStatus,
+        conflictOriginId = item.conflictOriginId,
         tags = tags.sortedBy(TagEntity::normalizedName).map { tag -> tag.toDomain() },
     )
 
@@ -604,6 +616,7 @@ class RoomVaultRepository(
         id = item.id,
         title = item.title,
         body = item.body,
+        color = item.color,
         ocrText = item.ocrText,
         isPinned = item.isPinned,
         isFavorite = item.isFavorite,
@@ -646,6 +659,7 @@ class RoomVaultRepository(
         const val OPERATION_SAVE_NOTE: String = "save_note"
         const val OPERATION_SET_PINNED: String = "set_pinned"
         const val OPERATION_SET_FAVORITE: String = "set_favorite"
+        const val OPERATION_SET_COLOR: String = "set_color"
         const val OPERATION_SET_ARCHIVED: String = "set_archived"
         const val OPERATION_MOVE_TO_TRASH: String = "move_to_trash"
         const val OPERATION_RESTORE: String = "restore"

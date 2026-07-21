@@ -19,6 +19,27 @@ interface AttachmentDao {
     @Query("SELECT * FROM attachments WHERE id = :attachmentId LIMIT 1")
     suspend fun getById(attachmentId: String): AttachmentEntity?
 
+    @Query(
+        """
+        SELECT * FROM attachments
+        WHERE parent_item_id = :itemId
+        ORDER BY created_at ASC, id ASC
+        """,
+    )
+    suspend fun getForItem(itemId: String): List<AttachmentEntity>
+
+    @Query(
+        """
+        UPDATE attachments SET upload_status = :status, remote_path = :remotePath
+        WHERE id = :attachmentId
+        """,
+    )
+    suspend fun updateRemoteState(
+        attachmentId: String,
+        status: com.vaultnote.core.common.model.AttachmentUploadStatus,
+        remotePath: String?,
+    ): Int
+
     @Query("SELECT * FROM attachments WHERE id = :attachmentId LIMIT 1")
     fun observeById(attachmentId: String): Flow<AttachmentEntity?>
 

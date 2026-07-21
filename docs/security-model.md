@@ -2,7 +2,7 @@
 
 ## Current boundary
 
-Phase 4 protects imported attachments and thumbnails with versioned AES-256-GCM envelopes backed by Android Keystore and adds offline search plus OCR. It retains the optional biometric/device-credential app lock, automatic background timeout, secure recent-apps treatment, configurable screenshot blocking, and authenticated streaming content provider.
+Phase 5 protects imported attachments and thumbnails with versioned AES-256-GCM envelopes backed by Android Keystore and adds offline search, OCR, and durable synchronization plumbing. It retains the optional biometric/device-credential app lock, automatic background timeout, secure recent-apps treatment, configurable screenshot blocking, and authenticated streaming content provider.
 
 This is not whole-vault encryption. Note titles, bodies, tag names, OCR fields, attachment display names, and the Room FTS index remain plaintext in the app-private database. Anyone who can extract app data or execute in the app process may access those values. This limitation must remain visible until a separately designed database/search encryption strategy exists.
 
@@ -13,7 +13,8 @@ OCR requires plaintext input. Only after the encrypted envelope authenticates, V
 - Android's application sandbox confines Room, ciphertext, thumbnails, and pending files from ordinary apps.
 - Android Keystore holds non-exportable attachment keys. VaultNote stores only an integer key version in each envelope.
 - The device lock and `BiometricPrompt` authenticate the user; VaultNote never receives biometric material, a PIN, pattern, or password.
-- Room remains the only displayed source of truth. The fake sync boundary performs no upload and contains no credential.
+- Room remains the only displayed source of truth. The replaceable sync boundary consumes a durable queue; the included in-memory backend contains no credential, stores no attachment bytes, and is not remote backup.
+- Attachment ciphertext can cross the sync boundary, but note/title/tag/OCR metadata is not end-to-end encrypted. A future production backend administrator could read that metadata unless the protocol changes.
 - Imported providers, filenames, MIME claims, sizes, file contents, camera apps, external viewers, and future remote systems are untrusted.
 
 ## App lock

@@ -45,6 +45,7 @@ class SearchFtsIntegrationTest {
         )
 
         assertEquals(1, matchCount("receipt"))
+        assertEquals(1, matchCount("r*"))
 
         database.searchDao().updateDocument(
             requireNotNull(database.searchDao().getDocumentForItem(ITEM_ID)).copy(

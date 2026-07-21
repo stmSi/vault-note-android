@@ -12,6 +12,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.ViewCompat
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.get
 import androidx.core.view.isVisible
@@ -32,6 +33,8 @@ import com.vaultnote.app.MainNavigator
 import com.vaultnote.app.appContainer
 import com.vaultnote.core.common.AppError
 import com.vaultnote.core.common.VaultConstraints
+import com.vaultnote.core.common.model.VaultItemColor
+import com.vaultnote.core.common.toStyle
 import com.vaultnote.core.files.MAX_ATTACHMENTS_PER_IMPORT
 import com.vaultnote.databinding.FragmentNoteEditorBinding
 import com.vaultnote.feature.importing.CameraCaptureManager
@@ -344,6 +347,12 @@ class NoteEditorFragment : Fragment() {
         currentBinding.toolbar.title = state.draft.title.ifBlank {
             getString(R.string.untitled_note)
         }
+        val colorStyle = state.draft.color.toStyle()
+        val surfaceColor = ContextCompat.getColor(requireContext(), colorStyle.surfaceColor)
+        val titleColor = ContextCompat.getColor(requireContext(), colorStyle.titleColor)
+        currentBinding.root.setBackgroundColor(surfaceColor)
+        currentBinding.titleInput.setTextColor(titleColor)
+        currentBinding.toolbar.setTitleTextColor(titleColor)
         currentBinding.saveStatus.setText(
             when (state.saveStatus) {
                 EditorSaveStatus.DIRTY -> R.string.unsaved_changes
@@ -422,6 +431,11 @@ class NoteEditorFragment : Fragment() {
                 true
             }
 
+            R.id.action_color -> {
+                showColorChooser(state.draft.color)
+                true
+            }
+
             R.id.action_delete -> {
                 viewModel.moveToTrashAndClose()
                 true
@@ -429,6 +443,21 @@ class NoteEditorFragment : Fragment() {
 
             else -> false
         }
+    }
+
+    private fun showColorChooser(selected: VaultItemColor) {
+        val colors = VaultItemColor.entries
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.choose_item_color)
+            .setSingleChoiceItems(
+                colors.map { getString(it.toStyle().label) }.toTypedArray(),
+                colors.indexOf(selected),
+            ) { dialog, index ->
+                colors.getOrNull(index)?.let(viewModel::setColor)
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun showAttachmentSourceChooser() {

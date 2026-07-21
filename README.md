@@ -1,16 +1,17 @@
 # VaultNote
 
-VaultNote is an offline-first native Android application for private notes and imported files. The repository currently contains Phases 1–4: the local note foundation, defensive attachment handling, Keystore-backed attachment security, offline full-text search, and asynchronous OCR.
+VaultNote is an offline-first native Android application for private notes and imported files. The repository currently contains Phases 1–5: the local foundation, defensive attachments, Keystore-backed attachment security, offline full-text search/OCR, and durable replaceable synchronization.
 
-Phase 4 is a secure intermediate release, not a finished zero-knowledge vault. Imported attachments and thumbnails are encrypted with AES-256-GCM, but note titles, bodies, tags, attachment display names, extracted OCR, and the FTS index remain plaintext in the app-private Room database. Production synchronization, encrypted backup/restore, and performance modules are later phases.
+Phase 5 is a secure intermediate release, not a finished zero-knowledge vault. Imported attachments and thumbnails are encrypted with AES-256-GCM, but note titles, bodies, tags, attachment display names, extracted OCR, and the FTS index remain plaintext in the app-private Room database. The included backend is an in-memory fake, not cloud backup. Encrypted backup/restore and performance modules are later phases.
 
 ## Current capabilities
 
 - Kotlin, one activity, XML Views, View Binding, Fragments, and lightweight manual dependency injection.
+- One-handed bottom navigation for Notes, Archive, Trash, Search, and Settings; contextual screens retain only their own back/actions.
 - Bounded Notes, Archived, and Trash windows using `RecyclerView`, `ListAdapter`, stable IDs, and `DiffUtil`.
 - Plain-text note editing with immediate immutable UI state, 400 ms debounced autosave, and lifecycle/navigation flush.
-- Pin, favorite, archive, soft-delete, restore, tags schema, Room FTS schema, and transactional persistent sync intent.
-- A fake coalescing sync scheduler that performs no network access and never falsely marks data synchronized.
+- Pin, favorite, item/title color coding, archive, soft-delete, restore, tags, Room FTS, and transactional persistent sync intent.
+- Unique network-aware WorkManager synchronization, persistent leases/retries, version tokens, attachment-first uploads, incremental cursors, status UI, and explicit conflict copies/resolution behind replaceable interfaces.
 - Photo Picker, Storage Access Framework, system camera, and `ACTION_SEND`/`ACTION_SEND_MULTIPLE` imports without broad storage or camera permissions.
 - Defensive filename, MIME, extension, signature, UTF-8, ZIP-container, size, space, and path validation.
 - Streaming SHA-256, bounded metadata parsing, sampled background thumbnails, cleanup journaling, and no large blobs in Room.
@@ -20,10 +21,10 @@ Phase 4 is a secure intermediate release, not a finished zero-knowledge vault. I
 - Optional BiometricPrompt/device-credential lock with immediate, 30-second, 1-minute, or 5-minute background timeout.
 - Hidden recent-apps previews, configurable screenshot blocking where the platform permits it, and an opaque accessible lock overlay.
 - A non-exported decrypting content provider and random, one-use, 60-second grants for explicit external viewing.
-- Debounced, bounded Room FTS search over titles, note bodies, tags, attachment filenames, and extracted OCR text, with highlighted snippets and live incremental results.
+- 120 ms debounced per-character Room FTS prefix search over titles, note bodies, tags, attachment filenames, and extracted OCR text, with highlighted snippets and live incremental results.
 - Lazy bundled ML Kit Latin OCR for images and PDFs, sampled/bounded processing, persistent retry states, checksum-based unchanged-file avoidance, and atomic FTS updates.
 - Unit tests for core repository behavior, autosave, import defenses, encryption corruption/rotation, locking, grants, and migration invariants.
-- Exported Room schemas and explicit `1 → 2` migration tests; Phases 3 and 4 require no database schema change.
+- Exported Room schemas and explicit `1 → 2 → 3` migration tests; version 3 adds a neutral-default item color.
 - Dependency locking, checksum-pinned Gradle wrapper, minified/resource-shrunk release builds, and external release-signing support.
 
 ## Project layout
@@ -43,7 +44,7 @@ VaultNote/
 │       │   │   ├── security/         # Lock state and secure content provider
 │       │   │   ├── search/           # Bounded FTS query compiler and repository
 │       │   │   ├── ocr/              # Lazy OCR engine and durable pipeline
-│       │   │   └── sync/             # Persistent queue and fake scheduler
+│       │   │   └── sync/             # Protocol, queue consumer, fake backend, WorkManager scheduler
 │       │   └── feature/              # Vault, editor, import, viewer, lock, settings
 │       ├── test/                      # JVM/Robolectric tests
 │       └── androidTest/               # Room migration/instrumentation tests
@@ -53,13 +54,14 @@ VaultNote/
 │   ├── performance.md
 │   ├── security-model.md
 │   ├── testing.md
+│   ├── sync-protocol.md
 │   └── threat-model.md
 ├── gradle/libs.versions.toml
 ├── build.gradle.kts
 └── settings.gradle.kts
 ```
 
-Only `:app` exists through Phase 4. `:baselineprofile` and `:benchmark` are deliberately deferred to Phase 7, when release-like user journeys are stable enough to profile.
+Only `:app` exists through Phase 5. `:baselineprofile` and `:benchmark` are deliberately deferred to Phase 7, when release-like user journeys are stable enough to profile.
 
 ## Toolchain
 
@@ -109,7 +111,9 @@ Room transaction + encrypted internal files
        ↓
 persistent sync operation
        ↓
-fake coalescing scheduler (through Phase 4)
+unique WorkManager job
+       ↓
+replaceable protocol interfaces → in-memory development backend
 ```
 
 Room remains the displayed source of truth. Local edits commit before scheduling, and no initial network, OCR, thumbnail, backup, cleanup, hash, or encryption migration blocks the first frame. Optional security maintenance and OCR begin only after the vault has been unlocked and displayed.
@@ -126,7 +130,7 @@ Important residual risks:
 - rooted devices, OS compromise, debug extraction, malicious accessibility, or a compromised app process are outside the sandbox guarantee;
 - an external viewer can retain plaintext after the user explicitly opens a file;
 - there is no independent encrypted backup or key recovery yet;
-- the fake scheduler provides no remote durability;
+- the included in-memory backend provides no remote durability and resets with the process;
 - lock is optional and defaults off, while screenshot blocking defaults on;
 - on Android 12L and older, concealing recents requires `FLAG_SECURE`, so screenshots remain blocked even if the setting is disabled.
 
@@ -134,7 +138,7 @@ Read [Security model](docs/security-model.md), [Encryption format](docs/encrypti
 
 ## Database evolution
 
-Room schema JSON is version-controlled. Production never uses destructive migration fallback. Version 2 added image/PDF metadata and the durable attachment cleanup journal through explicit `MIGRATION_1_2`. Phases 3 and 4 reuse the existing encryption, OCR, and search columns, so they do not change the SQL schema.
+Room schema JSON is version-controlled. Production never uses destructive migration fallback. Version 2 added media metadata and the cleanup journal; version 3 adds the non-null `color` column with `DEFAULT` for every existing item.
 
 ## Development principles
 

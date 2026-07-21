@@ -5,6 +5,7 @@ import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.model.ItemSyncStatus
 import com.vaultnote.core.common.model.VaultItemSummary
 import com.vaultnote.core.common.model.VaultNote
+import com.vaultnote.core.common.model.VaultItemColor
 import com.vaultnote.core.common.model.VaultTag
 import com.vaultnote.core.repository.VaultRepository
 import kotlinx.coroutines.CompletableDeferred
@@ -192,6 +193,9 @@ class NoteEditorViewModelTest {
         override suspend fun setFavorite(id: String, isFavorite: Boolean): RepositoryResult<Unit> =
             RepositoryResult.Success(Unit)
 
+        override suspend fun setColor(id: String, color: VaultItemColor): RepositoryResult<Unit> =
+            RepositoryResult.Success(Unit)
+
         override suspend fun setArchived(id: String, isArchived: Boolean): RepositoryResult<Unit> =
             RepositoryResult.Success(Unit)
 
@@ -214,6 +218,7 @@ class NoteEditorViewModelTest {
             id = ITEM_ID,
             title = "Title",
             body = "Body",
+            color = VaultItemColor.DEFAULT,
             ocrText = "",
             isPinned = false,
             isFavorite = false,

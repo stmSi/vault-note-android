@@ -25,7 +25,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.launch
 
-internal enum class VaultSection {
+enum class VaultSection {
     ACTIVE,
     ARCHIVED,
     TRASH,

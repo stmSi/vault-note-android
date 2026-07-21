@@ -4,12 +4,14 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.view.ViewCompat
+import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.vaultnote.R
 import com.vaultnote.databinding.ItemVaultNoteBinding
+import com.vaultnote.core.common.toStyle
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -54,6 +56,9 @@ internal class VaultItemAdapter(
         fun bind(row: VaultListItem) = with(binding) {
             val item = row.note
             val context = root.context
+            val colorStyle = item.color.toStyle()
+            root.setBackgroundColor(ContextCompat.getColor(context, colorStyle.surfaceColor))
+            title.setTextColor(ContextCompat.getColor(context, colorStyle.titleColor))
             title.text = item.title.ifBlank { context.getString(R.string.untitled_note) }
             bodyPreview.text = item.bodyPreview
             bodyPreview.visibility = if (item.bodyPreview.isBlank()) View.GONE else View.VISIBLE
@@ -129,6 +134,7 @@ internal class VaultItemAdapter(
             ): Boolean = oldItem.section == newItem.section &&
                 oldItem.note.title == newItem.note.title &&
                 oldItem.note.bodyPreview == newItem.note.bodyPreview &&
+                oldItem.note.color == newItem.note.color &&
                 oldItem.note.isPinned == newItem.note.isPinned &&
                 oldItem.note.isFavorite == newItem.note.isFavorite &&
                 oldItem.note.updatedAtEpochMillis == newItem.note.updatedAtEpochMillis &&

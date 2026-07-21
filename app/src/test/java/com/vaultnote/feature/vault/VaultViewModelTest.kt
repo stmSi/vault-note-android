@@ -5,6 +5,7 @@ import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.model.ItemSyncStatus
 import com.vaultnote.core.common.model.VaultItemSummary
 import com.vaultnote.core.common.model.VaultItemType
+import com.vaultnote.core.common.model.VaultItemColor
 import com.vaultnote.core.common.model.VaultNote
 import com.vaultnote.core.common.model.VaultTag
 import com.vaultnote.core.repository.VaultRepository
@@ -123,6 +124,9 @@ class VaultViewModelTest {
         override suspend fun setFavorite(id: String, isFavorite: Boolean): RepositoryResult<Unit> =
             RepositoryResult.Success(Unit)
 
+        override suspend fun setColor(id: String, color: VaultItemColor): RepositoryResult<Unit> =
+            RepositoryResult.Success(Unit)
+
         override suspend fun setArchived(id: String, isArchived: Boolean): RepositoryResult<Unit> =
             RepositoryResult.Success(Unit)
 
@@ -145,6 +149,7 @@ class VaultViewModelTest {
         fun summary(index: Int): VaultItemSummary = VaultItemSummary(
             id = "00000000-0000-0000-0000-${index.toString().padStart(12, '0')}",
             type = VaultItemType.NOTE,
+            color = VaultItemColor.DEFAULT,
             title = "Note $index",
             bodyPreview = "",
             isPinned = false,
@@ -153,6 +158,7 @@ class VaultViewModelTest {
             createdAtEpochMillis = index.toLong(),
             updatedAtEpochMillis = index.toLong(),
             syncStatus = ItemSyncStatus.PENDING,
+            conflictOriginId = null,
             tags = emptyList(),
         )
     }

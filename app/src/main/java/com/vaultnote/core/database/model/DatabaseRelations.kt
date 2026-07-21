@@ -6,6 +6,7 @@ import androidx.room.Junction
 import androidx.room.Relation
 import com.vaultnote.core.common.model.ItemSyncStatus
 import com.vaultnote.core.common.model.VaultItemType
+import com.vaultnote.core.common.model.VaultItemColor
 import com.vaultnote.core.database.entity.ItemTagCrossRef
 import com.vaultnote.core.database.entity.TagEntity
 import com.vaultnote.core.database.entity.VaultItemEntity
@@ -31,6 +32,8 @@ data class VaultItemSummaryRow(
     val id: String,
     @ColumnInfo(name = "type")
     val type: VaultItemType,
+    @ColumnInfo(name = "color")
+    val color: VaultItemColor,
     @ColumnInfo(name = "title")
     val title: String,
     @ColumnInfo(name = "body_preview")
@@ -47,6 +50,8 @@ data class VaultItemSummaryRow(
     val updatedAt: Long,
     @ColumnInfo(name = "sync_status")
     val syncStatus: ItemSyncStatus,
+    @ColumnInfo(name = "conflict_origin_id")
+    val conflictOriginId: String?,
 )
 
 data class VaultItemSummaryWithTags(
@@ -70,6 +75,8 @@ data class SearchResultRow(
     val id: String,
     @ColumnInfo(name = "title")
     val title: String,
+    @ColumnInfo(name = "color")
+    val color: VaultItemColor,
     @ColumnInfo(name = "highlighted_title")
     val highlightedTitle: String,
     @ColumnInfo(name = "highlighted_snippet")

@@ -17,7 +17,11 @@ import com.vaultnote.core.repository.AttachmentRepository
 import com.vaultnote.core.repository.RoomVaultRepository
 import com.vaultnote.core.repository.RoomAttachmentRepository
 import com.vaultnote.core.repository.VaultRepository
-import com.vaultnote.core.sync.CoalescingFakeSyncScheduler
+import com.vaultnote.core.sync.InMemoryFakeSyncBackend
+import com.vaultnote.core.sync.RoomSyncRepository
+import com.vaultnote.core.sync.SyncRepository
+import com.vaultnote.core.sync.SyncScheduler
+import com.vaultnote.core.sync.WorkManagerSyncScheduler
 import com.vaultnote.feature.viewer.AndroidFileViewer
 import com.vaultnote.feature.viewer.FileViewer
 import com.vaultnote.core.security.ExternalAttachmentGrantRegistry
@@ -45,6 +49,8 @@ interface AppContainer {
     val secureAttachmentContentSource: SecureAttachmentContentSource
     val searchRepository: SearchRepository
     val ocrRepository: OcrRepository
+    val syncRepository: SyncRepository
+    val syncScheduler: SyncScheduler
 }
 
 class DefaultAppContainer(context: Context) : AppContainer {
@@ -52,8 +58,11 @@ class DefaultAppContainer(context: Context) : AppContainer {
     private val database: VaultDatabase by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         VaultDatabase.create(applicationContext)
     }
-    private val syncScheduler by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        CoalescingFakeSyncScheduler()
+    override val syncScheduler: SyncScheduler by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        WorkManagerSyncScheduler(applicationContext)
+    }
+    private val fakeSyncBackend by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        InMemoryFakeSyncBackend(DefaultDispatcherProvider)
     }
     private val encryptionService: EncryptionService by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         AesGcmEncryptionService(
@@ -163,6 +172,20 @@ class DefaultAppContainer(context: Context) : AppContainer {
             processor = MlKitOcrProcessor(applicationContext),
             dispatchers = DefaultDispatcherProvider,
             clock = SystemClock,
+        )
+    }
+
+    override val syncRepository: SyncRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        RoomSyncRepository(
+            database = database,
+            syncApi = fakeSyncBackend,
+            authProvider = fakeSyncBackend,
+            remoteFileStore = fakeSyncBackend,
+            fileManager = attachmentFileManager,
+            syncScheduler = syncScheduler,
+            dispatchers = DefaultDispatcherProvider,
+            clock = SystemClock,
+            idGenerator = UuidIdGenerator,
         )
     }
 }

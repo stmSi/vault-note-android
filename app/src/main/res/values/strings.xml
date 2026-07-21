@@ -4,6 +4,7 @@
     <string name="vault_title">Vault</string>
     <string name="notes_title">Notes</string>
     <string name="archived_title">Archived</string>
+    <string name="archive_short">Archive</string>
     <string name="trash_title">Trash</string>
     <string name="new_note">New note</string>
     <string name="empty_vault_title">Your vault is empty</string>
@@ -35,6 +36,14 @@
     <string name="note_not_pinned">Not pinned</string>
     <string name="note_favorite">Favorite</string>
     <string name="note_not_favorite">Not favorite</string>
+    <string name="choose_item_color">Choose color</string>
+    <string name="item_color_default">Default</string>
+    <string name="item_color_red">Red</string>
+    <string name="item_color_orange">Orange</string>
+    <string name="item_color_yellow">Yellow</string>
+    <string name="item_color_green">Green</string>
+    <string name="item_color_blue">Blue</string>
+    <string name="item_color_purple">Purple</string>
     <string name="saving">Saving…</string>
     <string name="saved">Saved locally</string>
     <string name="unsaved_changes">Unsaved changes</string>
@@ -133,6 +142,7 @@
     <string name="unlock_failed">VaultNote could not verify your identity.</string>
     <string name="loading_security_settings">Loading security settings</string>
     <string name="security_settings_title">Security</string>
+    <string name="settings_short">Settings</string>
     <string name="attachment_security_upgrade_failed">Some older attachments could not be encrypted. VaultNote will retry safely.</string>
     <string name="enable_app_lock">Require unlock when opening VaultNote</string>
     <string name="app_lock_description">Unlock with a strong biometric or your device PIN, pattern, or password.</string>
@@ -160,4 +170,23 @@
     <string name="ocr_complete">Text scan complete</string>
     <string name="ocr_failed">Text scan failed</string>
     <string name="retry_text_scan">Retry text scan</string>
+    <string name="sync_status_title">Sync status</string>
+    <string name="sync_now">Sync now</string>
+    <string name="sync_scheduled">Synchronization scheduled.</string>
+    <string name="sync_pending_count">Pending: %1$d</string>
+    <string name="sync_running_count">Running: %1$d</string>
+    <string name="sync_retry_count">Waiting to retry: %1$d</string>
+    <string name="sync_failed_count">Needs attention: %1$d</string>
+    <string name="sync_conflict_count">Conflicts: %1$d</string>
+    <string name="sync_last_success">Last completed: %1$s</string>
+    <string name="sync_never">Never</string>
+    <string name="sync_status_load_failed">Synchronization status could not be loaded.</string>
+    <string name="conflicts_title">Conflicts</string>
+    <string name="conflicts_empty">No synchronization conflicts.</string>
+    <string name="conflicts_load_failed">Conflicts could not be loaded.</string>
+    <string name="conflict_local_version">Local version</string>
+    <string name="conflict_remote_version">Remote version</string>
+    <string name="conflict_keep_version">Keep this version</string>
+    <string name="conflict_resolved">Conflict resolved and queued for synchronization.</string>
+    <string name="conflict_resolve_failed">This conflict could not be resolved locally.</string>
 </resources>

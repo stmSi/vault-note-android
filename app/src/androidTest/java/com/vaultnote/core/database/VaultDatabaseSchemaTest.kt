@@ -30,7 +30,7 @@ class VaultDatabaseSchemaTest {
     }
 
     @Test
-    fun versionOneDataMigratesToVersionTwo() {
+    fun versionOneDataMigratesToCurrentVersion() {
         migrationHelper.createDatabase(TEST_DATABASE_NAME, 1).use { db ->
             db.execSQL(
                 """
@@ -103,18 +103,19 @@ class VaultDatabaseSchemaTest {
             }
             db.query(
                 """
-                SELECT title, local_revision, remote_revision, last_synced_revision,
+                SELECT title, color, local_revision, remote_revision, last_synced_revision,
                        server_version_token, deleted_at
                 FROM vault_items WHERE id = 'item-1'
                 """.trimIndent(),
             ).use { cursor ->
                 assertEquals(true, cursor.moveToFirst())
                 assertEquals("Schema fixture", cursor.getString(0))
-                assertEquals(7L, cursor.getLong(1))
-                assertEquals(5L, cursor.getLong(2))
-                assertEquals(4L, cursor.getLong(3))
-                assertEquals("server-v5", cursor.getString(4))
-                assertEquals(11L, cursor.getLong(5))
+                assertEquals("DEFAULT", cursor.getString(1))
+                assertEquals(7L, cursor.getLong(2))
+                assertEquals(5L, cursor.getLong(3))
+                assertEquals(4L, cursor.getLong(4))
+                assertEquals("server-v5", cursor.getString(5))
+                assertEquals(11L, cursor.getLong(6))
             }
             db.query(
                 """

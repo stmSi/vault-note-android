@@ -22,6 +22,18 @@ interface VaultItemDao {
     @Query("SELECT * FROM vault_items WHERE id = :itemId LIMIT 1")
     suspend fun getById(itemId: String): VaultItemEntity?
 
+    @Query("DELETE FROM vault_items WHERE id = :itemId")
+    suspend fun deleteById(itemId: String): Int
+
+    @Query(
+        """
+        SELECT * FROM vault_items
+        WHERE id = :originId OR conflict_origin_id = :originId
+        ORDER BY conflict_origin_id IS NOT NULL ASC, created_at ASC, id ASC
+        """,
+    )
+    suspend fun getConflictGroup(originId: String): List<VaultItemEntity>
+
     @Query("UPDATE vault_items SET ocr_text = :ocrText WHERE id = :itemId")
     suspend fun updateOcrText(itemId: String, ocrText: String): Int
 
@@ -35,6 +47,7 @@ interface VaultItemDao {
         SELECT
             id,
             type,
+            color,
             title,
             substr(body, 1, :previewCharacterLimit) AS body_preview,
             is_pinned,
@@ -42,7 +55,8 @@ interface VaultItemDao {
             is_archived,
             created_at,
             updated_at,
-            sync_status
+            sync_status,
+            conflict_origin_id
         FROM vault_items
         WHERE deleted_at IS NULL AND is_archived = 0
         ORDER BY is_pinned DESC, updated_at DESC, id ASC
@@ -62,6 +76,7 @@ interface VaultItemDao {
         SELECT
             id,
             type,
+            color,
             title,
             substr(body, 1, :previewCharacterLimit) AS body_preview,
             is_pinned,
@@ -69,7 +84,8 @@ interface VaultItemDao {
             is_archived,
             created_at,
             updated_at,
-            sync_status
+            sync_status,
+            conflict_origin_id
         FROM vault_items
         WHERE deleted_at IS NULL AND is_archived = 1
         ORDER BY updated_at DESC, id ASC
@@ -89,6 +105,7 @@ interface VaultItemDao {
         SELECT
             id,
             type,
+            color,
             title,
             substr(body, 1, :previewCharacterLimit) AS body_preview,
             is_pinned,
@@ -96,7 +113,8 @@ interface VaultItemDao {
             is_archived,
             created_at,
             updated_at,
-            sync_status
+            sync_status,
+            conflict_origin_id
         FROM vault_items
         WHERE deleted_at IS NOT NULL
         ORDER BY deleted_at DESC, id ASC
@@ -107,6 +125,33 @@ interface VaultItemDao {
     fun observeTrashSummaries(
         limit: Int,
         offset: Int,
+        previewCharacterLimit: Int,
+    ): Flow<List<VaultItemSummaryWithTags>>
+
+    @Transaction
+    @Query(
+        """
+        SELECT
+            id,
+            type,
+            color,
+            title,
+            substr(body, 1, :previewCharacterLimit) AS body_preview,
+            is_pinned,
+            is_favorite,
+            is_archived,
+            created_at,
+            updated_at,
+            sync_status,
+            conflict_origin_id
+        FROM vault_items
+        WHERE sync_status = 'CONFLICT'
+        ORDER BY updated_at DESC, id ASC
+        LIMIT :limit
+        """,
+    )
+    fun observeConflictSummaries(
+        limit: Int,
         previewCharacterLimit: Int,
     ): Flow<List<VaultItemSummaryWithTags>>
 }

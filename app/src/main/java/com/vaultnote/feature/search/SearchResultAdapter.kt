@@ -9,6 +9,7 @@ import android.text.style.StyleSpan
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.core.view.isVisible
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
@@ -16,6 +17,7 @@ import com.google.android.material.color.MaterialColors
 import com.vaultnote.R
 import com.vaultnote.core.search.RoomSearchRepository
 import com.vaultnote.core.search.VaultSearchResult
+import com.vaultnote.core.common.toStyle
 import com.vaultnote.databinding.ItemSearchResultBinding
 import java.time.Instant
 import java.time.ZoneId
@@ -53,6 +55,9 @@ internal class SearchResultAdapter(
     ) : RecyclerView.ViewHolder(binding.root) {
         fun bind(result: VaultSearchResult) = with(binding) {
             val context = root.context
+            val colorStyle = result.color.toStyle()
+            root.setCardBackgroundColor(ContextCompat.getColor(context, colorStyle.surfaceColor))
+            title.setTextColor(ContextCompat.getColor(context, colorStyle.titleColor))
             val highlightBackground = MaterialColors.getColor(
                 root,
                 com.google.android.material.R.attr.colorSecondaryContainer,

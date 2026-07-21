@@ -54,7 +54,7 @@ abstract class VaultDatabase : RoomDatabase() {
     abstract fun appSettingDao(): AppSettingDao
 
     companion object {
-        const val SCHEMA_VERSION: Int = 2
+        const val SCHEMA_VERSION: Int = 3
         const val DATABASE_NAME: String = "vaultnote.db"
 
         /** Adds optional media metadata and a crash-safe attachment file cleanup journal. */
@@ -85,8 +85,17 @@ abstract class VaultDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds a stable, user-selected color while preserving existing items as neutral. */
+        val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE vault_items ADD COLUMN color TEXT NOT NULL DEFAULT 'DEFAULT'",
+                )
+            }
+        }
+
         /** Production callers intentionally have no destructive migration fallback. */
-        val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2)
+        val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
 
         fun create(context: Context): VaultDatabase =
             Room.databaseBuilder(

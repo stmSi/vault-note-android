@@ -8,6 +8,7 @@ import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.VaultConstraints
 import com.vaultnote.core.common.isRetryableLocalDatabaseFailure
 import com.vaultnote.core.common.model.VaultNote
+import com.vaultnote.core.common.model.VaultItemColor
 import com.vaultnote.core.repository.VaultRepository
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.channels.Channel
@@ -24,6 +25,7 @@ internal data class EditorDraft(
     val title: String,
     val body: String,
     val tagsText: String,
+    val color: VaultItemColor,
     val isPinned: Boolean,
     val isFavorite: Boolean,
     val isArchived: Boolean,
@@ -127,6 +129,14 @@ internal class NoteEditorViewModel(
         )
     }
 
+    fun setColor(color: VaultItemColor) {
+        updateMetadataOptimistically(
+            transform = { it.copy(color = color) },
+            rollback = { latest, previous -> latest.copy(color = previous.color) },
+            operation = { repository.setColor(itemId, color) },
+        )
+    }
+
     fun retrySave() {
         val current = mutableUiState.value as? EditorUiState.Content ?: return
         if (current.saveStatus != EditorSaveStatus.FAILED || !current.saveRetryable) return
@@ -203,6 +213,7 @@ internal class NoteEditorViewModel(
                 isPinned = note.isPinned,
                 isFavorite = note.isFavorite,
                 isArchived = note.isArchived,
+                color = note.color,
             )
         }
         mutableUiState.value = current.copy(draft = updatedDraft)
@@ -363,6 +374,7 @@ internal class NoteEditorViewModel(
         title = title,
         body = body,
         tagsText = tags.joinToString(separator = ", ") { it.name },
+        color = color,
         isPinned = isPinned,
         isFavorite = isFavorite,
         isArchived = isArchived,

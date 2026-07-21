@@ -88,7 +88,8 @@ internal class SearchViewModel(
     }
 
     private companion object {
-        const val SEARCH_DEBOUNCE_MILLIS = 300L
+        // Short enough to feel like per-character typeahead while still coalescing fast IME input.
+        const val SEARCH_DEBOUNCE_MILLIS = 120L
         const val SEARCH_RESULT_LIMIT = 100
     }
 }

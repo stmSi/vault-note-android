@@ -2,6 +2,7 @@ package com.vaultnote.core.repository
 
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.model.VaultItemSummary
+import com.vaultnote.core.common.model.VaultItemColor
 import com.vaultnote.core.common.model.VaultNote
 import com.vaultnote.core.common.model.VaultTag
 import kotlinx.coroutines.flow.Flow
@@ -40,6 +41,8 @@ interface VaultRepository {
     suspend fun setPinned(id: String, isPinned: Boolean): RepositoryResult<Unit>
 
     suspend fun setFavorite(id: String, isFavorite: Boolean): RepositoryResult<Unit>
+
+    suspend fun setColor(id: String, color: VaultItemColor): RepositoryResult<Unit>
 
     suspend fun setArchived(id: String, isArchived: Boolean): RepositoryResult<Unit>
 

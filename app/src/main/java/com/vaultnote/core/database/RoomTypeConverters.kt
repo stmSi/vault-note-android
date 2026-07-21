@@ -7,8 +7,15 @@ import com.vaultnote.core.common.model.OcrState
 import com.vaultnote.core.common.model.SyncOperationState
 import com.vaultnote.core.common.model.SyncOperationType
 import com.vaultnote.core.common.model.VaultItemType
+import com.vaultnote.core.common.model.VaultItemColor
 
 class RoomTypeConverters {
+    @TypeConverter
+    fun vaultItemColorToString(value: VaultItemColor): String = value.name
+
+    @TypeConverter
+    fun stringToVaultItemColor(value: String): VaultItemColor = enumValueOf(value)
+
     @TypeConverter
     fun vaultItemTypeToString(value: VaultItemType): String = value.name
 

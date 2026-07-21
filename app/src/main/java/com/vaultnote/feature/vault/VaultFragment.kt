@@ -58,24 +58,10 @@ class VaultFragment : Fragment() {
         currentBinding.retryButton.setOnClickListener { viewModel.retry() }
         currentBinding.previousPageButton.setOnClickListener { viewModel.previousPage() }
         currentBinding.nextPageButton.setOnClickListener { viewModel.nextPage() }
-        currentBinding.toolbar.setOnMenuItemClickListener { item ->
-            val section = when (item.itemId) {
-                R.id.action_active_notes -> VaultSection.ACTIVE
-                R.id.action_archived_notes -> VaultSection.ARCHIVED
-                R.id.action_trash -> VaultSection.TRASH
-                R.id.action_search -> {
-                    (activity as? MainNavigator)?.openSearch()
-                    return@setOnMenuItemClickListener true
-                }
-                R.id.action_security_settings -> {
-                    (activity as? MainNavigator)?.openSecuritySettings()
-                    return@setOnMenuItemClickListener true
-                }
-                else -> return@setOnMenuItemClickListener false
-            }
-            viewModel.selectSection(section)
-            true
-        }
+        val initialSection = arguments?.getString(ARG_SECTION)
+            ?.let { name -> runCatching { VaultSection.valueOf(name) }.getOrNull() }
+            ?: VaultSection.ACTIVE
+        viewModel.selectSection(initialSection)
 
         applyWindowInsets(currentBinding)
         collectViewModel(currentBinding)
@@ -118,20 +104,6 @@ class VaultFragment : Fragment() {
             state.pageIndex > 0 && state !is VaultUiState.Loading
         currentBinding.nextPageButton.isEnabled =
             (state as? VaultUiState.Content)?.hasNextPage == true
-
-        currentBinding.toolbar.title = getString(
-            when (state.section) {
-                VaultSection.ACTIVE -> R.string.vault_title
-                VaultSection.ARCHIVED -> R.string.archived_title
-                VaultSection.TRASH -> R.string.trash_title
-            },
-        )
-        currentBinding.toolbar.menu.findItem(R.id.action_active_notes).isChecked =
-            state.section == VaultSection.ACTIVE
-        currentBinding.toolbar.menu.findItem(R.id.action_archived_notes).isChecked =
-            state.section == VaultSection.ARCHIVED
-        currentBinding.toolbar.menu.findItem(R.id.action_trash).isChecked =
-            state.section == VaultSection.TRASH
 
         when (state) {
             is VaultUiState.Content -> {
@@ -199,9 +171,8 @@ class VaultFragment : Fragment() {
     private fun applyWindowInsets(currentBinding: FragmentVaultBinding) {
         val rootStartPadding = currentBinding.root.paddingStart
         val rootEndPadding = currentBinding.root.paddingEnd
-        val toolbarTopPadding = currentBinding.toolbar.paddingTop
+        val listTopPadding = currentBinding.noteList.paddingTop
         val listBottomPadding = currentBinding.noteList.paddingBottom
-        val pageControlsBottomPadding = currentBinding.pageControls.paddingBottom
         val fabParams = currentBinding.addNoteButton.layoutParams as ViewGroup.MarginLayoutParams
         val fabEndMargin = fabParams.marginEnd
         val fabBottomMargin = fabParams.bottomMargin
@@ -217,12 +188,9 @@ class VaultFragment : Fragment() {
                 start = rootStartPadding + startInset,
                 end = rootEndPadding + endInset,
             )
-            currentBinding.toolbar.updatePadding(top = toolbarTopPadding + safeInsets.top)
             currentBinding.noteList.updatePadding(
+                top = listTopPadding + safeInsets.top,
                 bottom = listBottomPadding,
-            )
-            currentBinding.pageControls.updatePadding(
-                bottom = pageControlsBottomPadding + safeInsets.bottom,
             )
             val updatedFabParams = currentBinding.addNoteButton.layoutParams as ViewGroup.MarginLayoutParams
             updatedFabParams.marginEnd = fabEndMargin
@@ -234,6 +202,16 @@ class VaultFragment : Fragment() {
     }
 
     companion object {
-        fun newInstance(): VaultFragment = VaultFragment()
+        private const val ARG_SECTION = "section"
+
+        fun newInstance(section: VaultSection = VaultSection.ACTIVE): VaultFragment =
+            VaultFragment().apply {
+                arguments = Bundle().apply { putString(ARG_SECTION, section.name) }
+            }
+
+        fun sectionOf(fragment: VaultFragment): VaultSection =
+            fragment.arguments?.getString(ARG_SECTION)
+                ?.let { name -> runCatching { VaultSection.valueOf(name) }.getOrNull() }
+                ?: VaultSection.ACTIVE
     }
 }

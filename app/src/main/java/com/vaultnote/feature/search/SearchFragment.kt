@@ -8,7 +8,6 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
-import androidx.core.view.updatePadding
 import androidx.core.view.updatePaddingRelative
 import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.Fragment
@@ -44,9 +43,6 @@ class SearchFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         val currentBinding = requireNotNull(binding)
-        currentBinding.toolbar.setNavigationOnClickListener {
-            (activity as? MainNavigator)?.navigateBack()
-        }
         currentBinding.results.apply {
             layoutManager = LinearLayoutManager(requireContext())
             adapter = resultAdapter
@@ -119,20 +115,18 @@ class SearchFragment : Fragment() {
     }
 
     private fun applyInsets(currentBinding: FragmentSearchBinding) {
-        val toolbarTop = currentBinding.toolbar.paddingTop
         val contentStart = currentBinding.content.paddingStart
         val contentEnd = currentBinding.content.paddingEnd
-        val contentBottom = currentBinding.content.paddingBottom
+        val contentTop = currentBinding.content.paddingTop
         ViewCompat.setOnApplyWindowInsetsListener(currentBinding.root) { _, insets ->
             val safe = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
             )
             val isRtl = currentBinding.root.layoutDirection == View.LAYOUT_DIRECTION_RTL
-            currentBinding.toolbar.updatePadding(top = toolbarTop + safe.top)
             currentBinding.content.updatePaddingRelative(
                 start = contentStart + if (isRtl) safe.right else safe.left,
+                top = contentTop + safe.top,
                 end = contentEnd + if (isRtl) safe.left else safe.right,
-                bottom = contentBottom + safe.bottom,
             )
             insets
         }

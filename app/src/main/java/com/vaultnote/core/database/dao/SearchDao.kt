@@ -31,6 +31,7 @@ interface SearchDao {
         SELECT
             vault_items.id AS id,
             vault_items.title AS title,
+            vault_items.color AS color,
             snippet(search_fts, :startMarker, :endMarker, :ellipsis, 0, :titleTokenLimit)
                 AS highlighted_title,
             snippet(search_fts, :startMarker, :endMarker, :ellipsis, -1, :snippetTokenLimit)

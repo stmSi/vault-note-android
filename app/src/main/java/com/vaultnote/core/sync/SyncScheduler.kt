@@ -6,6 +6,8 @@ package com.vaultnote.core.sync
  */
 fun interface SyncScheduler {
     fun requestSync(): SyncScheduleResult
+
+    fun ensurePeriodicSync(): SyncScheduleResult = SyncScheduleResult.Coalesced
 }
 
 sealed interface SyncScheduleResult {

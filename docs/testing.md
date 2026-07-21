@@ -1,6 +1,6 @@
 # Testing
 
-Phase 4 keeps tests focused on important behavior and security invariants. JVM/Robolectric coverage includes repository transactions, autosave, soft deletion, attachment validation and cleanup, encryption authentication/corruption, lock policy, one-use grants, FTS query compilation, public filename search, OCR state persistence, OCR-to-FTS updates, unchanged-file avoidance, and explicit retry rules. Room migration tests remain under `androidTest` for a connected API 26-or-newer device.
+Phase 5 keeps tests focused on important behavior and security invariants. JVM/Robolectric coverage includes repository transactions, autosave, soft deletion, attachment validation and cleanup, encryption authentication/corruption, lock policy, one-use grants, per-character FTS prefix compilation, public filename search, OCR persistence/indexing, sync idempotency, revision acknowledgements, authentication failure, bounded exponential backoff, and preserve-both conflict resolution. Room migration tests remain under `androidTest` for a connected API 26-or-newer device.
 
 Use Java 17. Robolectric in this project is not compatible with the host's OpenJDK 26 bytecode instrumentation.
 

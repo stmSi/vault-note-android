@@ -14,4 +14,18 @@
     <color name="vault_on_error">#690005</color>
     <color name="vault_outline">#8E9099</color>
     <color name="vault_splash_background">#111318</color>
+    <color name="item_default_surface">#111318</color>
+    <color name="item_default_title">#E2E2E9</color>
+    <color name="item_red_surface">#2E1B1D</color>
+    <color name="item_red_title">#FFB3B5</color>
+    <color name="item_orange_surface">#2C2016</color>
+    <color name="item_orange_title">#FFB86D</color>
+    <color name="item_yellow_surface">#28240F</color>
+    <color name="item_yellow_title">#E8D56B</color>
+    <color name="item_green_surface">#17281C</color>
+    <color name="item_green_title">#8DD8A5</color>
+    <color name="item_blue_surface">#192437</color>
+    <color name="item_blue_title">#ADC7FF</color>
+    <color name="item_purple_surface">#281D33</color>
+    <color name="item_purple_title">#DAB8FF</color>
 </resources>

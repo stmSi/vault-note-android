@@ -3,6 +3,7 @@ package com.vaultnote.core.search
 import com.vaultnote.core.common.DispatcherProvider
 import com.vaultnote.core.database.dao.SearchDao
 import com.vaultnote.core.database.model.SearchResultRow
+import com.vaultnote.core.common.model.VaultItemColor
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.map
 data class VaultSearchResult(
     val itemId: String,
     val title: String,
+    val color: VaultItemColor,
     val highlightedTitle: String,
     val highlightedSnippet: String,
     val isArchived: Boolean,
@@ -46,6 +48,7 @@ class RoomSearchRepository(
     private fun SearchResultRow.toDomain(): VaultSearchResult = VaultSearchResult(
         itemId = id,
         title = title,
+        color = color,
         highlightedTitle = highlightedTitle,
         highlightedSnippet = highlightedSnippet,
         isArchived = isArchived,

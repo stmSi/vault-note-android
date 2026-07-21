@@ -1,8 +1,8 @@
-# VaultNote Phase 4 architecture
+# VaultNote Phase 5 architecture
 
 ## Scope and quality boundary
 
-Phase 4 extends the secured local foundation with a complete offline search screen and a lazy asynchronous OCR pipeline. It does not simulate cloud behavior that is not implemented: the sync scheduler remains fake and non-networking. Room note/search/metadata content is still plaintext, so attachment encryption is not presented as whole-vault encryption.
+Phase 5 extends the secured local foundation with durable WorkManager synchronization, replaceable remote interfaces, revision/token conflict detection, preserve-both conflict resolution, and sync status UI. The included remote implementation is an in-memory development fake, not cloud backup. Room note/search/metadata content is still plaintext, so attachment encryption is not presented as whole-vault encryption.
 
 The current build has one `:app` module. That keeps startup, ownership, and build configuration straightforward while the product surface is small. Baseline Profile and Macrobenchmark modules remain deferred to Phase 7, after the measured journeys and release behavior are stable enough to make those profiles meaningful.
 
@@ -23,7 +23,10 @@ MainActivity
                           ├── vault, attachment, and tag tables
                           ├── search aggregate and FTS index
                           └── persistent item/attachment operations
-                                └── fake coalesced scheduler
+                                └── unique WorkManager job
+                                      └── SyncRepository
+                                            ├── SyncApi/AuthProvider
+                                            └── RemoteFileStore
 ```
 
 These rules are invariants, not conventions:
@@ -34,7 +37,7 @@ These rules are invariants, not conventions:
 4. Scheduling happens only after the transaction commits. Scheduling failure leaves the durable operation available for recovery.
 5. Main-thread work is limited to state reduction and view rendering. Database and future file/network operations use explicit injected dispatchers.
 6. Lists are bounded and project only what the row needs. The app does not load all notes, attachments, or binary data into memory.
-7. The fake scheduler never consumes or completes a sync operation. It only coalesces the signal that durable work exists.
+7. WorkManager is only a durable wake-up mechanism. A queue row, leased operation identity, verified remote result, and Room commit determine completion.
 8. External filenames, MIME claims, sizes, and URIs are untrusted. Only a fully validated, checksummed internal copy may be referenced by Room.
 9. RecyclerView binding performs no hash, metadata parsing, decryption, or thumbnail generation; rows receive prepared metadata and a secure thumbnail content URI.
 10. Attachment plaintext is released only after full AES-GCM authentication and only through the non-exported secure provider while unlocked or under an explicit one-use external grant.
@@ -64,7 +67,7 @@ The list ViewModel exposes one immutable state with four meaningful render forms
 
 The `RecyclerView` uses `ListAdapter` and `DiffUtil`. IDs derive from the persistent item identity and are stable across reordering. Content equality includes only properties displayed by the row. Each query returns a 100-row window plus one lookahead row; explicit Previous/Next controls change a bounded SQL `OFFSET` instead of accumulating the whole vault in memory. Section and page coordinates survive process recreation. Active notes order pinned items first and then recently updated items. No row binding performs database work, hashing, OCR, thumbnail generation, or attachment loading.
 
-The toolbar switches the same shallow list UI among active Notes, Archived, and Trash sections. Archived rows can be opened or restored; trashed rows can be restored without exposing them to editing first. Soft deletion retains content and queued tombstone state, so neither archive nor trash is a one-way action.
+The activity-level bottom bar provides one-handed access to Notes, Archive, Trash, Search, and Settings. The primary vault toolbar is removed. Contextual editor/viewer/status screens keep only their own back and item actions. Archived rows can be opened or restored; trashed rows can be restored without exposing them to editing first. Soft deletion retains content and queued tombstone state, so neither archive nor trash is a one-way action.
 
 ### Note editor and autosave
 
@@ -78,7 +81,7 @@ Typing first updates immutable editor state in memory, so rendering is independe
 
 The editor flushes before an explicit navigation away and when its host stops, covering the application entering the background. The repository treats identical title/body content as a no-op, so a debounce followed immediately by a lifecycle flush cannot manufacture an extra local revision or duplicate queue operation. Autosave writes a persistent operation, but it does not enqueue a separate WorkManager request per keystroke; the scheduler signal is coalesced.
 
-Pin, favorite, archive, soft-delete, and restore are explicit repository commands rather than whole-entity replacement. This prevents a stale editor snapshot from reverting an independently changed flag.
+Pin, favorite, named item color, archive, soft-delete, and restore are explicit repository commands rather than whole-entity replacement. The selected color is rendered as a paired light/dark item surface and title color and is included in sync metadata. This prevents a stale editor snapshot from reverting an independently changed flag.
 
 ## Attachment import and viewing
 
@@ -106,7 +109,7 @@ Format version `0` remains only as a legacy migration input. After unlock, maint
 
 Persisted identifiers are collision-resistant locally generated strings, timestamps are UTC epoch milliseconds, and persisted enum-like values use stable string codes rather than ordinals. Large attachment bytes never belong in Room.
 
-The version 2 schema separates these responsibilities:
+The version 3 schema separates these responsibilities:
 
 | Table | Responsibility |
 | --- | --- |
@@ -125,7 +128,7 @@ Indexes cover created/updated ordering, deletion, sync state, pinned/favorite li
 
 Foreign keys cascade from an item to its attachment metadata, item/tag memberships, and search document. Conflict-origin identity and sync operations deliberately do not require a live parent: diagnostic copies and deletion tombstones may need to outlive the original row. Hard deletion is not part of the normal item delete action.
 
-Schema version 2 adds nullable image width, image height, and PDF page count columns plus the cleanup-journal table and its age index. `MIGRATION_1_2` is additive, preserves every existing row, and is included in the sole production migration chain. No destructive fallback exists.
+Schema version 2 adds nullable image width, image height, and PDF page count columns plus the cleanup-journal table and its age index. Version 3 adds a non-null stable item color with `DEFAULT` as the migration value for existing rows. `MIGRATION_1_2` and `MIGRATION_2_3` form the sole production chain. No destructive fallback exists.
 
 ### FTS aggregate
 
@@ -139,7 +142,7 @@ The public item ID is a UUID-like string, while FTS external content requires an
 
 `search_fts` indexes the corresponding text columns with Room FTS4 and the `unicode61` tokenizer. Room-managed external-content triggers keep the index aligned when the aggregate row changes. Application code writes `search_documents`, never the FTS virtual table directly. A search query joins FTS to the aggregate by `rowid`, then to `vault_items` by item ID, so results retain the canonical domain identity and deletion/archive rules.
 
-The search screen accepts at most 200 Unicode code points, extracts at most eight bounded letter/number terms, and compiles only quoted prefix expressions. Raw FTS operators are never accepted. Input is debounced for 300 ms and switched with `flatMapLatest`; results remain a live Room `Flow`, are limited to 100 narrow rows, and contain only a title and bounded highlighted snippet. Deleted items are excluded while archived items remain discoverable. Attachment filenames are included in the same aggregate and are covered by repository integration tests. `unicode61` does not provide sophisticated Thai or CJK word segmentation; improving language-specific search requires a measured, compatible tokenizer strategy.
+The search screen accepts at most 200 Unicode code points, extracts at most eight bounded letter/number terms, and compiles only quoted prefix expressions. Raw FTS operators are never accepted. Input is debounced for 120 ms from the first character and switched with `flatMapLatest`, so every typed letter progressively narrows the live Room results. Results are limited to 100 narrow rows and contain only a title and bounded highlighted snippet. Deleted items are excluded while archived items remain discoverable. Attachment filenames are included in the same aggregate and covered by integration tests. `unicode61` does not provide arbitrary mid-token substring search or sophisticated Thai/CJK segmentation; adding either requires a measured compatible index strategy.
 
 ### OCR pipeline
 
@@ -147,9 +150,9 @@ Image and PDF imports begin in a durable `PENDING` state. After unlock and first
 
 Before recognition, the authenticated attachment envelope is streamed into a random app-cache lease. Cancellation deletes the lease; process death leaves only an app-private `ocr-*.tmp` file that the next pipeline pass removes after one hour. Flash storage cannot promise physical secure erasure, so this is logical deletion, not a claim of forensic wiping. App lock cancellation stops the pipeline and content access is rechecked around decryption.
 
-Room conditionally claims `PENDING` or stale `PROCESSING` work by attachment ID and checksum. Success records the source checksum and extracted text, then recomputes the parent aggregate and updates `vault_items` plus `search_documents` in one transaction. A completed unchanged checksum is never selected again. Failures use stable non-sensitive codes; transient engine/memory failures may be explicitly retried, while corrupted, unsupported, or over-limit content is not retried indefinitely. OCR is derived local data and does not increment the user-content revision or add a sync operation in Phase 4.
+Room conditionally claims `PENDING` or stale `PROCESSING` work by attachment ID and checksum. Success records the source checksum and extracted text, then recomputes the parent aggregate and updates `vault_items` plus `search_documents` in one transaction. A completed unchanged checksum is never selected again. Failures use stable non-sensitive codes; transient engine/memory failures may be explicitly retried, while corrupted, unsupported, or over-limit content is not retried indefinitely. OCR is derived local data and does not increment the user-content revision.
 
-The FTS table duplicates searchable plaintext. This remains a deliberate known Phase 4 security limitation, not encryption.
+The FTS table duplicates searchable plaintext. This remains a deliberate known Phase 5 security limitation, not encryption.
 
 ## Transaction and revision model
 
@@ -163,9 +166,13 @@ Repository methods expose domain models and commands rather than Room entities. 
 6. commits once; and
 7. requests a coalesced scheduling wake-up.
 
-Queue coalescing must not use SQLite `REPLACE`, because replacement is implemented as delete plus insert and can invalidate ownership of in-flight work. The queue instead inserts-if-absent and updates the deduplication slot. A newer local revision replaces retry/lease ownership with a new operation identity. In later phases, completion must be conditional on the worker's claimed operation identity so an old in-flight upload cannot erase a newer edit.
+Queue coalescing does not use SQLite `REPLACE`, because replacement is implemented as delete plus insert and can invalidate ownership of in-flight work. The queue inserts-if-absent and updates the deduplication slot. A worker claims ready work with a random ten-minute lease; expired leases recover as retryable work. A newer local revision rotates the operation identity. Completion deletes only the claimed identity, advances acknowledged remote metadata conditionally, and cannot erase or mark a newer edit synchronized.
 
-The Phase 4 fake implementation records scheduling demand and exposes pending state for tests. It has no API or credential, performs no network I/O, and leaves operations pending. Attachment imports queue an `UPLOAD_ATTACHMENT` operation plus the item metadata upsert. A future WorkManager implementation must enforce attachment completion before uploading or marking referenced item metadata synchronized.
+`WorkManagerSyncScheduler` enqueues one unique immediate job and one unique six-hour periodic job. Both require connected networking; periodic work also requires battery-not-low. Its automatic startup initializer is removed, and the scheduler is first touched after the first unlocked frame. Attachment operations stream and verify ciphertext before the parent item may reference a remote path. Transient failures use bounded exponential backoff; authentication and permanent validation failures do not loop indefinitely.
+
+The in-memory fake implements `SyncApi`, `AuthProvider`, and `RemoteFileStore`. It assigns server revisions/version tokens, honors operation idempotency, emits incremental change pages, hashes streamed ciphertext, and retains no attachment bytes. Its state resets with the process, so it is deliberately not a backup or multi-device service. The stable client contract is documented in [Sync protocol](sync-protocol.md).
+
+Concurrent content uses local revision, last-synchronized revision, server revision, and opaque version token—not device time. A mismatch marks the local version as conflict and creates a linked remote copy. A remote deletion with local edits preserves the local content. The Conflicts screen labels both versions and queues only the version explicitly selected by the user. Sync status exposes pending, running, retry, permanent-failure, conflict, and last-success state without private payloads.
 
 ### Soft deletion
 
@@ -175,7 +182,7 @@ Deleting sets `deleted_at`, advances the local revision, and enqueues a delete/t
 
 Repository failures cross the presentation boundary as typed application failures or sealed results; views receive a non-sensitive message and no database/stack details. Cancellation is rethrown and never translated into a generic failure. A failed transaction commits none of its item, search, or queue changes. Attachment cleanup runs in a non-cancellable reconciliation section after checking Room references, while the durable journal covers process termination that no coroutine handler can observe. A post-commit scheduler failure does not roll back valid local data and cannot lose sync intent because that intent is already durable. UI warnings distinguish delayed sync, unavailable derived previews, and pending local file cleanup.
 
-The UI offers retry only where meaningful. Authentication, encryption/decryption, OCR, and policy-storage errors are typed in Phase 4; network, quota, and backup errors remain future boundaries and are not fabricated by the fake scheduler.
+The UI offers retry only where meaningful. Authentication, network, quota, conflict, encryption/decryption, OCR, and policy-storage failures are typed. Backup errors remain a Phase 6 boundary.
 
 ## Startup and performance decisions
 
@@ -194,9 +201,9 @@ There is no splash delay and no initial network dependency. Policy loading is a 
 
 The merged manifest retains only the profile installer’s AndroidX Startup entry; unused EmojiCompat and process-lifecycle initializers are explicitly removed, as is Room’s unused multi-process invalidation service. Any later library that adds a `ContentProvider` must receive the same audit. Performance claims must eventually be measured in release-like builds by the deferred baseline-profile and benchmark modules; debug timing is not an acceptance measurement.
 
-## Security boundary and known Phase 4 risks
+## Security boundary and known Phase 5 risks
 
-Phase 4 retains attachment confidentiality/integrity and a local access gate, but it is not the final VaultNote confidentiality model.
+Phase 5 retains attachment confidentiality/integrity and a local access gate, but it is not the final VaultNote confidentiality model.
 
 Mitigations already enforced by the architecture include:
 
@@ -221,11 +228,12 @@ Known residual risks include:
 - app lock defaults off, and its process-local session is not a per-read Keystore authentication requirement;
 - an explicitly chosen external viewer receives plaintext and may retain it;
 - key loss or app-data clearing makes attachments unrecoverable because encrypted backup is not implemented;
-- the fake scheduler provides neither remote backup nor multi-device durability;
+- the in-memory fake backend provides neither remote backup nor multi-device durability;
+- note/title/tag/OCR metadata is not end-to-end encrypted for a future production backend;
 - no encrypted manual backup or restore validation exists yet;
 - no server revision or conflict-resolution implementation has been exercised against a real backend.
 
-Accordingly, Phase 4 should not be represented as whole-vault encryption or the sole copy of irreplaceable material. The detailed boundaries are documented in [Security model](security-model.md), [Encryption format](encryption-format.md), and [Threat model](threat-model.md).
+Accordingly, Phase 5 should not be represented as whole-vault encryption or the sole copy of irreplaceable material. The detailed boundaries are documented in [Security model](security-model.md), [Encryption format](encryption-format.md), [Sync protocol](sync-protocol.md), and [Threat model](threat-model.md).
 
 ## Testing strategy
 
@@ -251,15 +259,15 @@ JVM tests use injected clocks, IDs, dispatchers, file managers, and fakes to mak
 - fail-closed lock startup, monotonic background timeouts, and rotation-safe foreground handling;
 - one-use, attachment-bound, expiring external viewer grants.
 
-Room exports schema JSON to a version-controlled directory and supplies it to instrumentation tests. The migration test creates a representative version 1 fixture, executes `MIGRATION_1_2`, validates the complete version 2 schema, and verifies that original note/attachment data remains while new media metadata defaults to null. Destructive migration fallback is prohibited.
+Room exports schema JSON to a version-controlled directory and supplies it to instrumentation tests. The migration test creates a representative version 1 fixture, executes the complete `1 → 2 → 3` chain, and verifies that original note/attachment data remains, new media metadata defaults to null, and item color defaults to `DEFAULT`. Destructive migration fallback is prohibited.
 
 The standard verification commands and required SDK/JDK versions are listed in the repository [README](../README.md). Their presence documents the expected checks; only command output from the current environment can establish whether a particular run passed.
 
 ## Evolution seams
 
-The Phase 4 boundaries are designed for replacement rather than rewrites:
+The Phase 5 boundaries are designed for replacement rather than rewrites:
 
-- the fake scheduler becomes a unique WorkManager chain while the durable queue remains authoritative;
+- the in-memory fake backend can be replaced behind `SyncApi`, `AuthProvider`, and `RemoteFileStore` while WorkManager and the durable queue remain authoritative;
 - remote API, authentication, and file storage implementations sit behind interfaces and write successful results back to Room;
 - versioned Keystore aliases and envelopes permit future key rotation without placing bytes in Room;
 - an OCR processor updates the existing aggregate asynchronously and only for a new checksum;

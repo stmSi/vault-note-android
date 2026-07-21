@@ -9,6 +9,17 @@ enum class VaultItemType {
     LINK,
 }
 
+/** Stable wire/database values for the user-selected item color. */
+enum class VaultItemColor {
+    DEFAULT,
+    RED,
+    ORANGE,
+    YELLOW,
+    GREEN,
+    BLUE,
+    PURPLE,
+}
+
 enum class ItemSyncStatus {
     LOCAL_ONLY,
     PENDING,
@@ -92,6 +103,7 @@ data class OpenableAttachment(
 data class VaultItemSummary(
     val id: String,
     val type: VaultItemType,
+    val color: VaultItemColor,
     val title: String,
     val bodyPreview: String,
     val isPinned: Boolean,
@@ -100,6 +112,7 @@ data class VaultItemSummary(
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
     val syncStatus: ItemSyncStatus,
+    val conflictOriginId: String?,
     val tags: List<VaultTag>,
 )
 
@@ -107,6 +120,7 @@ data class VaultNote(
     val id: String,
     val title: String,
     val body: String,
+    val color: VaultItemColor,
     val ocrText: String,
     val isPinned: Boolean,
     val isFavorite: Boolean,

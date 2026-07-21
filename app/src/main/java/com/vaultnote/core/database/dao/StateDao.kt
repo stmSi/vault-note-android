@@ -17,6 +17,9 @@ interface SyncStateDao {
     @Update(onConflict = OnConflictStrategy.ABORT)
     suspend fun update(state: SyncStateEntity): Int
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(state: SyncStateEntity)
+
     @Query("SELECT * FROM sync_state WHERE scope = :scope LIMIT 1")
     suspend fun get(scope: String): SyncStateEntity?
 

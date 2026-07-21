@@ -6,6 +6,13 @@ import org.junit.Test
 
 class SearchQueryCompilerTest {
     @Test
+    fun `a single letter creates a prefix query for incremental search`() {
+        val compiled = SearchQueryCompiler.compile("p") as SearchQueryCompilation.Valid
+
+        assertEquals("\"p\"*", compiled.query.matchExpression)
+    }
+
+    @Test
     fun `untrusted operators are converted to quoted prefix terms`() {
         val compiled = SearchQueryCompiler.compile("paper OR secret* -tag")
 

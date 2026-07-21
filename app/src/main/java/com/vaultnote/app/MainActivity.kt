@@ -11,6 +11,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.doOnPreDraw
 import androidx.core.view.isVisible
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePaddingRelative
 import androidx.fragment.app.commit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -29,6 +32,9 @@ import com.vaultnote.feature.importing.IncomingImportParseResult
 import com.vaultnote.feature.importing.IncomingImportParser
 import com.vaultnote.feature.viewer.AttachmentViewerFragment
 import com.vaultnote.feature.vault.VaultFragment
+import com.vaultnote.feature.vault.VaultSection
+import com.vaultnote.feature.sync.SyncStatusFragment
+import com.vaultnote.feature.conflicts.ConflictsFragment
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.security.LockPolicy
 import com.vaultnote.core.security.VaultLockState
@@ -43,6 +49,8 @@ class MainActivity : AppCompatActivity(), MainNavigator {
     private var ocrProcessingJob: Job? = null
     private var securityMaintenanceStarted = false
     private var policyErrorShown = false
+    private var isRenderingPrimaryNavigation = false
+    private var backgroundSyncScheduled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -50,6 +58,8 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         enableEdgeToEdge()
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        configurePrimaryNavigation()
+        supportFragmentManager.addOnBackStackChangedListener(::updatePrimaryNavigation)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             setRecentsScreenshotEnabled(false)
         }
@@ -94,10 +104,12 @@ class MainActivity : AppCompatActivity(), MainNavigator {
 
     override fun openNoteEditor(itemId: String) {
         if (!canNavigate()) return
+        binding.primaryNavigation.isVisible = false
         supportFragmentManager.commit {
             setReorderingAllowed(true)
             replace(R.id.fragment_container, NoteEditorFragment.newInstance(itemId))
             addToBackStack(NoteEditorFragment.BACK_STACK_NAME)
+            runOnCommit(::updatePrimaryNavigation)
         }
     }
 
@@ -115,6 +127,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
             return true
         }
         if (supportFragmentManager.isStateSaved) return false
+        binding.primaryNavigation.isVisible = false
         val token = incomingImports.offer(incomingImport)
         supportFragmentManager.commit {
             setReorderingAllowed(true)
@@ -123,6 +136,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
                 ImportPreviewFragment.newInstance(token, parentItemId, cameraCaptureId),
             )
             addToBackStack(ImportPreviewFragment.BACK_STACK_NAME)
+            runOnCommit(::updatePrimaryNavigation)
         }
         return true
     }
@@ -138,29 +152,41 @@ class MainActivity : AppCompatActivity(), MainNavigator {
 
     override fun openAttachment(attachmentId: String) {
         if (!canNavigate()) return
+        binding.primaryNavigation.isVisible = false
         supportFragmentManager.commit {
             setReorderingAllowed(true)
             replace(R.id.fragment_container, AttachmentViewerFragment.newInstance(attachmentId))
             addToBackStack(AttachmentViewerFragment.BACK_STACK_NAME)
+            runOnCommit(::updatePrimaryNavigation)
         }
     }
 
     override fun openSecuritySettings() {
-        if (!canNavigate()) return
-        supportFragmentManager.commit {
-            setReorderingAllowed(true)
-            replace(R.id.fragment_container, SecuritySettingsFragment.newInstance())
-            addToBackStack(SecuritySettingsFragment.BACK_STACK_NAME)
-        }
+        showPrimaryDestination(
+            fragment = SecuritySettingsFragment.newInstance(),
+            navigationItemId = R.id.navigation_settings,
+        )
     }
 
     override fun openSearch() {
-        if (!canNavigate()) return
-        supportFragmentManager.commit {
-            setReorderingAllowed(true)
-            replace(R.id.fragment_container, SearchFragment.newInstance())
-            addToBackStack(SearchFragment.BACK_STACK_NAME)
-        }
+        showPrimaryDestination(
+            fragment = SearchFragment.newInstance(),
+            navigationItemId = R.id.navigation_search,
+        )
+    }
+
+    override fun openSyncStatus() {
+        openContextualScreen(
+            fragment = SyncStatusFragment.newInstance(),
+            backStackName = SyncStatusFragment.BACK_STACK_NAME,
+        )
+    }
+
+    override fun openConflicts() {
+        openContextualScreen(
+            fragment = ConflictsFragment.newInstance(),
+            backStackName = ConflictsFragment.BACK_STACK_NAME,
+        )
     }
 
     override fun navigateBack() {
@@ -244,6 +270,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
     private fun renderSecurityState(state: VaultLockState) {
         val locked = !state.isPolicyLoaded || state.isLocked
         binding.lockContainer.isVisible = locked
+        if (locked) binding.primaryNavigation.isVisible = false
         binding.fragmentContainer.importantForAccessibility = if (locked) {
             View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         } else {
@@ -259,10 +286,12 @@ class MainActivity : AppCompatActivity(), MainNavigator {
             if (::binding.isInitialized) appContainer().imageLoader.memoryCache?.clear()
         } else {
             ensureVaultRootAndDeferredImport()
+            updatePrimaryNavigation()
             binding.root.doOnPreDraw { root ->
                 root.post {
                     if (appContainer().lockManager.isContentAccessAllowed()) {
                         startLegacyEncryptionMigration()
+                        scheduleBackgroundSync()
                     }
                 }
             }
@@ -285,6 +314,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
             supportFragmentManager.commit {
                 setReorderingAllowed(true)
                 replace(R.id.fragment_container, VaultFragment.newInstance())
+                runOnCommit(::updatePrimaryNavigation)
             }
         }
         incomingImports.takeDeferred()?.let { deferred ->
@@ -347,9 +377,119 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         }
     }
 
+    private fun scheduleBackgroundSync() {
+        if (backgroundSyncScheduled) return
+        backgroundSyncScheduled = true
+        appContainer().syncScheduler.ensurePeriodicSync()
+        appContainer().syncScheduler.requestSync()
+    }
+
     private fun canNavigate(): Boolean =
         appContainer().lockManager.isContentAccessAllowed() &&
             !supportFragmentManager.isStateSaved
+
+    private fun configurePrimaryNavigation() {
+        binding.primaryNavigation.setOnItemSelectedListener { item ->
+            if (isRenderingPrimaryNavigation) return@setOnItemSelectedListener true
+            when (item.itemId) {
+                R.id.navigation_notes -> showVaultSection(VaultSection.ACTIVE)
+                R.id.navigation_archived -> showVaultSection(VaultSection.ARCHIVED)
+                R.id.navigation_trash -> showVaultSection(VaultSection.TRASH)
+                R.id.navigation_search -> openSearch()
+                R.id.navigation_settings -> openSecuritySettings()
+                else -> return@setOnItemSelectedListener false
+            }
+            true
+        }
+        val startPadding = binding.primaryNavigation.paddingStart
+        val endPadding = binding.primaryNavigation.paddingEnd
+        val bottomPadding = binding.primaryNavigation.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(binding.primaryNavigation) { view, insets ->
+            val safe = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+            )
+            val isRtl = view.layoutDirection == View.LAYOUT_DIRECTION_RTL
+            view.updatePaddingRelative(
+                start = startPadding + if (isRtl) safe.right else safe.left,
+                end = endPadding + if (isRtl) safe.left else safe.right,
+                bottom = bottomPadding + safe.bottom,
+            )
+            insets
+        }
+    }
+
+    private fun showVaultSection(section: VaultSection) {
+        val itemId = when (section) {
+            VaultSection.ACTIVE -> R.id.navigation_notes
+            VaultSection.ARCHIVED -> R.id.navigation_archived
+            VaultSection.TRASH -> R.id.navigation_trash
+        }
+        showPrimaryDestination(VaultFragment.newInstance(section), itemId)
+    }
+
+    private fun openContextualScreen(
+        fragment: androidx.fragment.app.Fragment,
+        backStackName: String,
+    ) {
+        if (!canNavigate()) return
+        binding.primaryNavigation.isVisible = false
+        supportFragmentManager.commit {
+            setReorderingAllowed(true)
+            replace(R.id.fragment_container, fragment)
+            addToBackStack(backStackName)
+            runOnCommit(::updatePrimaryNavigation)
+        }
+    }
+
+    private fun showPrimaryDestination(
+        fragment: androidx.fragment.app.Fragment,
+        navigationItemId: Int,
+    ) {
+        if (!canNavigate()) return
+        val current = supportFragmentManager.findFragmentById(R.id.fragment_container)
+        val alreadySelected = when {
+            current is VaultFragment && fragment is VaultFragment ->
+                VaultFragment.sectionOf(current) == VaultFragment.sectionOf(fragment)
+            else -> current?.javaClass == fragment.javaClass
+        }
+        setPrimaryNavigationSelection(navigationItemId)
+        binding.primaryNavigation.isVisible = true
+        if (alreadySelected) return
+        supportFragmentManager.commit {
+            setReorderingAllowed(true)
+            replace(R.id.fragment_container, fragment)
+            runOnCommit(::updatePrimaryNavigation)
+        }
+    }
+
+    private fun updatePrimaryNavigation() {
+        if (!::binding.isInitialized || !appContainer().lockManager.isContentAccessAllowed()) {
+            if (::binding.isInitialized) binding.primaryNavigation.isVisible = false
+            return
+        }
+        val current = supportFragmentManager.findFragmentById(R.id.fragment_container)
+        val selectedId = when (current) {
+            is VaultFragment -> when (VaultFragment.sectionOf(current)) {
+                VaultSection.ACTIVE -> R.id.navigation_notes
+                VaultSection.ARCHIVED -> R.id.navigation_archived
+                VaultSection.TRASH -> R.id.navigation_trash
+            }
+            is SearchFragment -> R.id.navigation_search
+            is SecuritySettingsFragment -> R.id.navigation_settings
+            else -> null
+        }
+        binding.primaryNavigation.isVisible = selectedId != null
+        selectedId?.let(::setPrimaryNavigationSelection)
+    }
+
+    private fun setPrimaryNavigationSelection(itemId: Int) {
+        isRenderingPrimaryNavigation = true
+        try {
+            binding.primaryNavigation.menu.findItem(itemId)?.isChecked = true
+        } finally {
+            isRenderingPrimaryNavigation = false
+        }
+    }
 
     private companion object {
         const val SECURITY_MIGRATION_BATCH = 8

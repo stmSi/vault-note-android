@@ -21,5 +21,9 @@ interface MainNavigator {
 
     fun openSearch()
 
+    fun openSyncStatus()
+
+    fun openConflicts()
+
     fun navigateBack()
 }

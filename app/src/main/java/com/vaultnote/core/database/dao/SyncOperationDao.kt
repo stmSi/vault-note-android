@@ -8,6 +8,7 @@ import androidx.room.Update
 import com.vaultnote.core.common.model.SyncOperationState
 import com.vaultnote.core.common.model.SyncOperationType
 import com.vaultnote.core.database.entity.SyncOperationEntity
+import com.vaultnote.core.database.model.SyncQueueStatusRow
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -71,6 +72,41 @@ interface SyncOperationDao {
     @Query(
         """
         UPDATE sync_operations SET
+            state = 'RETRY_WAIT',
+            lease_token = NULL,
+            lease_expires_at = NULL,
+            next_attempt_at = :now,
+            updated_at = :now,
+            last_error_code = 'worker_interrupted'
+        WHERE state = 'RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at <= :now
+        """,
+    )
+    suspend fun recoverExpiredLeases(now: Long): Int
+
+    @Query(
+        """
+        SELECT
+            COALESCE(SUM(CASE WHEN state = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending_count,
+            COALESCE(SUM(CASE WHEN state = 'RUNNING' THEN 1 ELSE 0 END), 0) AS running_count,
+            COALESCE(SUM(CASE WHEN state = 'RETRY_WAIT' THEN 1 ELSE 0 END), 0) AS retry_count,
+            COALESCE(SUM(CASE WHEN state = 'FAILED_PERMANENT' THEN 1 ELSE 0 END), 0) AS failed_count
+        FROM sync_operations
+        WHERE state != 'COMPLETED'
+        """,
+    )
+    fun observeQueueStatus(): Flow<SyncQueueStatusRow>
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM sync_operations
+        WHERE item_id = :itemId AND state != 'COMPLETED'
+        """,
+    )
+    suspend fun countOutstandingForItem(itemId: String): Long
+
+    @Query(
+        """
+        UPDATE sync_operations SET
             state = :state,
             attempt_count = :attemptCount,
             next_attempt_at = :nextAttemptAt,
@@ -97,4 +133,15 @@ interface SyncOperationDao {
 
     @Query("DELETE FROM sync_operations WHERE operation_id = :operationId")
     suspend fun deleteById(operationId: String): Int
+
+    @Query("DELETE FROM sync_operations WHERE item_id = :itemId")
+    suspend fun deleteForItem(itemId: String): Int
+
+    @Query(
+        """
+        DELETE FROM sync_operations
+        WHERE item_id = :itemId AND operation_type IN ('UPSERT_ITEM', 'DELETE_ITEM')
+        """,
+    )
+    suspend fun deleteItemMetadataOperations(itemId: String): Int
 }

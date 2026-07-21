@@ -8,7 +8,6 @@ import android.widget.ArrayAdapter
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
-import androidx.core.view.updatePadding
 import androidx.core.view.updatePaddingRelative
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
@@ -17,8 +16,8 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.snackbar.Snackbar
 import com.vaultnote.R
-import com.vaultnote.app.MainNavigator
 import com.vaultnote.app.appContainer
+import com.vaultnote.app.MainNavigator
 import com.vaultnote.core.security.LockPolicy
 import com.vaultnote.databinding.FragmentSecuritySettingsBinding
 import com.vaultnote.feature.lock.AndroidVaultAuthenticator
@@ -52,9 +51,6 @@ class SecuritySettingsFragment : Fragment() {
             onSuccess = viewModel::confirmLockEnabled,
             onError = { cancelled -> if (!cancelled) showMessage(R.string.unlock_failed) },
         )
-        currentBinding.toolbar.setNavigationOnClickListener {
-            (activity as? MainNavigator)?.navigateBack()
-        }
         val timeoutLabels = timeoutOptions().map(TimeoutOption::label)
         currentBinding.timeoutInput.setAdapter(
             ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, timeoutLabels),
@@ -71,6 +67,12 @@ class SecuritySettingsFragment : Fragment() {
             }
         }
         currentBinding.retryButton.setOnClickListener { viewModel.retry() }
+        currentBinding.syncStatusButton.setOnClickListener {
+            (activity as? MainNavigator)?.openSyncStatus()
+        }
+        currentBinding.conflictsButton.setOnClickListener {
+            (activity as? MainNavigator)?.openConflicts()
+        }
         applyInsets(currentBinding)
         collectState(currentBinding)
     }
@@ -138,18 +140,16 @@ class SecuritySettingsFragment : Fragment() {
     private fun applyInsets(currentBinding: FragmentSecuritySettingsBinding) {
         val rootStart = currentBinding.content.paddingStart
         val rootEnd = currentBinding.content.paddingEnd
-        val rootBottom = currentBinding.content.paddingBottom
-        val toolbarTop = currentBinding.toolbar.paddingTop
+        val rootTop = currentBinding.content.paddingTop
         ViewCompat.setOnApplyWindowInsetsListener(currentBinding.root) { _, insets ->
             val safe = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
             )
             val isRtl = currentBinding.root.layoutDirection == View.LAYOUT_DIRECTION_RTL
-            currentBinding.toolbar.updatePadding(top = toolbarTop + safe.top)
             currentBinding.content.updatePaddingRelative(
                 start = rootStart + if (isRtl) safe.right else safe.left,
+                top = rootTop + safe.top,
                 end = rootEnd + if (isRtl) safe.left else safe.right,
-                bottom = rootBottom + safe.bottom,
             )
             insets
         }

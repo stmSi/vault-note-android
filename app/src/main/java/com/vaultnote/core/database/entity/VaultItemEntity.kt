@@ -6,6 +6,7 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.vaultnote.core.common.model.ItemSyncStatus
 import com.vaultnote.core.common.model.VaultItemType
+import com.vaultnote.core.common.model.VaultItemColor
 
 @Entity(
     tableName = "vault_items",
@@ -29,6 +30,8 @@ data class VaultItemEntity(
     val id: String,
     @ColumnInfo(name = "type")
     val type: VaultItemType,
+    @ColumnInfo(name = "color", defaultValue = "'DEFAULT'")
+    val color: VaultItemColor = VaultItemColor.DEFAULT,
     @ColumnInfo(name = "title")
     val title: String,
     @ColumnInfo(name = "body")

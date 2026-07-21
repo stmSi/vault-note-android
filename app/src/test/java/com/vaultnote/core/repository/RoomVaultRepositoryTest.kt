@@ -9,6 +9,7 @@ import com.vaultnote.core.common.IdGenerator
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.model.SyncOperationType
 import com.vaultnote.core.common.model.SyncOperationState
+import com.vaultnote.core.common.model.VaultItemColor
 import com.vaultnote.core.database.VaultDatabase
 import com.vaultnote.core.sync.CoalescingFakeSyncScheduler
 import java.util.concurrent.atomic.AtomicInteger
@@ -141,6 +142,19 @@ class RoomVaultRepositoryTest {
         repository.setArchived(itemId, false).requireSuccess()
         assertEquals(listOf(itemId), repository.observeActiveItems().first().map { it.id })
         assertTrue(repository.observeArchivedItems().first().isEmpty())
+    }
+
+    @Test
+    fun `item color persists and advances sync revision`() = runBlocking {
+        val itemId = repository.createNote("Color", "Body").successValue()
+
+        repository.setColor(itemId, VaultItemColor.GREEN).requireSuccess()
+
+        val note = requireNotNull(repository.observeNote(itemId).first())
+        val summary = repository.observeActiveItems().first().single()
+        assertEquals(VaultItemColor.GREEN, note.color)
+        assertEquals(VaultItemColor.GREEN, summary.color)
+        assertEquals(2L, note.localRevision)
     }
 
     @Test
