@@ -56,9 +56,9 @@ class MainActivity : AppCompatActivity(), MainNavigator {
     private var policyErrorShown = false
     private var isRenderingPrimaryNavigation = false
     private var backgroundSyncScheduled = false
-    private var secureDocumentPickerDepth = 0
-    private var secureDocumentPickerBackgroundedAt: Long? = null
-    private var secureDocumentPickerLockJob: Job? = null
+    private var secureExternalHandoffDepth = 0
+    private var secureExternalHandoffBackgroundedAt: Long? = null
+    private var secureExternalHandoffLockJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -103,13 +103,13 @@ class MainActivity : AppCompatActivity(), MainNavigator {
 
     override fun onStart() {
         super.onStart()
-        val pickerBackgroundedAt = secureDocumentPickerBackgroundedAt
-        secureDocumentPickerLockJob?.cancel()
-        secureDocumentPickerLockJob = null
-        secureDocumentPickerBackgroundedAt = null
-        if (secureDocumentPickerDepth > 0 && pickerBackgroundedAt != null) {
-            val elapsed = (SystemClock.elapsedRealtime() - pickerBackgroundedAt).coerceAtLeast(0L)
-            if (elapsed >= secureDocumentPickerGraceMillis()) {
+        val handoffBackgroundedAt = secureExternalHandoffBackgroundedAt
+        secureExternalHandoffLockJob?.cancel()
+        secureExternalHandoffLockJob = null
+        secureExternalHandoffBackgroundedAt = null
+        if (secureExternalHandoffDepth > 0 && handoffBackgroundedAt != null) {
+            val elapsed = (SystemClock.elapsedRealtime() - handoffBackgroundedAt).coerceAtLeast(0L)
+            if (elapsed >= secureExternalHandoffGraceMillis()) {
                 appContainer().lockManager.lockNow()
             }
         } else {
@@ -119,8 +119,8 @@ class MainActivity : AppCompatActivity(), MainNavigator {
 
     override fun onStop() {
         if (!isChangingConfigurations) {
-            if (secureDocumentPickerDepth > 0) {
-                beginPickerBackgroundGrace()
+            if (secureExternalHandoffDepth > 0) {
+                beginExternalHandoffBackgroundGrace()
             } else {
                 appContainer().lockManager.onBackground()
             }
@@ -226,19 +226,19 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         )
     }
 
-    override fun beginSecureDocumentPicker(): Boolean {
+    override fun beginSecureExternalHandoff(): Boolean {
         if (!appContainer().lockManager.isContentAccessAllowed()) return false
-        secureDocumentPickerDepth += 1
+        secureExternalHandoffDepth += 1
         return true
     }
 
-    override fun endSecureDocumentPicker() {
-        if (secureDocumentPickerDepth == 0) return
-        secureDocumentPickerDepth -= 1
-        if (secureDocumentPickerDepth == 0) {
-            secureDocumentPickerLockJob?.cancel()
-            secureDocumentPickerLockJob = null
-            secureDocumentPickerBackgroundedAt = null
+    override fun endSecureExternalHandoff() {
+        if (secureExternalHandoffDepth == 0) return
+        secureExternalHandoffDepth -= 1
+        if (secureExternalHandoffDepth == 0) {
+            secureExternalHandoffLockJob?.cancel()
+            secureExternalHandoffLockJob = null
+            secureExternalHandoffBackgroundedAt = null
         }
     }
 
@@ -441,20 +441,20 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         appContainer().lockManager.isContentAccessAllowed() &&
             !supportFragmentManager.isStateSaved
 
-    private fun beginPickerBackgroundGrace() {
-        if (secureDocumentPickerBackgroundedAt != null) return
-        secureDocumentPickerBackgroundedAt = SystemClock.elapsedRealtime()
-        secureDocumentPickerLockJob?.cancel()
-        secureDocumentPickerLockJob = lifecycleScope.launch {
-            delay(secureDocumentPickerGraceMillis())
-            if (secureDocumentPickerDepth > 0 && secureDocumentPickerBackgroundedAt != null) {
+    private fun beginExternalHandoffBackgroundGrace() {
+        if (secureExternalHandoffBackgroundedAt != null) return
+        secureExternalHandoffBackgroundedAt = SystemClock.elapsedRealtime()
+        secureExternalHandoffLockJob?.cancel()
+        secureExternalHandoffLockJob = lifecycleScope.launch {
+            delay(secureExternalHandoffGraceMillis())
+            if (secureExternalHandoffDepth > 0 && secureExternalHandoffBackgroundedAt != null) {
                 appContainer().lockManager.lockNow()
             }
         }
     }
 
-    private fun secureDocumentPickerGraceMillis(): Long = maxOf(
-        MIN_DOCUMENT_PICKER_GRACE_MILLIS,
+    private fun secureExternalHandoffGraceMillis(): Long = maxOf(
+        MIN_EXTERNAL_HANDOFF_GRACE_MILLIS,
         appContainer().lockManager.state.value.policy.backgroundTimeoutMillis,
     )
 
@@ -605,6 +605,6 @@ class MainActivity : AppCompatActivity(), MainNavigator {
     private companion object {
         const val SECURITY_MIGRATION_BATCH = 8
         const val OCR_BATCH = 2
-        const val MIN_DOCUMENT_PICKER_GRACE_MILLIS = 120_000L
+        const val MIN_EXTERNAL_HANDOFF_GRACE_MILLIS = 120_000L
     }
 }

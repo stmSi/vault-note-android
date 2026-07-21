@@ -1,5 +1,6 @@
 package com.vaultnote.feature.viewer
 
+import android.content.ActivityNotFoundException
 import android.os.Bundle
 import android.text.format.Formatter
 import android.view.LayoutInflater
@@ -26,6 +27,8 @@ import com.vaultnote.app.MainNavigator
 import com.vaultnote.app.appContainer
 import com.vaultnote.core.common.model.OpenableAttachment
 import com.vaultnote.databinding.FragmentAttachmentViewerBinding
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class AttachmentViewerFragment : Fragment() {
@@ -33,7 +36,11 @@ class AttachmentViewerFragment : Fragment() {
     private var imageRequest: Disposable? = null
     private var loadedImageAttachmentId: String? = null
     private var openableAttachment: OpenableAttachment? = null
+    private var externalViewerHandoffPending = false
+    private var externalViewerWasPaused = false
+    private var externalViewerGuardJob: Job? = null
     private val saveDocument = registerForActivityResult(CreateAttachmentDocumentContract()) { uri ->
+        (activity as? MainNavigator)?.endSecureExternalHandoff()
         viewModel.completeSave(uri)
     }
     private val attachmentId: String by lazy(LazyThreadSafetyMode.NONE) {
@@ -75,7 +82,20 @@ class AttachmentViewerFragment : Fragment() {
         collectState(currentBinding)
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (externalViewerHandoffPending && externalViewerWasPaused) {
+            finishExternalViewerHandoff()
+        }
+    }
+
+    override fun onPause() {
+        if (externalViewerHandoffPending) externalViewerWasPaused = true
+        super.onPause()
+    }
+
     override fun onDestroyView() {
+        finishExternalViewerHandoff()
         imageRequest?.dispose()
         imageRequest = null
         loadedImageAttachmentId = null
@@ -190,7 +210,7 @@ class AttachmentViewerFragment : Fragment() {
 
     private fun onMenuItemSelected(item: MenuItem): Boolean = when (item.itemId) {
         R.id.action_save_attachment -> {
-            viewModel.prepareSave()?.let(saveDocument::launch)
+            launchSaveDocument()
             true
         }
         R.id.action_share_attachment -> {
@@ -211,14 +231,79 @@ class AttachmentViewerFragment : Fragment() {
 
     private fun openExternally() {
         val attachment = openableAttachment ?: return
-        val outcome = requireContext().appContainer().fileViewer.open(requireActivity(), attachment)
-        showHandoffFailure(outcome)
+        launchExternalViewer {
+            requireContext().appContainer().fileViewer.open(requireActivity(), attachment)
+        }
     }
 
     private fun shareAttachment() {
         val attachment = openableAttachment ?: return
-        val outcome = requireContext().appContainer().fileViewer.share(requireActivity(), attachment)
+        launchExternalViewer {
+            requireContext().appContainer().fileViewer.share(requireActivity(), attachment)
+        }
+    }
+
+    private fun launchExternalViewer(launch: () -> FileViewerResult) {
+        if (externalViewerHandoffPending) return
+        val navigator = activity as? MainNavigator
+        if (navigator == null) {
+            showMessage(R.string.no_viewer_available)
+            return
+        }
+        if (!navigator.beginSecureExternalHandoff()) {
+            showMessage(R.string.vault_locked_message)
+            return
+        }
+        externalViewerHandoffPending = true
+        externalViewerWasPaused = false
+        val outcome = launch()
+        if (outcome == FileViewerResult.Opened) {
+            externalViewerGuardJob?.cancel()
+            externalViewerGuardJob = viewLifecycleOwner.lifecycleScope.launch {
+                delay(EXTERNAL_LAUNCH_SETTLE_MILLIS)
+                if (externalViewerHandoffPending && !externalViewerWasPaused) {
+                    finishExternalViewerHandoff()
+                }
+            }
+        } else {
+            finishExternalViewerHandoff()
+        }
         showHandoffFailure(outcome)
+    }
+
+    private fun finishExternalViewerHandoff() {
+        if (!externalViewerHandoffPending) return
+        externalViewerHandoffPending = false
+        externalViewerWasPaused = false
+        externalViewerGuardJob?.cancel()
+        externalViewerGuardJob = null
+        (activity as? MainNavigator)?.endSecureExternalHandoff()
+    }
+
+    private fun launchSaveDocument() {
+        val request = viewModel.prepareSave() ?: return
+        val navigator = activity as? MainNavigator
+        if (navigator == null) {
+            viewModel.completeSave(null)
+            showMessage(R.string.file_picker_unavailable)
+            return
+        }
+        if (!navigator.beginSecureExternalHandoff()) {
+            viewModel.completeSave(null)
+            showMessage(R.string.vault_locked_message)
+            return
+        }
+        try {
+            saveDocument.launch(request)
+        } catch (_: ActivityNotFoundException) {
+            navigator.endSecureExternalHandoff()
+            viewModel.completeSave(null)
+            showMessage(R.string.file_picker_unavailable)
+        } catch (_: SecurityException) {
+            navigator.endSecureExternalHandoff()
+            viewModel.completeSave(null)
+            showMessage(R.string.file_picker_unavailable)
+        }
     }
 
     private fun showHandoffFailure(outcome: FileViewerResult) {
@@ -228,6 +313,10 @@ class AttachmentViewerFragment : Fragment() {
             FileViewerResult.AccessDenied -> R.string.viewer_access_denied
             FileViewerResult.InvalidFile -> R.string.viewer_file_invalid
         }
+        showMessage(message)
+    }
+
+    private fun showMessage(message: Int) {
         binding?.root?.let { Snackbar.make(it, message, Snackbar.LENGTH_LONG).show() }
     }
 
@@ -294,6 +383,7 @@ class AttachmentViewerFragment : Fragment() {
         const val RESULT_DELETE_WARNING_REASONS = "warning_reasons"
         private const val ARG_ATTACHMENT_ID = "attachment_id"
         private const val MAX_IMAGE_PREVIEW_PIXELS = 1_600
+        private const val EXTERNAL_LAUNCH_SETTLE_MILLIS = 1_000L
 
         fun newInstance(attachmentId: String): AttachmentViewerFragment =
             AttachmentViewerFragment().apply {

@@ -8,6 +8,7 @@ import com.vaultnote.feature.vault.VaultFragment
 import com.vaultnote.feature.vault.VaultSection
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -61,18 +62,27 @@ class MainActivityNavigationTest {
     }
 
     @Test
-    fun `short secure document picker handoff does not trigger immediate lock`() {
+    fun `short secure external handoff does not trigger immediate lock`() {
         val lockManager = activity.appContainer().lockManager
         lockManager.applyPolicy(LockPolicy(true, 0L, true))
         lockManager.unlock()
 
-        assertTrue(activity.beginSecureDocumentPicker())
+        assertTrue(activity.beginSecureExternalHandoff())
         controller.pause().stop()
         assertTrue(lockManager.isContentAccessAllowed())
 
         controller.start().resume()
-        activity.endSecureDocumentPicker()
+        activity.endSecureExternalHandoff()
         assertTrue(lockManager.isContentAccessAllowed())
+    }
+
+    @Test
+    fun `locked vault cannot begin an external handoff`() {
+        val lockManager = activity.appContainer().lockManager
+        lockManager.applyPolicy(LockPolicy(true, 0L, true))
+        lockManager.lockNow()
+
+        assertFalse(activity.beginSecureExternalHandoff())
     }
 
     private fun currentFragment() =

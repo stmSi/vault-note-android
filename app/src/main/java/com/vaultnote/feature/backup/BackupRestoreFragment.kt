@@ -27,7 +27,7 @@ class BackupRestoreFragment : Fragment() {
     private var binding: FragmentBackupRestoreBinding? = null
     private var confirmationVisible = false
     private val openDocument = registerForActivityResult(OpenBackupDocumentContract()) { uri ->
-        (activity as? MainNavigator)?.endSecureDocumentPicker()
+        (activity as? MainNavigator)?.endSecureExternalHandoff()
         viewModel.selectSource(uri)
     }
     private val viewModel: BackupRestoreViewModel by viewModels {
@@ -141,17 +141,17 @@ class BackupRestoreFragment : Fragment() {
             showMessage(R.string.file_picker_unavailable)
             return
         }
-        if (!navigator.beginSecureDocumentPicker()) {
+        if (!navigator.beginSecureExternalHandoff()) {
             showMessage(R.string.vault_locked_message)
             return
         }
         try {
             openDocument.launch(Unit)
         } catch (_: ActivityNotFoundException) {
-            navigator.endSecureDocumentPicker()
+            navigator.endSecureExternalHandoff()
             showMessage(R.string.file_picker_unavailable)
         } catch (_: SecurityException) {
-            navigator.endSecureDocumentPicker()
+            navigator.endSecureExternalHandoff()
             showMessage(R.string.file_picker_unavailable)
         }
     }

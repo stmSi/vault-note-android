@@ -24,6 +24,8 @@ App lock is optional and defaults off so upgrading users are not locked out unex
 
 Lock state is process-local and starts fail-closed until the Room policy loads. With lock enabled, a new process starts locked. Backgrounding starts the configured timeout; rotation does not. Locking overlays an opaque fragment, disables accessibility traversal into underlying content, clears Coil's memory cache, blocks internal decrypted streams, and cancels legacy encryption maintenance.
 
+An explicit user-launched system document picker or external attachment viewer is tracked as a bounded handoff rather than an unrelated background transition. Returning within the greater of the configured timeout or two minutes preserves the current session and avoids a false lock caused solely by Android launching the selected app. The handoff ends as soon as its result or return lifecycle is observed. If it remains external beyond that bound, the timer locks the vault; process recreation also fails closed. This exception is not applied to ordinary Home, task switching, notifications, or untracked external launches.
+
 BiometricPrompt on Android 11 and newer explicitly accepts `BIOMETRIC_STRONG | DEVICE_CREDENTIAL`. Android 8–10 uses the compatibility API's device-credential-enabled prompt because that authenticator combination is not consistently supported there. Authentication gates a session and is not cryptographically bound to every attachment read.
 
 Malformed or unreadable lock policy fails closed: lock enabled, immediate timeout, screenshots blocked. The settings screen exposes loading, content, error/retry, and save-failure states.

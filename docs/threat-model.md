@@ -10,7 +10,7 @@ VaultNote assumes the Android OS, verified boot, sandbox, Keystore implementatio
 
 | Threat | Current status | Controls and residual risk |
 | --- | --- | --- |
-| Stolen unlocked phone | Partially mitigated | Immediate background locking can quickly cover the UI and attachment provider, and recents are concealed. Content visible before the timeout and plaintext Room data available through a compromised/unlocked process remain exposed. |
+| Stolen unlocked phone | Partially mitigated | Ordinary backgrounding can immediately cover the UI and attachment provider, and recents are concealed. An explicit picker/viewer handoff preserves the session for at most the greater of two minutes or the configured timeout; an attacker returning during that user-initiated grace could see the vault. Content visible before locking and plaintext Room data available through a compromised/unlocked process remain exposed. |
 | Stolen locked phone | Mitigated for attachments under assumptions | Ciphertext is AES-256-GCM and its key is non-exportable in Keystore; the app starts fail-closed when lock is enabled. Plaintext Room/search data still relies only on sandbox/device storage protection. Weak device credentials and OS exploits remain risks. |
 | Malware with limited app access | Mitigated | App-private storage, no broad storage permission, non-exported providers, exact URI grants, and Keystore isolation deny ordinary cross-app reads. Malware with accessibility, root, backup/debug, or code-execution privileges is not “limited.” |
 | Malicious imported files | Substantially mitigated | URI scheme, filename, extension, MIME, signature, size, space, UTF-8/container integrity, image/PDF metadata, and path confinement are validated. Reads are bounded/streamed and files are never executed. Platform decoders/viewers may still contain vulnerabilities; external viewers are outside the boundary. |
@@ -33,6 +33,7 @@ VaultNote assumes the Android OS, verified boot, sandbox, Keystore implementatio
 - Old key versions remain readable after a test rotation; missing historical keys fail without output.
 - Legacy migration checks the persisted SHA-256 before encryption and changes Room version only after success.
 - Lock state fails closed, respects monotonic background timeouts, and does not treat rotation as backgrounding.
+- Explicit picker/viewer handoffs are lifecycle-tracked, bounded, and revert to normal locking after their result/return; process recreation fails closed.
 - External viewer/share grants are random, attachment-bound, expire after five minutes, permit at most eight content reads for viewer compatibility, and disappear on process death.
 - External handoff plaintext is authenticated before a seekable descriptor is exposed; the private cache name is immediately unlinked. Explicit save failures delete or truncate partial output where the selected document provider permits it.
 - Search input is bounded and compiled to quoted prefix terms instead of raw FTS syntax; attachment filenames are verified through the public search repository.

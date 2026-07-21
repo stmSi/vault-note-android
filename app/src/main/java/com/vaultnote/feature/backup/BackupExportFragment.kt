@@ -27,7 +27,7 @@ import kotlinx.coroutines.launch
 class BackupExportFragment : Fragment() {
     private var binding: FragmentBackupExportBinding? = null
     private val createDocument = registerForActivityResult(CreateBackupDocumentContract()) { uri ->
-        (activity as? MainNavigator)?.endSecureDocumentPicker()
+        (activity as? MainNavigator)?.endSecureExternalHandoff()
         viewModel.completeDestination(uri)
     }
     private val viewModel: BackupExportViewModel by viewModels {
@@ -136,7 +136,7 @@ class BackupExportFragment : Fragment() {
             showMessage(R.string.file_picker_unavailable)
             return
         }
-        if (!navigator.beginSecureDocumentPicker()) {
+        if (!navigator.beginSecureExternalHandoff()) {
             viewModel.completeDestination(null)
             showMessage(R.string.vault_locked_message)
             return
@@ -144,11 +144,11 @@ class BackupExportFragment : Fragment() {
         try {
             createDocument.launch(backupFilename())
         } catch (_: ActivityNotFoundException) {
-            navigator.endSecureDocumentPicker()
+            navigator.endSecureExternalHandoff()
             viewModel.completeDestination(null)
             showMessage(R.string.file_picker_unavailable)
         } catch (_: SecurityException) {
-            navigator.endSecureDocumentPicker()
+            navigator.endSecureExternalHandoff()
             viewModel.completeDestination(null)
             showMessage(R.string.file_picker_unavailable)
         }
