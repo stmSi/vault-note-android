@@ -10,6 +10,7 @@ import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.model.SyncOperationType
 import com.vaultnote.core.common.model.SyncOperationState
 import com.vaultnote.core.common.model.VaultItemColor
+import com.vaultnote.core.common.model.VaultItemType
 import com.vaultnote.core.database.VaultDatabase
 import com.vaultnote.core.sync.CoalescingFakeSyncScheduler
 import java.util.concurrent.atomic.AtomicInteger
@@ -155,6 +156,23 @@ class RoomVaultRepositoryTest {
         assertEquals(VaultItemColor.GREEN, note.color)
         assertEquals(VaultItemColor.GREEN, summary.color)
         assertEquals(2L, note.localRevision)
+    }
+
+    @Test
+    fun `standalone file container is typed and excluded from the notes list`() = runBlocking {
+        val itemId = repository.createAttachmentContainer(
+            title = "passport.pdf",
+            type = VaultItemType.DOCUMENT,
+        ).successValue()
+
+        val entity = requireNotNull(database.vaultItemDao().getById(itemId))
+        assertEquals(VaultItemType.DOCUMENT, entity.type)
+        assertEquals("passport.pdf", entity.title)
+        assertTrue(repository.observeActiveItems().first().isEmpty())
+        assertEquals("passport.pdf", database.searchDao().getDocumentForItem(itemId)?.title)
+
+        repository.setArchived(itemId, true).requireSuccess()
+        assertEquals(listOf(itemId), repository.observeArchivedItems().first().map { it.id })
     }
 
     @Test

@@ -52,7 +52,7 @@ ViewModels receive their dependencies through an explicit factory. This keeps co
 
 ## Navigation and presentation
 
-The app is a single `MainActivity` with a primary fragment container plus an opaque lock-overlay container and direct `FragmentManager` navigation. The vault list is created only after policy loading permits access. The editor, import preview, attachment viewer, and security settings are shallow destinations. Fragment arguments persist only stable IDs and a non-sensitive in-memory import token. Shared text, external URIs, camera paths, and note drafts are never written into saved-state bundles. Incoming shares received while locked remain only in the activity-scoped coordinator until successful unlock; process death deliberately expires them. Camera capture saves only an opaque, format-validated UUID in `SavedStateHandle`. `onStop` still flushes the current note draft before the lock timeout is applied.
+The app is a single `MainActivity` with a primary fragment container plus an opaque lock-overlay container and direct `FragmentManager` navigation. Five thumb-reachable bottom destinations expose Notes, Files, Search, Archive, and Settings; Archive contains an in-screen Archived/Trash switch because Material bottom navigation supports at most five items. Back from any non-default primary destination returns to Notes before leaving the app. The vault list is created only after policy loading permits access. The editor, import preview, attachment viewer, and security settings are shallow destinations. Fragment arguments persist only stable IDs and a non-sensitive in-memory import token. Shared text, external URIs, camera paths, and note drafts are never written into saved-state bundles. Incoming shares received while locked remain only in the activity-scoped coordinator until successful unlock; process death deliberately expires them. Camera capture saves only an opaque, format-validated UUID in `SavedStateHandle`. `onStop` still flushes the current note draft before the lock timeout is applied.
 
 View Binding is scoped to the view lifecycle. A Fragment clears its binding in `onDestroyView`, and Flow collection is tied to `viewLifecycleOwner` with a started-state lifecycle gate. This prevents detached views and activities from being retained.
 
@@ -65,7 +65,7 @@ The list ViewModel exposes one immutable state with four meaningful render forms
 - content containing an immutable, bounded list of row models;
 - error containing a safe user-facing message and a retry action only when retrying is meaningful.
 
-The `RecyclerView` uses `ListAdapter` and `DiffUtil`. IDs derive from the persistent item identity and are stable across reordering. Content equality includes only properties displayed by the row. Each query returns a 100-row window plus one lookahead row; explicit Previous/Next controls change a bounded SQL `OFFSET` instead of accumulating the whole vault in memory. Section and page coordinates survive process recreation. Active notes order pinned items first and then recently updated items. No row binding performs database work, hashing, OCR, thumbnail generation, or attachment loading.
+The note and file `RecyclerView` surfaces use `ListAdapter` and `DiffUtil`. IDs derive from persistent item or attachment identity and are stable across reordering. Content equality includes only properties displayed by the row. Each query returns a 100-row window plus one lookahead row; explicit Previous/Next controls change a bounded SQL `OFFSET` instead of accumulating the whole vault in memory. Section and page coordinates survive process recreation. Active notes order pinned items first and then recently updated items. Active attachments order newest first and are projected without item bodies or file bytes. No row binding performs database work, hashing, OCR, thumbnail generation, or original-file loading. Note rows support right-swipe archive/restore and left-swipe soft deletion, with a user-visible undo action; Trash only permits the non-destructive restore gesture.
 
 The activity-level bottom bar provides one-handed access to Notes, Archive, Trash, Search, and Settings. The primary vault toolbar is removed. Contextual editor/viewer/status screens keep only their own back and item actions. Archived rows can be opened or restored; trashed rows can be restored without exposing them to editing first. Soft deletion retains content and queued tombstone state, so neither archive nor trash is a one-way action.
 
@@ -85,7 +85,7 @@ Pin, favorite, named item color, archive, soft-delete, and restore are explicit 
 
 ## Attachment import and viewing
 
-Photo Picker, Storage Access Framework, camera, and sharesheet inputs converge on one import-preview path. Picker and share callbacks accept at most 20 `content://` URIs; no broad storage or camera permission is declared. Camera capture is delegated to the system camera through a narrowly configured `FileProvider` cache path. Pending shared text and URIs live only in an activity-scoped in-memory coordinator, and consumed intent extras are cleared.
+Photo Picker, Storage Access Framework, camera, and sharesheet inputs converge on one import-preview path. Picker and share callbacks accept at most 20 `content://` URIs; no broad storage or camera permission is declared. The Files destination can import directly without a user-created note. It creates one lightweight `IMAGE` or `DOCUMENT` parent per imported file solely for revision, tombstone, search, backup, and sync ownership. This keeps filename search and future per-file archive state unambiguous. The parent is excluded from the Notes query while its attachment remains searchable and recoverable through Archive/Trash. Camera capture is delegated to the system camera through a narrowly configured `FileProvider` cache path. Pending shared text and URIs live only in an activity-scoped in-memory coordinator, and consumed intent extras are cleared.
 
 The preview performs a bounded inspection for a sanitized display name, declared size, canonical type, magic bytes, and cheap media metadata. Inspection is informative rather than authoritative because a hostile provider can change between reads. Confirmation reserves deterministic confined paths and writes a durable cleanup-journal row before `AttachmentFileManager` can produce a final internal copy:
 
@@ -109,7 +109,7 @@ Format version `0` remains only as a legacy migration input. After unlock, maint
 
 Persisted identifiers are collision-resistant locally generated strings, timestamps are UTC epoch milliseconds, and persisted enum-like values use stable string codes rather than ordinals. Large attachment bytes never belong in Room.
 
-The version 3 schema separates these responsibilities:
+The version 4 schema separates these responsibilities:
 
 | Table | Responsibility |
 | --- | --- |
@@ -124,11 +124,11 @@ The version 3 schema separates these responsibilities:
 | `sync_state` | Cursor and non-sensitive global synchronization status. |
 | `app_settings` | Non-secret persisted settings behind typed access. |
 
-Indexes cover created/updated ordering, deletion, sync state, pinned/favorite list access, attachment parent/checksum lookup, normalized tag names, cross-reference reverse lookup, and runnable sync operations. Boolean flags are paired with useful sort/filter columns where practical rather than relying only on low-selectivity single-column indexes.
+Indexes cover created/updated ordering, deletion, sync state, pinned/favorite list access, attachment parent/checksum lookup, attachment list ordering, normalized tag names, cross-reference reverse lookup, and runnable sync operations. Boolean flags are paired with useful sort/filter columns where practical rather than relying only on low-selectivity single-column indexes.
 
 Foreign keys cascade from an item to its attachment metadata, item/tag memberships, and search document. Conflict-origin identity and sync operations deliberately do not require a live parent: diagnostic copies and deletion tombstones may need to outlive the original row. Hard deletion is not part of the normal item delete action.
 
-Schema version 2 adds nullable image width, image height, and PDF page count columns plus the cleanup-journal table and its age index. Version 3 adds a non-null stable item color with `DEFAULT` as the migration value for existing rows. `MIGRATION_1_2` and `MIGRATION_2_3` form the sole production chain. No destructive fallback exists.
+Schema version 2 adds nullable image width, image height, and PDF page count columns plus the cleanup-journal table and its age index. Version 3 adds a non-null stable item color with `DEFAULT` as the migration value for existing rows. Version 4 adds the attachment creation/identity order index used by the bounded Files query. `MIGRATION_1_2`, `MIGRATION_2_3`, and `MIGRATION_3_4` form the sole production chain. No destructive fallback exists.
 
 ### FTS aggregate
 
@@ -261,7 +261,7 @@ JVM tests use injected clocks, IDs, dispatchers, file managers, and fakes to mak
 - one-use, attachment-bound, expiring external viewer grants.
 - backup manifest/version strictness, password-derived encryption, per-entry nonce uniqueness, authenticated path binding, corruption with zero plaintext output, path-traversal rejection, staging-before-commit, and preserve-copy item collision behavior.
 
-Room exports schema JSON to a version-controlled directory and supplies it to instrumentation tests. The migration test creates a representative version 1 fixture, executes the complete `1 → 2 → 3` chain, and verifies that original note/attachment data remains, new media metadata defaults to null, and item color defaults to `DEFAULT`. Destructive migration fallback is prohibited.
+Room exports schema JSON to a version-controlled directory and supplies it to instrumentation tests. The migration test creates a representative version 1 fixture, executes the complete `1 → 2 → 3 → 4` chain, and verifies that original note/attachment data remains, new media metadata defaults to null, item color defaults to `DEFAULT`, and the Files ordering index is present. Destructive migration fallback is prohibited.
 
 The standard verification commands and required SDK/JDK versions are listed in the repository [README](../README.md). Their presence documents the expected checks; only command output from the current environment can establish whether a particular run passed.
 

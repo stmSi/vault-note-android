@@ -68,6 +68,14 @@ class RoomAttachmentRepository(
     private val syncOperationDao = database.syncOperationDao()
     private val cleanupMutex = Mutex()
 
+    override fun observeActiveFiles(limit: Int, offset: Int): Flow<List<VaultAttachment>> =
+        attachmentDao.observeActiveFiles(
+            limit = limit.coerceIn(1, MAX_OBSERVED_FILE_LIMIT),
+            offset = offset.coerceAtLeast(0),
+        )
+            .map { attachments -> attachments.map { attachment -> attachment.toDomain() } }
+            .flowOn(dispatchers.io)
+
     override fun observeForItem(itemId: String): Flow<List<VaultAttachment>> {
         if (itemId.isBlank()) return flowOf(emptyList())
         return attachmentDao.observeForItem(itemId)
@@ -877,6 +885,7 @@ class RoomAttachmentRepository(
     private fun abort(error: AppError): Nothing = throw RepositoryAbort(error)
 
     private companion object {
+        const val MAX_OBSERVED_FILE_LIMIT = 101
         const val INSERT_IGNORED: Long = -1L
         const val ITEM_DEDUPE_PREFIX: String = "item:"
         const val ATTACHMENT_DEDUPE_PREFIX: String = "attachment:"

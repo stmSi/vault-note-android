@@ -8,4 +8,6 @@
     <dimen name="editor_attachment_card_width">104dp</dimen>
     <dimen name="editor_attachment_thumbnail">68dp</dimen>
     <dimen name="editor_attachment_list_height">112dp</dimen>
+    <dimen name="file_list_thumbnail">64dp</dimen>
+    <dimen name="swipe_action_icon">24dp</dimen>
 </resources>

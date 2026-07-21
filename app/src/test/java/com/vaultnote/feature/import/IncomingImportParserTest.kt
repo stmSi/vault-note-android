@@ -92,12 +92,14 @@ class IncomingImportParserTest {
             incomingImport = payload,
             parentItemId = "note-1",
             cameraCaptureId = "capture-1",
+            standaloneFiles = true,
         )
 
         val deferred = requireNotNull(coordinator.takeDeferred())
         assertEquals(payload, deferred.incomingImport)
         assertEquals("note-1", deferred.parentItemId)
         assertEquals("capture-1", deferred.cameraCaptureId)
+        assertTrue(deferred.standaloneFiles)
         assertNull(coordinator.takeDeferred())
     }
 }

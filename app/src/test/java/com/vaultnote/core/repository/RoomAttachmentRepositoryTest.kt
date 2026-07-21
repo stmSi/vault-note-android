@@ -122,6 +122,7 @@ class RoomAttachmentRepositoryTest {
             .observe(filenameQuery.query, 10)
             .first()
         assertEquals(listOf(itemId), filenameResults.map { it.itemId })
+        assertEquals(attachment.id, filenameResults.single().primaryAttachmentId)
         val incrementalFilenameQuery = SearchQueryCompiler.compile("p")
             as SearchQueryCompilation.Valid
         val incrementalFilenameResults = RoomSearchRepository(
@@ -167,6 +168,34 @@ class RoomAttachmentRepositoryTest {
         assertEquals(1, files.removedStoredCount)
         assertFalse(files.lastRemovedStoredContentFile?.exists() == true)
         assertEquals(0, database.attachmentFileCleanupDao().count())
+    }
+
+    @Test
+    fun `files view is newest first and excludes archived or trashed parents`() = runBlocking {
+        val firstParent = vaultRepository.createAttachmentContainer(
+            title = "first.pdf",
+            type = com.vaultnote.core.common.model.VaultItemType.DOCUMENT,
+        ).successValue()
+        val first = repository.importFromUri(firstParent, SOURCE_URI).successValue().attachment
+        val secondParent = vaultRepository.createAttachmentContainer(
+            title = "second.pdf",
+            type = com.vaultnote.core.common.model.VaultItemType.DOCUMENT,
+        ).successValue()
+        val second = repository.importFromUri(secondParent, SOURCE_URI).successValue().attachment
+
+        assertEquals(
+            listOf(second.id, first.id),
+            repository.observeActiveFiles(limit = 10, offset = 0).first().map { it.id },
+        )
+
+        vaultRepository.setArchived(secondParent, true).requireSuccess()
+        assertEquals(
+            listOf(first.id),
+            repository.observeActiveFiles(limit = 10, offset = 0).first().map { it.id },
+        )
+
+        vaultRepository.moveToTrash(firstParent).requireSuccess()
+        assertTrue(repository.observeActiveFiles(limit = 10, offset = 0).first().isEmpty())
     }
 
     @Test

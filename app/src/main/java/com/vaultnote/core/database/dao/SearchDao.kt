@@ -32,6 +32,13 @@ interface SearchDao {
             vault_items.id AS id,
             vault_items.title AS title,
             vault_items.color AS color,
+            vault_items.type AS type,
+            (
+                SELECT attachments.id FROM attachments
+                WHERE attachments.parent_item_id = vault_items.id
+                ORDER BY attachments.created_at ASC, attachments.id ASC
+                LIMIT 1
+            ) AS primary_attachment_id,
             snippet(search_fts, :startMarker, :endMarker, :ellipsis, 0, :titleTokenLimit)
                 AS highlighted_title,
             snippet(search_fts, :startMarker, :endMarker, :ellipsis, -1, :snippetTokenLimit)

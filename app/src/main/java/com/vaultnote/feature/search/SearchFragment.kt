@@ -16,10 +16,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.google.android.material.snackbar.Snackbar
 import com.vaultnote.R
 import com.vaultnote.app.MainNavigator
 import com.vaultnote.app.appContainer
 import com.vaultnote.databinding.FragmentSearchBinding
+import com.vaultnote.core.common.model.VaultItemType
+import com.vaultnote.core.search.VaultSearchResult
 import kotlinx.coroutines.launch
 
 class SearchFragment : Fragment() {
@@ -110,8 +113,24 @@ class SearchFragment : Fragment() {
         resultAdapter.submitList((state as? SearchUiState.Content)?.results.orEmpty())
     }
 
-    private fun openResult(itemId: String) {
-        (activity as? MainNavigator)?.openNoteEditor(itemId)
+    private fun openResult(result: VaultSearchResult) {
+        val navigator = activity as? MainNavigator ?: return
+        if (result.type == VaultItemType.NOTE) {
+            navigator.openNoteEditor(result.itemId)
+        } else {
+            val attachmentId = result.primaryAttachmentId
+            if (attachmentId != null) {
+                navigator.openAttachment(attachmentId)
+            } else {
+                binding?.root?.let { root ->
+                    Snackbar.make(
+                        root,
+                        R.string.item_attachment_not_found,
+                        Snackbar.LENGTH_LONG,
+                    ).show()
+                }
+            }
+        }
     }
 
     private fun applyInsets(currentBinding: FragmentSearchBinding) {

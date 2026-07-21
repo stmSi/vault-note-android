@@ -20,7 +20,7 @@ import java.util.Locale
 import java.util.UUID
 
 internal class VaultItemAdapter(
-    private val onOpen: (itemId: String) -> Unit,
+    private val onOpen: (VaultListItem) -> Unit,
     private val onPinnedChanged: (itemId: String, pinned: Boolean) -> Unit,
     private val onFavoriteChanged: (itemId: String, favorite: Boolean) -> Unit,
     private val onRestore: (itemId: String, source: VaultSection) -> Unit,
@@ -117,8 +117,16 @@ internal class VaultItemAdapter(
             val canOpen = row.section != VaultSection.TRASH
             root.isClickable = canOpen
             root.isFocusable = canOpen
-            root.setOnClickListener(if (canOpen) View.OnClickListener { onOpen(item.id) } else null)
+            root.setOnClickListener(if (canOpen) View.OnClickListener { onOpen(row) } else null)
         }
+    }
+
+    fun itemAt(position: Int): VaultListItem? =
+        currentList.getOrNull(position)
+
+    fun resetItem(itemId: String) {
+        val position = currentList.indexOfFirst { row -> row.note.id == itemId }
+        if (position >= 0) notifyItemChanged(position)
     }
 
     private companion object {

@@ -9,6 +9,7 @@ import com.vaultnote.core.common.model.VaultAttachment
 import kotlinx.coroutines.flow.Flow
 
 interface AttachmentRepository {
+    fun observeActiveFiles(limit: Int, offset: Int): Flow<List<VaultAttachment>>
     fun observeForItem(itemId: String): Flow<List<VaultAttachment>>
     fun observeById(attachmentId: String): Flow<VaultAttachment?>
 

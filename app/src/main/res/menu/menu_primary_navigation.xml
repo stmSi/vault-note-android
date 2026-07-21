@@ -5,17 +5,17 @@
         android:icon="@drawable/ic_document"
         android:title="@string/notes_title" />
     <item
-        android:id="@+id/navigation_archived"
-        android:icon="@drawable/ic_archive"
-        android:title="@string/archive_short" />
-    <item
-        android:id="@+id/navigation_trash"
-        android:icon="@drawable/ic_delete"
-        android:title="@string/trash_title" />
+        android:id="@+id/navigation_files"
+        android:icon="@drawable/ic_files"
+        android:title="@string/files_title" />
     <item
         android:id="@+id/navigation_search"
         android:icon="@drawable/ic_search"
         android:title="@string/search_title" />
+    <item
+        android:id="@+id/navigation_archived"
+        android:icon="@drawable/ic_archive"
+        android:title="@string/archive_and_trash_title" />
     <item
         android:id="@+id/navigation_settings"
         android:icon="@drawable/ic_settings"

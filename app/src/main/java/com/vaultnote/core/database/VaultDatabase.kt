@@ -56,7 +56,7 @@ abstract class VaultDatabase : RoomDatabase() {
     abstract fun appSettingDao(): AppSettingDao
 
     companion object {
-        const val SCHEMA_VERSION: Int = 3
+        const val SCHEMA_VERSION: Int = 4
         const val DATABASE_NAME: String = "vaultnote.db"
 
         /** Adds optional media metadata and a crash-safe attachment file cleanup journal. */
@@ -96,8 +96,24 @@ abstract class VaultDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds the covering order index used by the bounded Files screen query. */
+        val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE INDEX IF NOT EXISTS index_attachments_created_at_id
+                    ON attachments(created_at, id)
+                    """.trimIndent(),
+                )
+            }
+        }
+
         /** Production callers intentionally have no destructive migration fallback. */
-        val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+        val ALL_MIGRATIONS: Array<Migration> = arrayOf(
+            MIGRATION_1_2,
+            MIGRATION_2_3,
+            MIGRATION_3_4,
+        )
 
         fun create(context: Context): VaultDatabase =
             Room.databaseBuilder(

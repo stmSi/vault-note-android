@@ -4,39 +4,8 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <com.google.android.material.button.MaterialButtonToggleGroup
-        android:id="@+id/archive_trash_toggle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="@dimen/space_s"
-        android:visibility="gone"
-        app:checkedButton="@id/show_archived_button"
-        app:selectionRequired="true"
-        app:singleSelection="true"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/show_archived_button"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target"
-            android:text="@string/archived_title" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/show_trash_button"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target"
-            android:text="@string/trash_title" />
-
-    </com.google.android.material.button.MaterialButtonToggleGroup>
-
     <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/note_list"
+        android:id="@+id/file_list"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:clipToPadding="false"
@@ -45,17 +14,17 @@
         app:layout_constraintBottom_toTopOf="@id/page_controls"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/archive_trash_toggle" />
+        app:layout_constraintTop_toTopOf="parent" />
 
     <com.google.android.material.progressindicator.CircularProgressIndicator
         android:id="@+id/loading_indicator"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:contentDescription="@string/vault_title"
+        android:contentDescription="@string/loading_files"
         app:layout_constraintBottom_toTopOf="@id/page_controls"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/archive_trash_toggle" />
+        app:layout_constraintTop_toTopOf="parent" />
 
     <LinearLayout
         android:id="@+id/empty_state"
@@ -69,22 +38,20 @@
         app:layout_constraintBottom_toTopOf="@id/page_controls"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/archive_trash_toggle">
+        app:layout_constraintTop_toTopOf="parent">
 
         <TextView
-            android:id="@+id/empty_title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/empty_vault_title"
+            android:text="@string/empty_files_title"
             android:textAppearance="?attr/textAppearanceTitleMedium" />
 
         <TextView
-            android:id="@+id/empty_message"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/space_s"
             android:gravity="center"
-            android:text="@string/empty_vault_message"
+            android:text="@string/empty_files_message"
             android:textAppearance="?attr/textAppearanceBodyMedium" />
     </LinearLayout>
 
@@ -100,21 +67,20 @@
         app:layout_constraintBottom_toTopOf="@id/page_controls"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/archive_trash_toggle">
+        app:layout_constraintTop_toTopOf="parent">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/load_failed_title"
+            android:text="@string/files_load_failed_title"
             android:textAppearance="?attr/textAppearanceTitleMedium" />
 
         <TextView
-            android:id="@+id/error_message"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/space_s"
             android:gravity="center"
-            android:text="@string/load_failed_message"
+            android:text="@string/files_load_failed_message"
             android:textAppearance="?attr/textAppearanceBodyMedium" />
 
         <com.google.android.material.button.MaterialButton
@@ -168,13 +134,13 @@
     </LinearLayout>
 
     <com.google.android.material.floatingactionbutton.FloatingActionButton
-        android:id="@+id/add_note_button"
+        android:id="@+id/add_file_button"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_margin="@dimen/space_m"
-        android:contentDescription="@string/new_note"
+        android:contentDescription="@string/add_file"
         app:layout_constraintBottom_toTopOf="@id/page_controls"
         app:layout_constraintEnd_toEndOf="parent"
-        app:srcCompat="@drawable/ic_add" />
+        app:srcCompat="@drawable/ic_add_attachment" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

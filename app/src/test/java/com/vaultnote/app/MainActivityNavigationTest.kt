@@ -4,6 +4,8 @@ import com.vaultnote.R
 import com.vaultnote.core.security.LockPolicy
 import com.vaultnote.feature.conflicts.ConflictsFragment
 import com.vaultnote.feature.sync.SyncStatusFragment
+import com.vaultnote.feature.files.FilesFragment
+import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.vaultnote.feature.vault.VaultFragment
 import com.vaultnote.feature.vault.VaultSection
 import org.junit.After
@@ -59,6 +61,22 @@ class MainActivityNavigationTest {
         activity.supportFragmentManager.executePendingTransactions()
 
         assertEquals(1, activity.supportFragmentManager.backStackEntryCount)
+    }
+
+    @Test
+    fun `files is primary and back returns to notes`() {
+        activity.findViewById<BottomNavigationView>(R.id.primary_navigation).selectedItemId =
+            R.id.navigation_files
+        activity.supportFragmentManager.executePendingTransactions()
+
+        assertTrue(currentFragment() is FilesFragment)
+        assertEquals(0, activity.supportFragmentManager.backStackEntryCount)
+
+        activity.onBackPressedDispatcher.onBackPressed()
+        activity.supportFragmentManager.executePendingTransactions()
+
+        val vault = currentFragment() as VaultFragment
+        assertEquals(VaultSection.ACTIVE, vault.currentSection())
     }
 
     @Test

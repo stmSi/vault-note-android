@@ -129,6 +129,15 @@ class VaultDatabaseSchemaTest {
             }
             db.query(
                 """
+                SELECT COUNT(*) FROM sqlite_master
+                WHERE type = 'index' AND name = 'index_attachments_created_at_id'
+                """.trimIndent(),
+            ).use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals(1, cursor.getInt(0))
+            }
+            db.query(
+                """
                 SELECT operation_type, target_revision FROM sync_operations
                 WHERE dedupe_key = 'item:item-1'
                 """.trimIndent(),

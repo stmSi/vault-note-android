@@ -4,6 +4,7 @@ import com.vaultnote.core.common.DispatcherProvider
 import com.vaultnote.core.database.dao.SearchDao
 import com.vaultnote.core.database.model.SearchResultRow
 import com.vaultnote.core.common.model.VaultItemColor
+import com.vaultnote.core.common.model.VaultItemType
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
@@ -13,6 +14,8 @@ data class VaultSearchResult(
     val itemId: String,
     val title: String,
     val color: VaultItemColor,
+    val type: VaultItemType,
+    val primaryAttachmentId: String?,
     val highlightedTitle: String,
     val highlightedSnippet: String,
     val isArchived: Boolean,
@@ -50,6 +53,8 @@ class RoomSearchRepository(
             itemId = id,
             title = title,
             color = color,
+            type = type,
+            primaryAttachmentId = primaryAttachmentId,
             highlightedTitle = SearchHighlightNormalizer.markTypedPrefixes(
                 highlightedTitle,
                 displayTerms,

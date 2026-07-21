@@ -58,7 +58,7 @@ interface VaultItemDao {
             sync_status,
             conflict_origin_id
         FROM vault_items
-        WHERE deleted_at IS NULL AND is_archived = 0
+        WHERE deleted_at IS NULL AND is_archived = 0 AND type = 'NOTE'
         ORDER BY is_pinned DESC, updated_at DESC, id ASC
         LIMIT :limit
         OFFSET :offset

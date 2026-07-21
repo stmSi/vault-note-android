@@ -9,11 +9,12 @@ interface MainNavigator {
         parentItemId: String?,
         incomingImport: IncomingImport,
         cameraCaptureId: String? = null,
+        standaloneFiles: Boolean = false,
     ): Boolean
 
     fun takePendingImport(token: Long): IncomingImport?
 
-    fun completeImport(itemId: String, createdItem: Boolean)
+    fun completeImport(itemId: String, openCreatedItem: Boolean)
 
     fun openAttachment(attachmentId: String)
 

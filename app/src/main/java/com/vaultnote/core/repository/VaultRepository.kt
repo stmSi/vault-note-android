@@ -3,6 +3,7 @@ package com.vaultnote.core.repository
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.model.VaultItemSummary
 import com.vaultnote.core.common.model.VaultItemColor
+import com.vaultnote.core.common.model.VaultItemType
 import com.vaultnote.core.common.model.VaultNote
 import com.vaultnote.core.common.model.VaultTag
 import kotlinx.coroutines.flow.Flow
@@ -28,6 +29,11 @@ interface VaultRepository {
     fun observeTags(): Flow<List<VaultTag>>
 
     suspend fun createNote(title: String = "", body: String = ""): RepositoryResult<String>
+
+    suspend fun createAttachmentContainer(
+        title: String,
+        type: VaultItemType,
+    ): RepositoryResult<String>
 
     suspend fun saveNote(id: String, title: String, body: String): RepositoryResult<Unit>
 

@@ -7,6 +7,9 @@ import com.vaultnote.core.common.AppError
 import com.vaultnote.core.common.DispatcherProvider
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.VaultConstraints
+import com.vaultnote.core.common.model.AttachmentImportResult
+import com.vaultnote.core.common.model.VaultItemType
+import com.vaultnote.core.files.AttachmentCategory
 import com.vaultnote.core.files.AttachmentFileManager
 import com.vaultnote.core.files.AttachmentPreview
 import com.vaultnote.core.repository.AttachmentRepository
@@ -69,7 +72,7 @@ internal sealed interface ImportPreviewEvent {
     data object NavigateBack : ImportPreviewEvent
     data class ImportComplete(
         val itemId: String,
-        val createdItem: Boolean,
+        val openCreatedItem: Boolean,
         val warnings: Set<ImportWarningReason>,
     ) : ImportPreviewEvent
 }
@@ -91,6 +94,7 @@ internal class ImportPreviewViewModel(
     private val cameraCaptureManager: CameraCaptureManager,
     private val dispatchers: DispatcherProvider,
     private val importedFilesTitle: String,
+    private val standaloneFiles: Boolean,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow<ImportPreviewUiState>(ImportPreviewUiState.Loading)
     private val mutableEvents = Channel<ImportPreviewEvent>(Channel.BUFFERED)
@@ -98,6 +102,7 @@ internal class ImportPreviewViewModel(
     private var candidates: List<InspectedImportCandidate> = emptyList()
     private val completedCandidateIds = LinkedHashSet<Long>()
     private val warnings = LinkedHashSet<ImportWarningReason>()
+    private val standaloneTargetIds = LinkedHashMap<Long, String>()
     private var targetItemId: String? = parentItemId
     private var createdItem = false
     private var operation: Job? = null
@@ -195,6 +200,10 @@ internal class ImportPreviewViewModel(
 
     private suspend fun performImport(payload: IncomingImport) {
         val validCandidates = candidates.filter { it.preview != null }
+        if (standaloneFiles && parentItemId == null) {
+            performStandaloneFilesImport(payload, validCandidates)
+            return
+        }
         val itemId = targetItemId ?: when (
             val created = vaultRepository.createNote(
                 title = suggestedTitle(payload.sharedText, validCandidates),
@@ -232,24 +241,7 @@ internal class ImportPreviewViewModel(
 
                 is RepositoryResult.Success -> {
                     completedCandidateIds += candidate.stableId
-                    result.warning?.let { warning ->
-                        recordWarning(
-                            warning,
-                            if (result.value.wasDuplicate) {
-                                ImportWarningReason.FILE_CLEANUP_PENDING
-                            } else {
-                                ImportWarningReason.PREVIEW_UNAVAILABLE
-                            },
-                        )
-                    }
-                    val attachment = result.value.attachment
-                    if (
-                        !result.value.wasDuplicate &&
-                        attachment.thumbnailUri == null &&
-                        (attachment.mimeType.startsWith("image/") || attachment.mimeType == PDF_MIME_TYPE)
-                    ) {
-                        warnings += ImportWarningReason.PREVIEW_UNAVAILABLE
-                    }
+                    recordImportResultWarning(result)
                     deleteTemporarySource(candidate.source)
                 }
             }
@@ -259,7 +251,72 @@ internal class ImportPreviewViewModel(
         mutableEvents.send(
             ImportPreviewEvent.ImportComplete(
                 itemId = itemId,
-                createdItem = createdItem,
+                openCreatedItem = createdItem,
+                warnings = warnings.toSet(),
+            ),
+        )
+    }
+
+    private suspend fun performStandaloneFilesImport(
+        payload: IncomingImport,
+        validCandidates: List<InspectedImportCandidate>,
+    ) {
+        for (candidate in validCandidates) {
+            if (candidate.stableId in completedCandidateIds) continue
+            mutableState.value = ImportPreviewUiState.Importing(
+                sharedText = payload.sharedText,
+                candidates = candidates,
+                completedFiles = completedCandidateIds.size,
+                totalFiles = validCandidates.size,
+            )
+            val itemId = standaloneTargetIds[candidate.stableId] ?: when (
+                val created = vaultRepository.createAttachmentContainer(
+                    title = suggestedTitle(null, listOf(candidate)),
+                    type = standaloneItemType(candidate),
+                )
+            ) {
+                is RepositoryResult.Failure -> {
+                    showError(created.error, payload)
+                    return
+                }
+
+                is RepositoryResult.Success -> {
+                    created.warning?.let { warning ->
+                        recordWarning(warning, ImportWarningReason.LOCAL_MAINTENANCE_PENDING)
+                    }
+                    standaloneTargetIds[candidate.stableId] = created.value
+                    created.value
+                }
+            }
+            when (val result = attachmentRepository.importFromUri(itemId, candidate.source.uri)) {
+                is RepositoryResult.Failure -> {
+                    showError(result.error, payload)
+                    return
+                }
+
+                is RepositoryResult.Success -> {
+                    completedCandidateIds += candidate.stableId
+                    recordImportResultWarning(result)
+                    deleteTemporarySource(candidate.source)
+                }
+            }
+        }
+
+        cleanupTemporarySources()
+        val firstItemId = standaloneTargetIds.values.firstOrNull()
+        if (firstItemId == null) {
+            mutableState.value = ImportPreviewUiState.Error(
+                sharedText = payload.sharedText,
+                candidates = candidates,
+                reason = ImportFailureReason.UNSUPPORTED_FILE,
+                retryable = false,
+            )
+            return
+        }
+        mutableEvents.send(
+            ImportPreviewEvent.ImportComplete(
+                itemId = firstItemId,
+                openCreatedItem = false,
                 warnings = warnings.toSet(),
             ),
         )
@@ -279,6 +336,29 @@ internal class ImportPreviewViewModel(
             ImportWarningReason.SYNC_DELAYED
         } else {
             fallback
+        }
+    }
+
+    private fun recordImportResultWarning(
+        result: RepositoryResult.Success<AttachmentImportResult>,
+    ) {
+        result.warning?.let { warning ->
+            recordWarning(
+                warning,
+                if (result.value.wasDuplicate) {
+                    ImportWarningReason.FILE_CLEANUP_PENDING
+                } else {
+                    ImportWarningReason.PREVIEW_UNAVAILABLE
+                },
+            )
+        }
+        val attachment = result.value.attachment
+        if (
+            !result.value.wasDuplicate &&
+            attachment.thumbnailUri == null &&
+            (attachment.mimeType.startsWith("image/") || attachment.mimeType == PDF_MIME_TYPE)
+        ) {
+            warnings += ImportWarningReason.PREVIEW_UNAVAILABLE
         }
     }
 
@@ -317,6 +397,14 @@ internal class ImportPreviewViewModel(
         return validCandidates.singleOrNull()?.preview?.originalFilename ?: importedFilesTitle
     }
 
+    private fun standaloneItemType(candidate: InspectedImportCandidate): VaultItemType = if (
+        candidate.preview?.format?.category == AttachmentCategory.IMAGE
+    ) {
+        VaultItemType.IMAGE
+    } else {
+        VaultItemType.DOCUMENT
+    }
+
     private fun String.takeCodePoints(maximumCodePoints: Int): String {
         if (codePointCount(0, length) <= maximumCodePoints) return this
         return substring(0, offsetByCodePoints(0, maximumCodePoints))
@@ -332,6 +420,7 @@ internal class ImportPreviewViewModel(
         private val cameraCaptureManager: CameraCaptureManager,
         private val dispatchers: DispatcherProvider,
         private val importedFilesTitle: String,
+        private val standaloneFiles: Boolean,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -346,6 +435,7 @@ internal class ImportPreviewViewModel(
                 cameraCaptureManager,
                 dispatchers,
                 importedFilesTitle,
+                standaloneFiles,
             ) as T
         }
     }

@@ -31,6 +31,7 @@ data class DeferredImportRequest(
     val incomingImport: IncomingImport,
     val parentItemId: String?,
     val cameraCaptureId: String?,
+    val standaloneFiles: Boolean,
 )
 
 internal sealed interface IncomingImportParseResult {
@@ -66,8 +67,14 @@ internal class IncomingImportCoordinator : ViewModel() {
         incomingImport: IncomingImport,
         parentItemId: String? = null,
         cameraCaptureId: String? = null,
+        standaloneFiles: Boolean = false,
     ) {
-        deferred = DeferredImportRequest(incomingImport, parentItemId, cameraCaptureId)
+        deferred = DeferredImportRequest(
+            incomingImport,
+            parentItemId,
+            cameraCaptureId,
+            standaloneFiles,
+        )
     }
 
     @Synchronized

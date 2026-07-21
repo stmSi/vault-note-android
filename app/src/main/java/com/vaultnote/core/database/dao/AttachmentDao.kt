@@ -214,6 +214,19 @@ interface AttachmentDao {
     )
     fun observeForItem(itemId: String): Flow<List<AttachmentEntity>>
 
+    @Query(
+        """
+        SELECT attachments.* FROM attachments
+        INNER JOIN vault_items ON vault_items.id = attachments.parent_item_id
+        WHERE vault_items.deleted_at IS NULL
+          AND vault_items.is_archived = 0
+        ORDER BY attachments.created_at DESC, attachments.id ASC
+        LIMIT :limit
+        OFFSET :offset
+        """,
+    )
+    fun observeActiveFiles(limit: Int, offset: Int): Flow<List<AttachmentEntity>>
+
     @Query("SELECT * FROM attachments WHERE sha256_checksum = :checksum ORDER BY created_at ASC")
     suspend fun findByChecksum(checksum: String): List<AttachmentEntity>
 

@@ -10,6 +10,8 @@ import com.vaultnote.core.common.AppError
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.isRetryableLocalDatabaseFailure
 import com.vaultnote.core.common.model.VaultItemSummary
+import com.vaultnote.core.common.model.VaultItemType
+import com.vaultnote.core.repository.AttachmentRepository
 import com.vaultnote.core.repository.VaultRepository
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.channels.Channel
@@ -23,6 +25,7 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transform
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 enum class VaultSection {
@@ -66,14 +69,24 @@ internal sealed interface VaultUiState {
 
 internal sealed interface VaultEvent {
     data class OpenEditor(val itemId: String) : VaultEvent
-    data class ShowError(val error: AppError) : VaultEvent
+    data class OpenAttachment(val attachmentId: String) : VaultEvent
+    data class ShowError(val error: AppError, val itemId: String? = null) : VaultEvent
     data class ItemRestored(val source: VaultSection) : VaultEvent
+    data class ItemChanged(val itemId: String, val change: VaultItemChange) : VaultEvent
+}
+
+internal enum class VaultItemChange {
+    ARCHIVED,
+    TRASHED,
+    RESTORED_FROM_ARCHIVE,
+    RESTORED_FROM_TRASH,
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class VaultViewModel(
     private val repository: VaultRepository,
     private val savedStateHandle: SavedStateHandle,
+    private val attachmentRepository: AttachmentRepository? = null,
 ) : ViewModel() {
     private data class QueryState(
         val section: VaultSection,
@@ -150,6 +163,36 @@ internal class VaultViewModel(
         }
     }
 
+    fun openItem(row: VaultListItem) {
+        if (row.note.type == VaultItemType.NOTE) {
+            viewModelScope.launch { mutableEvents.send(VaultEvent.OpenEditor(row.note.id)) }
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val attachment = attachmentRepository
+                    ?.observeForItem(row.note.id)
+                    ?.first()
+                    ?.firstOrNull()
+                if (attachment == null) {
+                    mutableEvents.send(
+                        VaultEvent.ShowError(AppError.ItemNotFound(row.note.id)),
+                    )
+                } else {
+                    mutableEvents.send(VaultEvent.OpenAttachment(attachment.id))
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                mutableEvents.send(
+                    VaultEvent.ShowError(
+                        AppError.DatabaseFailure("open_item_attachment", failure),
+                    ),
+                )
+            }
+        }
+    }
+
     fun setPinned(itemId: String, pinned: Boolean) {
         mutate(operation = { repository.setPinned(itemId, pinned) })
     }
@@ -167,8 +210,31 @@ internal class VaultViewModel(
         mutate(operation) { mutableEvents.send(VaultEvent.ItemRestored(source)) }
     }
 
+    fun handleSwipe(itemId: String, change: VaultItemChange) {
+        val operation: suspend () -> RepositoryResult<Unit> = when (change) {
+            VaultItemChange.ARCHIVED -> ({ repository.setArchived(itemId, true) })
+            VaultItemChange.TRASHED -> ({ repository.moveToTrash(itemId) })
+            VaultItemChange.RESTORED_FROM_ARCHIVE -> ({ repository.setArchived(itemId, false) })
+            VaultItemChange.RESTORED_FROM_TRASH -> ({ repository.restore(itemId) })
+        }
+        mutate(operation, itemId) {
+            mutableEvents.send(VaultEvent.ItemChanged(itemId, change))
+        }
+    }
+
+    fun undo(itemId: String, change: VaultItemChange) {
+        val operation: suspend () -> RepositoryResult<Unit> = when (change) {
+            VaultItemChange.ARCHIVED -> ({ repository.setArchived(itemId, false) })
+            VaultItemChange.TRASHED -> ({ repository.restore(itemId) })
+            VaultItemChange.RESTORED_FROM_ARCHIVE -> ({ repository.setArchived(itemId, true) })
+            VaultItemChange.RESTORED_FROM_TRASH -> ({ repository.moveToTrash(itemId) })
+        }
+        mutate(operation)
+    }
+
     private fun mutate(
         operation: suspend () -> RepositoryResult<Unit>,
+        itemId: String? = null,
         onSuccess: suspend () -> Unit = {},
     ) {
         viewModelScope.launch {
@@ -179,7 +245,7 @@ internal class VaultViewModel(
                 }
 
                 is RepositoryResult.Failure -> {
-                    mutableEvents.send(VaultEvent.ShowError(result.error))
+                    mutableEvents.send(VaultEvent.ShowError(result.error, itemId))
                 }
             }
         }
@@ -250,13 +316,18 @@ internal class VaultViewModel(
 
     internal class Factory(
         private val repository: VaultRepository,
+        private val attachmentRepository: AttachmentRepository,
     ) : ViewModelProvider.Factory {
         override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
             require(modelClass.isAssignableFrom(VaultViewModel::class.java)) {
                 "Unsupported ViewModel class: ${modelClass.name}"
             }
             @Suppress("UNCHECKED_CAST")
-            return VaultViewModel(repository, extras.createSavedStateHandle()) as T
+            return VaultViewModel(
+                repository = repository,
+                savedStateHandle = extras.createSavedStateHandle(),
+                attachmentRepository = attachmentRepository,
+            ) as T
         }
 
     }

@@ -27,7 +27,7 @@ import java.util.Locale
 import java.util.UUID
 
 internal class SearchResultAdapter(
-    private val onOpen: (String) -> Unit,
+    private val onOpen: (VaultSearchResult) -> Unit,
 ) : ListAdapter<VaultSearchResult, SearchResultAdapter.ResultViewHolder>(DiffCallback) {
     private val dateFormatter = DateTimeFormatter
         .ofLocalizedDate(FormatStyle.MEDIUM)
@@ -83,7 +83,7 @@ internal class SearchResultAdapter(
                 .toLocalDate()
                 .format(dateFormatter)
             updatedAt.text = context.getString(R.string.updated_time, date)
-            root.setOnClickListener { onOpen(result.itemId) }
+            root.setOnClickListener { onOpen(result) }
         }
     }
 

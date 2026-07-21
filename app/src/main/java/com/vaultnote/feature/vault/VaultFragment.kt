@@ -15,6 +15,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.ItemTouchHelper
 import com.google.android.material.snackbar.Snackbar
 import com.vaultnote.R
 import com.vaultnote.app.MainNavigator
@@ -27,10 +28,11 @@ class VaultFragment : Fragment() {
     private var binding: FragmentVaultBinding? = null
     private var lastContentPage: Pair<VaultSection, Int>? = null
     private val viewModel: VaultViewModel by viewModels {
-        VaultViewModel.Factory(requireContext().appContainer().vaultRepository)
+        val container = requireContext().appContainer()
+        VaultViewModel.Factory(container.vaultRepository, container.attachmentRepository)
     }
     private val noteAdapter = VaultItemAdapter(
-        onOpen = ::openEditor,
+        onOpen = { row -> viewModel.openItem(row) },
         onPinnedChanged = { id, pinned -> viewModel.setPinned(id, pinned) },
         onFavoriteChanged = { id, favorite -> viewModel.setFavorite(id, favorite) },
         onRestore = { id, source -> viewModel.restore(id, source) },
@@ -58,6 +60,16 @@ class VaultFragment : Fragment() {
         currentBinding.retryButton.setOnClickListener { viewModel.retry() }
         currentBinding.previousPageButton.setOnClickListener { viewModel.previousPage() }
         currentBinding.nextPageButton.setOnClickListener { viewModel.nextPage() }
+        currentBinding.archiveTrashToggle.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            when (checkedId) {
+                R.id.show_archived_button -> viewModel.selectSection(VaultSection.ARCHIVED)
+                R.id.show_trash_button -> viewModel.selectSection(VaultSection.TRASH)
+            }
+        }
+        ItemTouchHelper(
+            VaultSwipeCallback(requireContext(), noteAdapter, viewModel::handleSwipe),
+        ).attachToRecyclerView(currentBinding.noteList)
         val initialSection = arguments?.getString(ARG_SECTION)
             ?.let { name -> runCatching { VaultSection.valueOf(name) }.getOrNull() }
             ?: VaultSection.ACTIVE
@@ -92,6 +104,17 @@ class VaultFragment : Fragment() {
         currentBinding.errorState.isVisible = state is VaultUiState.Error
         currentBinding.noteList.isVisible = state is VaultUiState.Content
         currentBinding.addNoteButton.isVisible = state.section == VaultSection.ACTIVE
+        currentBinding.archiveTrashToggle.isVisible = state.section != VaultSection.ACTIVE
+        if (state.section != VaultSection.ACTIVE) {
+            val checkedId = if (state.section == VaultSection.ARCHIVED) {
+                R.id.show_archived_button
+            } else {
+                R.id.show_trash_button
+            }
+            if (currentBinding.archiveTrashToggle.checkedButtonId != checkedId) {
+                currentBinding.archiveTrashToggle.check(checkedId)
+            }
+        }
         currentBinding.pageControls.visibility = if (
             state is VaultUiState.Content || state.pageIndex > 0
         ) {
@@ -145,6 +168,9 @@ class VaultFragment : Fragment() {
     private fun handleEvent(event: VaultEvent) {
         when (event) {
             is VaultEvent.OpenEditor -> openEditor(event.itemId)
+            is VaultEvent.OpenAttachment -> {
+                (activity as? MainNavigator)?.openAttachment(event.attachmentId)
+            }
             is VaultEvent.ItemRestored -> {
                 val message = if (event.source == VaultSection.TRASH) {
                     R.string.note_restored_from_trash
@@ -154,13 +180,31 @@ class VaultFragment : Fragment() {
                 binding?.root?.let { root -> Snackbar.make(root, message, Snackbar.LENGTH_SHORT).show() }
             }
             is VaultEvent.ShowError -> {
+                event.itemId?.let(noteAdapter::resetItem)
                 val message = if (event.error is AppError.SyncSchedulingFailure) {
                     R.string.sync_schedule_failed
+                } else if (event.error is AppError.ItemNotFound) {
+                    R.string.item_attachment_not_found
                 } else {
                     R.string.operation_failed
                 }
                 binding?.root?.let { root -> Snackbar.make(root, message, Snackbar.LENGTH_LONG).show() }
             }
+            is VaultEvent.ItemChanged -> showUndo(event)
+        }
+    }
+
+    private fun showUndo(event: VaultEvent.ItemChanged) {
+        val message = when (event.change) {
+            VaultItemChange.ARCHIVED -> R.string.item_archived
+            VaultItemChange.TRASHED -> R.string.item_moved_to_trash
+            VaultItemChange.RESTORED_FROM_ARCHIVE -> R.string.note_restored_from_archive
+            VaultItemChange.RESTORED_FROM_TRASH -> R.string.note_restored_from_trash
+        }
+        binding?.root?.let { root ->
+            Snackbar.make(root, message, Snackbar.LENGTH_LONG)
+                .setAction(R.string.undo) { viewModel.undo(event.itemId, event.change) }
+                .show()
         }
     }
 
@@ -171,8 +215,7 @@ class VaultFragment : Fragment() {
     private fun applyWindowInsets(currentBinding: FragmentVaultBinding) {
         val rootStartPadding = currentBinding.root.paddingStart
         val rootEndPadding = currentBinding.root.paddingEnd
-        val listTopPadding = currentBinding.noteList.paddingTop
-        val listBottomPadding = currentBinding.noteList.paddingBottom
+        val rootTopPadding = currentBinding.root.paddingTop
         val fabParams = currentBinding.addNoteButton.layoutParams as ViewGroup.MarginLayoutParams
         val fabEndMargin = fabParams.marginEnd
         val fabBottomMargin = fabParams.bottomMargin
@@ -188,10 +231,7 @@ class VaultFragment : Fragment() {
                 start = rootStartPadding + startInset,
                 end = rootEndPadding + endInset,
             )
-            currentBinding.noteList.updatePadding(
-                top = listTopPadding + safeInsets.top,
-                bottom = listBottomPadding,
-            )
+            currentBinding.root.updatePadding(top = rootTopPadding + safeInsets.top)
             val updatedFabParams = currentBinding.addNoteButton.layoutParams as ViewGroup.MarginLayoutParams
             updatedFabParams.marginEnd = fabEndMargin
             updatedFabParams.bottomMargin = fabBottomMargin
@@ -209,9 +249,11 @@ class VaultFragment : Fragment() {
                 arguments = Bundle().apply { putString(ARG_SECTION, section.name) }
             }
 
-        fun sectionOf(fragment: VaultFragment): VaultSection =
+        fun initialSectionOf(fragment: VaultFragment): VaultSection =
             fragment.arguments?.getString(ARG_SECTION)
                 ?.let { name -> runCatching { VaultSection.valueOf(name) }.getOrNull() }
                 ?: VaultSection.ACTIVE
     }
+
+    fun currentSection(): VaultSection = viewModel.uiState.value.section
 }

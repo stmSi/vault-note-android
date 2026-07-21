@@ -77,6 +77,10 @@ data class SearchResultRow(
     val title: String,
     @ColumnInfo(name = "color")
     val color: VaultItemColor,
+    @ColumnInfo(name = "type")
+    val type: VaultItemType,
+    @ColumnInfo(name = "primary_attachment_id")
+    val primaryAttachmentId: String?,
     @ColumnInfo(name = "highlighted_title")
     val highlightedTitle: String,
     @ColumnInfo(name = "highlighted_snippet")

@@ -34,6 +34,9 @@ class ImportPreviewFragment : Fragment() {
     private val cameraCaptureId: String? by lazy(LazyThreadSafetyMode.NONE) {
         requireArguments().getString(ARG_CAMERA_CAPTURE_ID)
     }
+    private val standaloneFiles: Boolean by lazy(LazyThreadSafetyMode.NONE) {
+        requireArguments().getBoolean(ARG_STANDALONE_FILES, false)
+    }
     private val viewModel: ImportPreviewViewModel by viewModels {
         val container = requireContext().appContainer()
         ImportPreviewViewModel.Factory(
@@ -46,6 +49,7 @@ class ImportPreviewFragment : Fragment() {
             cameraCaptureManager = CameraCaptureManager(requireContext()),
             dispatchers = DefaultDispatcherProvider,
             importedFilesTitle = getString(R.string.imported_files_note_title),
+            standaloneFiles = standaloneFiles,
         )
     }
 
@@ -204,7 +208,7 @@ class ImportPreviewFragment : Fragment() {
                         },
                     )
                 }
-                (activity as? MainNavigator)?.completeImport(event.itemId, event.createdItem)
+                (activity as? MainNavigator)?.completeImport(event.itemId, event.openCreatedItem)
             }
         }
     }
@@ -242,6 +246,7 @@ class ImportPreviewFragment : Fragment() {
         private const val ARG_TOKEN = "import_token"
         private const val ARG_PARENT_ITEM_ID = "parent_item_id"
         private const val ARG_CAMERA_CAPTURE_ID = "camera_capture_id"
+        private const val ARG_STANDALONE_FILES = "standalone_files"
         private const val INVALID_TOKEN = -1L
         private const val TEXT_PREVIEW_CODE_POINTS = 4_000
 
@@ -249,12 +254,14 @@ class ImportPreviewFragment : Fragment() {
             token: Long,
             parentItemId: String?,
             cameraCaptureId: String?,
+            standaloneFiles: Boolean,
         ): ImportPreviewFragment =
             ImportPreviewFragment().apply {
                 arguments = Bundle().apply {
                     putLong(ARG_TOKEN, token)
                     parentItemId?.let { putString(ARG_PARENT_ITEM_ID, it) }
                     cameraCaptureId?.let { putString(ARG_CAMERA_CAPTURE_ID, it) }
+                    putBoolean(ARG_STANDALONE_FILES, standaloneFiles)
                 }
             }
     }

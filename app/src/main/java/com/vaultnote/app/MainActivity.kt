@@ -24,6 +24,7 @@ import com.google.android.material.snackbar.Snackbar
 import com.vaultnote.R
 import com.vaultnote.databinding.ActivityMainBinding
 import com.vaultnote.feature.editor.NoteEditorFragment
+import com.vaultnote.feature.files.FilesFragment
 import com.vaultnote.feature.lock.LockFragment
 import com.vaultnote.feature.settings.SecuritySettingsFragment
 import com.vaultnote.feature.search.SearchFragment
@@ -142,12 +143,14 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         parentItemId: String?,
         incomingImport: IncomingImport,
         cameraCaptureId: String?,
+        standaloneFiles: Boolean,
     ): Boolean {
         if (!appContainer().lockManager.isContentAccessAllowed()) {
             incomingImports.deferUntilUnlock(
                 incomingImport = incomingImport,
                 parentItemId = parentItemId,
                 cameraCaptureId = cameraCaptureId,
+                standaloneFiles = standaloneFiles,
             )
             return true
         }
@@ -158,7 +161,12 @@ class MainActivity : AppCompatActivity(), MainNavigator {
             setReorderingAllowed(true)
             replace(
                 R.id.fragment_container,
-                ImportPreviewFragment.newInstance(token, parentItemId, cameraCaptureId),
+                ImportPreviewFragment.newInstance(
+                    token,
+                    parentItemId,
+                    cameraCaptureId,
+                    standaloneFiles,
+                ),
             )
             addToBackStack(ImportPreviewFragment.BACK_STACK_NAME)
         }
@@ -167,10 +175,10 @@ class MainActivity : AppCompatActivity(), MainNavigator {
 
     override fun takePendingImport(token: Long): IncomingImport? = incomingImports.take(token)
 
-    override fun completeImport(itemId: String, createdItem: Boolean) {
+    override fun completeImport(itemId: String, openCreatedItem: Boolean) {
         if (!canNavigate()) return
         supportFragmentManager.popBackStackImmediate()
-        if (createdItem) openNoteEditor(itemId)
+        if (openCreatedItem) openNoteEditor(itemId)
         startOcrProcessing()
     }
 
@@ -375,6 +383,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
                 parentItemId = deferred.parentItemId,
                 incomingImport = deferred.incomingImport,
                 cameraCaptureId = deferred.cameraCaptureId,
+                standaloneFiles = deferred.standaloneFiles,
             )
         }
     }
@@ -463,8 +472,11 @@ class MainActivity : AppCompatActivity(), MainNavigator {
             if (isRenderingPrimaryNavigation) return@setOnItemSelectedListener true
             when (item.itemId) {
                 R.id.navigation_notes -> showVaultSection(VaultSection.ACTIVE)
+                R.id.navigation_files -> showPrimaryDestination(
+                    FilesFragment.newInstance(),
+                    R.id.navigation_files,
+                )
                 R.id.navigation_archived -> showVaultSection(VaultSection.ARCHIVED)
-                R.id.navigation_trash -> showVaultSection(VaultSection.TRASH)
                 R.id.navigation_search -> openSearch()
                 R.id.navigation_settings -> openSecuritySettings()
                 else -> return@setOnItemSelectedListener false
@@ -507,8 +519,8 @@ class MainActivity : AppCompatActivity(), MainNavigator {
                         .findFragmentById(R.id.fragment_container)
                     val isNonDefaultPrimaryDestination = when (current) {
                         is VaultFragment ->
-                            VaultFragment.sectionOf(current) != VaultSection.ACTIVE
-                        is SearchFragment, is SecuritySettingsFragment -> true
+                            current.currentSection() != VaultSection.ACTIVE
+                        is FilesFragment, is SearchFragment, is SecuritySettingsFragment -> true
                         else -> false
                     }
                     if (isNonDefaultPrimaryDestination) {
@@ -534,7 +546,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         val itemId = when (section) {
             VaultSection.ACTIVE -> R.id.navigation_notes
             VaultSection.ARCHIVED -> R.id.navigation_archived
-            VaultSection.TRASH -> R.id.navigation_trash
+            VaultSection.TRASH -> R.id.navigation_archived
         }
         showPrimaryDestination(VaultFragment.newInstance(section), itemId)
     }
@@ -560,7 +572,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         val current = supportFragmentManager.findFragmentById(R.id.fragment_container)
         val alreadySelected = when {
             current is VaultFragment && fragment is VaultFragment ->
-                VaultFragment.sectionOf(current) == VaultFragment.sectionOf(fragment)
+                current.currentSection() == VaultFragment.initialSectionOf(fragment)
             else -> current?.javaClass == fragment.javaClass
         }
         setPrimaryNavigationSelection(navigationItemId)
@@ -580,11 +592,12 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         }
         val current = supportFragmentManager.findFragmentById(R.id.fragment_container)
         val selectedId = when (current) {
-            is VaultFragment -> when (VaultFragment.sectionOf(current)) {
+            is VaultFragment -> when (current.currentSection()) {
                 VaultSection.ACTIVE -> R.id.navigation_notes
                 VaultSection.ARCHIVED -> R.id.navigation_archived
-                VaultSection.TRASH -> R.id.navigation_trash
+                VaultSection.TRASH -> R.id.navigation_archived
             }
+            is FilesFragment -> R.id.navigation_files
             is SearchFragment -> R.id.navigation_search
             is SecuritySettingsFragment -> R.id.navigation_settings
             else -> null

@@ -6,6 +6,7 @@ import com.vaultnote.core.common.model.ItemSyncStatus
 import com.vaultnote.core.common.model.VaultItemSummary
 import com.vaultnote.core.common.model.VaultNote
 import com.vaultnote.core.common.model.VaultItemColor
+import com.vaultnote.core.common.model.VaultItemType
 import com.vaultnote.core.common.model.VaultTag
 import com.vaultnote.core.repository.VaultRepository
 import kotlinx.coroutines.CompletableDeferred
@@ -156,6 +157,11 @@ class NoteEditorViewModelTest {
 
         override suspend fun createNote(title: String, body: String): RepositoryResult<String> =
             RepositoryResult.Success(ITEM_ID)
+
+        override suspend fun createAttachmentContainer(
+            title: String,
+            type: VaultItemType,
+        ): RepositoryResult<String> = RepositoryResult.Success(ITEM_ID)
 
         override suspend fun saveNote(
             id: String,

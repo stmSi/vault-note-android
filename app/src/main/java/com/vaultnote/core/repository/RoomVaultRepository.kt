@@ -91,13 +91,30 @@ class RoomVaultRepository(
             .map { tags -> tags.map { tag -> tag.toDomain() } }
             .flowOn(dispatchers.io)
 
-    override suspend fun createNote(title: String, body: String): RepositoryResult<String> {
+    override suspend fun createNote(title: String, body: String): RepositoryResult<String> =
+        createItem(VaultItemType.NOTE, title, body)
+
+    override suspend fun createAttachmentContainer(
+        title: String,
+        type: VaultItemType,
+    ): RepositoryResult<String> {
+        if (type != VaultItemType.DOCUMENT && type != VaultItemType.IMAGE) {
+            return RepositoryResult.Failure(AppError.InvalidInput("type", "not_an_attachment"))
+        }
+        return createItem(type, title, body = "")
+    }
+
+    private suspend fun createItem(
+        type: VaultItemType,
+        title: String,
+        body: String,
+    ): RepositoryResult<String> {
         validateNoteContentOffMain(title, body)?.let { return RepositoryResult.Failure(it) }
         return runMutation(OPERATION_CREATE_NOTE) {
             val now = clock.nowEpochMillis()
             val item = VaultItemEntity(
                 id = idGenerator.newId(),
-                type = VaultItemType.NOTE,
+                type = type,
                 color = VaultItemColor.DEFAULT,
                 title = title,
                 body = body,

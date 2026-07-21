@@ -86,8 +86,36 @@ class VaultViewModelTest {
             assertEquals(1, savedState.get<Int>("vault_page_index"))
         }
 
+    @Test
+    fun `swipe actions and undo call the matching soft state mutations`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val repository = WindowedFakeRepository(itemCount = 1)
+            val viewModel = VaultViewModel(repository, SavedStateHandle())
+            val itemId = summary(0).id
+
+            viewModel.handleSwipe(itemId, VaultItemChange.ARCHIVED)
+            viewModel.handleSwipe(itemId, VaultItemChange.TRASHED)
+            viewModel.handleSwipe(itemId, VaultItemChange.RESTORED_FROM_ARCHIVE)
+            viewModel.handleSwipe(itemId, VaultItemChange.RESTORED_FROM_TRASH)
+            advanceUntilIdle()
+
+            assertEquals(listOf(itemId to true, itemId to false), repository.archiveChanges)
+            assertEquals(listOf(itemId), repository.trashedItems)
+            assertEquals(listOf(itemId), repository.restoredItems)
+
+            viewModel.undo(itemId, VaultItemChange.ARCHIVED)
+            viewModel.undo(itemId, VaultItemChange.TRASHED)
+            advanceUntilIdle()
+
+            assertEquals(itemId to false, repository.archiveChanges.last())
+            assertEquals(itemId, repository.restoredItems.last())
+        }
+
     private class WindowedFakeRepository(itemCount: Int) : VaultRepository {
         private val items = (0 until itemCount).map(::summary)
+        val archiveChanges = mutableListOf<Pair<String, Boolean>>()
+        val trashedItems = mutableListOf<String>()
+        val restoredItems = mutableListOf<String>()
 
         override fun observeActiveItems(limit: Int, offset: Int): Flow<List<VaultItemSummary>> =
             window(limit, offset)
@@ -104,6 +132,11 @@ class VaultViewModelTest {
 
         override suspend fun createNote(title: String, body: String): RepositoryResult<String> =
             RepositoryResult.Success("new-note")
+
+        override suspend fun createAttachmentContainer(
+            title: String,
+            type: VaultItemType,
+        ): RepositoryResult<String> = RepositoryResult.Success("new-file")
 
         override suspend fun saveNote(
             id: String,
@@ -128,13 +161,13 @@ class VaultViewModelTest {
             RepositoryResult.Success(Unit)
 
         override suspend fun setArchived(id: String, isArchived: Boolean): RepositoryResult<Unit> =
-            RepositoryResult.Success(Unit)
+            RepositoryResult.Success(Unit).also { archiveChanges += id to isArchived }
 
         override suspend fun moveToTrash(id: String): RepositoryResult<Unit> =
-            RepositoryResult.Success(Unit)
+            RepositoryResult.Success(Unit).also { trashedItems += id }
 
         override suspend fun restore(id: String): RepositoryResult<Unit> =
-            RepositoryResult.Success(Unit)
+            RepositoryResult.Success(Unit).also { restoredItems += id }
 
         override suspend fun setTags(
             id: String,

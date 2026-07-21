@@ -23,6 +23,7 @@ import com.vaultnote.core.common.model.OcrState
         Index(value = ["parent_item_id"], name = "index_attachments_parent_item_id"),
         Index(value = ["sha256_checksum"], name = "index_attachments_sha256_checksum"),
         Index(value = ["upload_status"], name = "index_attachments_upload_status"),
+        Index(value = ["created_at", "id"], name = "index_attachments_created_at_id"),
     ],
 )
 data class AttachmentEntity(
