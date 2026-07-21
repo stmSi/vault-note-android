@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
@@ -59,6 +60,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         configurePrimaryNavigation()
+        configureBackNavigation()
         supportFragmentManager.addOnBackStackChangedListener(::updatePrimaryNavigation)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             setRecentsScreenshotEnabled(false)
@@ -416,6 +418,48 @@ class MainActivity : AppCompatActivity(), MainNavigator {
             )
             insets
         }
+    }
+
+    private fun configureBackNavigation() {
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    if (supportFragmentManager.isStateSaved) return
+                    if (!appContainer().lockManager.isContentAccessAllowed()) {
+                        dispatchToSystem()
+                        return
+                    }
+                    if (supportFragmentManager.backStackEntryCount > 0) {
+                        supportFragmentManager.popBackStack()
+                        return
+                    }
+
+                    val current = supportFragmentManager
+                        .findFragmentById(R.id.fragment_container)
+                    val isNonDefaultPrimaryDestination = when (current) {
+                        is VaultFragment ->
+                            VaultFragment.sectionOf(current) != VaultSection.ACTIVE
+                        is SearchFragment, is SecuritySettingsFragment -> true
+                        else -> false
+                    }
+                    if (isNonDefaultPrimaryDestination) {
+                        showVaultSection(VaultSection.ACTIVE)
+                    } else {
+                        dispatchToSystem()
+                    }
+                }
+
+                private fun dispatchToSystem() {
+                    isEnabled = false
+                    try {
+                        onBackPressedDispatcher.onBackPressed()
+                    } finally {
+                        isEnabled = true
+                    }
+                }
+            },
+        )
     }
 
     private fun showVaultSection(section: VaultSection) {
