@@ -26,7 +26,9 @@ object SearchQueryCompiler {
             .take(MAX_TERMS)
             .toList()
         if (terms.isEmpty()) return SearchQueryCompilation.Empty
-        val expression = terms.joinToString(separator = " AND ") { term ->
+        // FTS4 on Android uses adjacent quoted terms as implicit AND. The explicit AND keyword
+        // is not enabled consistently and can be interpreted as a literal token.
+        val expression = terms.joinToString(separator = " ") { term ->
             "\"$term\"*"
         }
         return SearchQueryCompilation.Valid(CompiledSearchQuery(expression, terms))
@@ -41,5 +43,7 @@ object SearchQueryCompiler {
     const val MAX_QUERY_CODE_POINTS = 200
     const val MAX_TERMS = 8
     const val MAX_TERM_CODE_POINTS = 64
-    private val TOKEN_PATTERN = Regex("[\\p{L}\\p{N}_]+")
+    // unicode61 indexes letters and numbers as tokens but treats filename punctuation,
+    // including underscores, as separators. Matching that behavior keeps full filenames usable.
+    private val TOKEN_PATTERN = Regex("[\\p{L}\\p{N}]+")
 }

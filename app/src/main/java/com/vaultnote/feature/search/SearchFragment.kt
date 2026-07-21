@@ -5,6 +5,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
@@ -24,6 +25,7 @@ import kotlinx.coroutines.launch
 
 class SearchFragment : Fragment() {
     private var binding: FragmentSearchBinding? = null
+    private var keyboardRequested = false
     private val viewModel: SearchViewModel by viewModels {
         SearchViewModel.Factory(requireContext().appContainer().searchRepository)
     }
@@ -61,9 +63,24 @@ class SearchFragment : Fragment() {
         currentBinding.searchInput.requestFocus()
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (keyboardRequested) return
+        keyboardRequested = true
+        binding?.searchInput?.post {
+            val currentBinding = binding ?: return@post
+            currentBinding.searchInput.requestFocus()
+            WindowCompat.getInsetsController(
+                requireActivity().window,
+                currentBinding.searchInput,
+            ).show(WindowInsetsCompat.Type.ime())
+        }
+    }
+
     override fun onDestroyView() {
         binding?.results?.adapter = null
         binding = null
+        keyboardRequested = false
         super.onDestroyView()
     }
 

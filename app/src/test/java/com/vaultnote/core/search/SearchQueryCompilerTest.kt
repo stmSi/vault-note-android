@@ -11,7 +11,7 @@ class SearchQueryCompilerTest {
 
         assertTrue(compiled is SearchQueryCompilation.Valid)
         val valid = compiled as SearchQueryCompilation.Valid
-        assertEquals("\"paper\"* AND \"OR\"* AND \"secret\"* AND \"tag\"*", valid.query.matchExpression)
+        assertEquals("\"paper\"* \"OR\"* \"secret\"* \"tag\"*", valid.query.matchExpression)
         assertEquals(listOf("paper", "OR", "secret", "tag"), valid.query.displayTerms)
     }
 
@@ -26,5 +26,16 @@ class SearchQueryCompilerTest {
     @Test
     fun `punctuation-only input does not create an FTS expression`() {
         assertTrue(SearchQueryCompiler.compile("\"*()-") is SearchQueryCompilation.Empty)
+    }
+
+    @Test
+    fun `filename separators compile to the same tokens as unicode61`() {
+        val compiled = SearchQueryCompiler.compile("Samsung_scan_2026.pdf")
+            as SearchQueryCompilation.Valid
+
+        assertEquals(
+            "\"Samsung\"* \"scan\"* \"2026\"* \"pdf\"*",
+            compiled.query.matchExpression,
+        )
     }
 }

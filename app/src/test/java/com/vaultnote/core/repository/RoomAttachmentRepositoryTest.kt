@@ -115,11 +115,19 @@ class RoomAttachmentRepositoryTest {
             database.searchDao().getDocumentForItem(itemId)?.attachmentFilenames,
         )
         assertEquals(1, searchMatchCount("paper"))
+        assertEquals("extension token", 1, searchMatchCount("pdf"))
+        assertEquals("combined filename tokens", 1, searchMatchCount("paper pdf"))
         val filenameQuery = SearchQueryCompiler.compile("paper") as SearchQueryCompilation.Valid
         val filenameResults = RoomSearchRepository(database.searchDao(), TestDispatchers)
             .observe(filenameQuery.query, 10)
             .first()
         assertEquals(listOf(itemId), filenameResults.map { it.itemId })
+        val fullFilenameQuery = SearchQueryCompiler.compile("paper.pdf")
+            as SearchQueryCompilation.Valid
+        val fullFilenameResults = RoomSearchRepository(database.searchDao(), TestDispatchers)
+            .observe(fullFilenameQuery.query, 10)
+            .first()
+        assertEquals(listOf(itemId), fullFilenameResults.map { it.itemId })
         val upload = requireNotNull(
             database.syncOperationDao().getByDedupeKey("attachment:${attachment.id}"),
         )
