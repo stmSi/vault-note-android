@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
 class LockFragment : Fragment() {
     private var binding: FragmentLockBinding? = null
     private var authenticator: VaultAuthenticator? = null
+    private var authenticatorGeneration = 0L
     private val promptSession: LockPromptSessionViewModel by viewModels()
 
     override fun onCreateView(
@@ -47,7 +48,10 @@ class LockFragment : Fragment() {
                     currentBinding.loadingIndicator.isVisible = !state.isPolicyLoaded
                     currentBinding.unlockButton.isVisible = state.isPolicyLoaded && state.isLocked
                     currentBinding.message.isVisible = state.isPolicyLoaded && state.isLocked
-                    if (state.isPolicyLoaded && !state.isLocked) promptSession.onVaultUnlocked()
+                    if (state.isPolicyLoaded && !state.isLocked) {
+                        promptSession.onVaultUnlocked()
+                        invalidateAuthenticator()
+                    }
                 }
             }
         }
@@ -90,9 +94,14 @@ class LockFragment : Fragment() {
     }
 
     private fun requestAuthentication(isManualRequest: Boolean) {
-        val prompt = getOrCreateAuthenticator()
+        val prompt = if (isManualRequest) {
+            createAuthenticator()
+        } else {
+            getOrCreateAuthenticator()
+        }
         if (!prompt.isAvailable()) {
             promptSession.onPromptFinished()
+            invalidateAuthenticator(prompt)
             showMessage(R.string.unlock_unavailable)
             return
         }
@@ -107,22 +116,43 @@ class LockFragment : Fragment() {
             prompt.authenticate()
         } catch (_: IllegalStateException) {
             promptSession.onPromptFinished()
+            invalidateAuthenticator(prompt)
+            showMessage(R.string.unlock_failed)
+        } catch (_: SecurityException) {
+            promptSession.onPromptFinished()
+            invalidateAuthenticator(prompt)
             showMessage(R.string.unlock_failed)
         }
     }
 
     private fun getOrCreateAuthenticator(): VaultAuthenticator = authenticator
-        ?: AndroidVaultAuthenticator(
+        ?: createAuthenticator()
+
+    private fun createAuthenticator(): VaultAuthenticator {
+        authenticatorGeneration += 1L
+        val generation = authenticatorGeneration
+        return AndroidVaultAuthenticator(
             fragment = this,
             onSuccess = {
+                if (generation != authenticatorGeneration) return@AndroidVaultAuthenticator
                 promptSession.onPromptFinished()
+                invalidateAuthenticator()
                 context?.appContainer()?.lockManager?.unlock()
             },
             onError = { cancelled ->
+                if (generation != authenticatorGeneration) return@AndroidVaultAuthenticator
                 promptSession.onPromptFinished()
+                invalidateAuthenticator()
                 if (!cancelled) showMessage(R.string.unlock_failed)
             },
         ).also { authenticator = it }
+    }
+
+    private fun invalidateAuthenticator(expected: VaultAuthenticator? = null) {
+        if (expected != null && authenticator !== expected) return
+        authenticator = null
+        authenticatorGeneration += 1L
+    }
 
     companion object {
         fun newInstance(): LockFragment = LockFragment()

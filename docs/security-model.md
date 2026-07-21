@@ -28,6 +28,8 @@ An explicit user-launched system document picker or external attachment viewer i
 
 BiometricPrompt on Android 11 and newer explicitly accepts `BIOMETRIC_STRONG | DEVICE_CREDENTIAL`. Android 8–10 uses the compatibility API's device-credential-enabled prompt because that authenticator combination is not consistently supported there. Authentication gates a session and is not cryptographically bound to every attachment read.
 
+The lock screen discards its `BiometricPrompt` wrapper after success, cancellation, callback failure, or a synchronous launch failure. A manual Unlock tap always creates a fresh wrapper, so a stale vendor prompt session left behind by an external app or device-credential activity cannot permanently block another attempt.
+
 Malformed or unreadable lock policy fails closed: lock enabled, immediate timeout, screenshots blocked. The settings screen exposes loading, content, error/retry, and save-failure states.
 
 ## Screenshots and recent apps

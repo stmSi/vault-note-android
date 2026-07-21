@@ -34,6 +34,7 @@ VaultNote assumes the Android OS, verified boot, sandbox, Keystore implementatio
 - Legacy migration checks the persisted SHA-256 before encryption and changes Room version only after success.
 - Lock state fails closed, respects monotonic background timeouts, and does not treat rotation as backgrounding.
 - Explicit picker/viewer handoffs are lifecycle-tracked, bounded, and revert to normal locking after their result/return; process recreation fails closed.
+- Completed or failed biometric sessions invalidate their prompt wrapper, and manual unlock always creates a fresh wrapper to recover from stale vendor prompt state.
 - External viewer/share grants are random, attachment-bound, expire after five minutes, permit at most eight content reads for viewer compatibility, and disappear on process death.
 - External handoff plaintext is authenticated before a seekable descriptor is exposed; the private cache name is immediately unlinked. Explicit save failures delete or truncate partial output where the selected document provider permits it.
 - Search input is bounded and compiled to quoted prefix terms instead of raw FTS syntax; attachment filenames are verified through the public search repository.
