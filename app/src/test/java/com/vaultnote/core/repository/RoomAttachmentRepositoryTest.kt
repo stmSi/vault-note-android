@@ -129,6 +129,12 @@ class RoomAttachmentRepositoryTest {
             TestDispatchers,
         ).observe(incrementalFilenameQuery.query, 10).first()
         assertEquals(listOf(itemId), incrementalFilenameResults.map { it.itemId })
+        assertTrue(
+            incrementalFilenameResults.single().highlightedSnippet.contains(
+                "${RoomSearchRepository.HIGHLIGHT_START}p" +
+                    "${RoomSearchRepository.HIGHLIGHT_END}aper",
+            ),
+        )
         val fullFilenameQuery = SearchQueryCompiler.compile("paper.pdf")
             as SearchQueryCompilation.Valid
         val fullFilenameResults = RoomSearchRepository(database.searchDao(), TestDispatchers)

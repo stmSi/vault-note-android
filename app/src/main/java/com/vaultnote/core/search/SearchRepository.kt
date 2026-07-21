@@ -41,19 +41,26 @@ class RoomSearchRepository(
             snippetTokenLimit = SNIPPET_TOKEN_LIMIT,
             limit = limit.coerceIn(1, MAX_RESULTS),
         )
-            .map { rows -> rows.map { row -> row.toDomain() } }
+            .map { rows -> rows.map { row -> row.toDomain(query.displayTerms) } }
             .flowOn(dispatchers.io)
     }
 
-    private fun SearchResultRow.toDomain(): VaultSearchResult = VaultSearchResult(
-        itemId = id,
-        title = title,
-        color = color,
-        highlightedTitle = highlightedTitle,
-        highlightedSnippet = highlightedSnippet,
-        isArchived = isArchived,
-        updatedAtEpochMillis = updatedAt,
-    )
+    private fun SearchResultRow.toDomain(displayTerms: List<String>): VaultSearchResult =
+        VaultSearchResult(
+            itemId = id,
+            title = title,
+            color = color,
+            highlightedTitle = SearchHighlightNormalizer.retainTypedPrefixes(
+                highlightedTitle,
+                displayTerms,
+            ),
+            highlightedSnippet = SearchHighlightNormalizer.retainTypedPrefixes(
+                highlightedSnippet,
+                displayTerms,
+            ),
+            isArchived = isArchived,
+            updatedAtEpochMillis = updatedAt,
+        )
 
     companion object {
         const val HIGHLIGHT_START = "\u0001"
