@@ -71,7 +71,7 @@ class AttachmentContentValidatorTest {
     fun `accepts a JPEG with Samsung-style motion photo data`() = runTest {
         val file = temporaryFolder.newFile("motion-photo.jpg").apply {
             writeBytes(
-                minimalJpeg() +
+                androidJpeg() +
                     byteArrayOf(0x00, 0x00, 0x30, 0x0A, 0x10, 0x00, 0x00, 0x00) +
                     "MotionPhoto_Data".toByteArray(StandardCharsets.US_ASCII) +
                     minimalMp4() +
@@ -106,21 +106,31 @@ class AttachmentContentValidatorTest {
     }
 
     @Test
-    fun `rejects arbitrary non-image data appended to a JPEG`() = runTest {
-        val file = temporaryFolder.newFile("unsafe.jpg").apply {
-            writeBytes(minimalJpeg() + "not an image payload".toByteArray(StandardCharsets.US_ASCII))
+    fun `accepts a decodable JPEG with trailing vendor metadata`() = runTest {
+        val file = temporaryFolder.newFile("vendor.jpg").apply {
+            writeBytes(androidJpeg() + "vendor metadata".toByteArray(StandardCharsets.US_ASCII))
         }
 
         val result = validator.validateStored(file, file.name, "image/jpeg")
 
-        assertTrue(result is RepositoryResult.Failure)
-        assertEquals(AppError.CorruptedFile, (result as RepositoryResult.Failure).error)
+        assertTrue(result is RepositoryResult.Success)
+    }
+
+    @Test
+    fun `accepts a decodable screenshot PNG with trailing metadata`() = runTest {
+        val file = temporaryFolder.newFile("Screenshot.png").apply {
+            writeBytes(androidImage(Bitmap.CompressFormat.PNG) + byteArrayOf(0x00, 0x01, 0x02))
+        }
+
+        val result = validator.validateStored(file, file.name, "image/png")
+
+        assertTrue(result is RepositoryResult.Success)
     }
 
     @Test
     fun `rejects a truncated JPEG scan`() = runTest {
         val file = temporaryFolder.newFile("truncated.jpg").apply {
-            writeBytes(minimalJpeg().dropLast(2).toByteArray())
+            writeBytes(androidJpeg().copyOf(64))
         }
 
         val result = validator.validateStored(file, file.name, "image/jpeg")
@@ -187,29 +197,15 @@ class AttachmentContentValidatorTest {
         closeEntry()
     }
 
-    private fun minimalJpeg(): ByteArray = byteArrayOf(
-        0xFF.toByte(),
-        0xD8.toByte(),
-        0xFF.toByte(),
-        0xDA.toByte(),
-        0x00,
-        0x02,
-        0x01,
-        0x02,
-        0xFF.toByte(),
-        0x00,
-        0x03,
-        0xFF.toByte(),
-        0xD9.toByte(),
-    )
+    private fun androidJpeg(): ByteArray = androidImage(Bitmap.CompressFormat.JPEG)
 
-    private fun androidJpeg(): ByteArray {
+    private fun androidImage(format: Bitmap.CompressFormat): ByteArray {
         val bitmap = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888).apply {
             eraseColor(Color.BLUE)
         }
         return try {
             ByteArrayOutputStream().use { output ->
-                assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output))
+                assertTrue(bitmap.compress(format, 90, output))
                 output.toByteArray()
             }
         } finally {
