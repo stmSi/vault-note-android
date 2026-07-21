@@ -35,6 +35,7 @@ import java.io.FileInputStream
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -96,7 +97,6 @@ class AndroidBackupRepositoryTest {
             idGenerator = IdGenerator { "generated_${sequence.incrementAndGet()}" },
             resolver = resolver,
             availableBytes = { Long.MAX_VALUE },
-            syncFile = {},
         )
     }
 
@@ -162,6 +162,72 @@ class AndroidBackupRepositoryTest {
         )
         assertTrue((restoredResult as RepositoryResult.Success).warning != null)
         assertEquals(0, syncRequests.get())
+    }
+
+    @Test
+    fun `plaintext export is explicit and restores without a password`() = runBlocking {
+        database.vaultItemDao().insert(originalItem())
+        database.attachmentDao().insert(originalAttachment())
+        val export = repository.prepareExport(
+            CharArray(0),
+            BackupProtection.PLAINTEXT,
+        ).successValue()
+
+        val exported = repository.export(export, ARCHIVE_URI).successValue()
+
+        assertEquals(BackupProtection.PLAINTEXT, exported.protection)
+        ZipFile(provider.archive).use { zip ->
+            val names = zip.entries().asSequence().map(ZipEntry::getName).toSet()
+            assertTrue(BackupFormat.PLAINTEXT_DATABASE_PATH in names)
+            assertTrue(BackupFormat.PLAINTEXT_CHECKSUMS_PATH in names)
+            assertTrue(BackupFormat.DATABASE_PATH !in names)
+            val databaseText = zip.getInputStream(
+                zip.getEntry(BackupFormat.PLAINTEXT_DATABASE_PATH),
+            ).bufferedReader().use { it.readText() }
+            assertTrue(databaseText.contains("Encrypted backup note"))
+        }
+        Shadows.shadowOf(resolver).registerInputStream(
+            ARCHIVE_URI,
+            FileInputStream(provider.archive),
+        )
+
+        val prepared = repository.prepareRestore(ARCHIVE_URI, CharArray(0)).successValue()
+
+        assertEquals(BackupProtection.PLAINTEXT, prepared.backupSummary.protection)
+        assertEquals(1L, prepared.backupSummary.itemCount)
+        assertEquals(1L, prepared.backupSummary.attachmentCount)
+        repository.cancelRestore(prepared)
+    }
+
+    @Test
+    fun `plaintext restore rejects a changed entry before modifying live data`() = runBlocking {
+        database.vaultItemDao().insert(originalItem())
+        database.attachmentDao().insert(originalAttachment())
+        val export = repository.prepareExport(
+            CharArray(0),
+            BackupProtection.PLAINTEXT,
+        ).successValue()
+        repository.export(export, ARCHIVE_URI).successValue()
+        rewriteArchiveEntry(BackupFormat.PLAINTEXT_DATABASE_PATH) { bytes ->
+            bytes.copyOf().also { changed ->
+                changed[changed.lastIndex / 2] = (changed[changed.lastIndex / 2].toInt() xor 1).toByte()
+            }
+        }
+        Shadows.shadowOf(resolver).registerInputStream(
+            ARCHIVE_URI,
+            FileInputStream(provider.archive),
+        )
+
+        val result = repository.prepareRestore(ARCHIVE_URI, CharArray(0))
+
+        assertTrue(result is RepositoryResult.Failure)
+        val error = (result as RepositoryResult.Failure).error
+        assertTrue(error is AppError.BackupValidationFailure)
+        assertEquals(
+            AppError.BackupValidationReason.CHECKSUM_MISMATCH,
+            (error as AppError.BackupValidationFailure).reason,
+        )
+        assertEquals(1L, database.backupDao().countItems())
     }
 
     @Test
@@ -240,6 +306,24 @@ class AndroidBackupRepositoryTest {
         ocrFailureCode = null,
         ocrUpdatedAt = FIXED_TIME,
     )
+
+    private fun rewriteArchiveEntry(path: String, transform: (ByteArray) -> ByteArray) {
+        val replacement = File(provider.archive.parentFile, "rewritten-backup.vnb")
+        ZipFile(provider.archive).use { source ->
+            ZipOutputStream(replacement.outputStream()).use { destination ->
+                val entries = source.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    val bytes = source.getInputStream(entry).use { it.readBytes() }
+                    destination.putNextEntry(ZipEntry(entry.name))
+                    destination.write(if (entry.name == path) transform(bytes) else bytes)
+                    destination.closeEntry()
+                }
+            }
+        }
+        check(provider.archive.delete())
+        check(replacement.renameTo(provider.archive))
+    }
 
     private class ArchiveProvider : ContentProvider() {
         lateinit var archive: File

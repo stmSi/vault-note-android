@@ -32,13 +32,35 @@ class BackupManifestCodecTest {
         assertEquals(BackupFormat.KDF_ITERATIONS, decoded.kdfIterations)
         assertEquals(manifest.checksumsCiphertextSize, decoded.checksumsCiphertextSize)
         assertEquals(manifest.checksumsCiphertextSha256, decoded.checksumsCiphertextSha256)
+        assertEquals(BackupProtection.ENCRYPTED, decoded.protection)
+    }
+
+    @Test
+    fun `version two plaintext manifest round trips without cryptographic parameters`() {
+        val plaintext = manifest.copy(
+            salt = byteArrayOf(),
+            kdfIterations = 0,
+            formatVersion = BackupFormat.PLAINTEXT_VERSION,
+            minimumReaderVersion = BackupFormat.PLAINTEXT_MIN_READER_VERSION,
+            protection = BackupProtection.PLAINTEXT,
+            checksumsPath = BackupFormat.PLAINTEXT_CHECKSUMS_PATH,
+        )
+
+        val decoded = BackupManifestCodec.decode(
+            BackupManifestCodec.encode(plaintext),
+        ).successValue()
+
+        assertEquals(BackupProtection.PLAINTEXT, decoded.protection)
+        assertTrue(decoded.salt.isEmpty())
+        assertEquals(0, decoded.kdfIterations)
+        assertEquals(BackupFormat.PLAINTEXT_CHECKSUMS_PATH, decoded.checksumsPath)
     }
 
     @Test
     fun `unknown versions and manifest extensions are rejected`() {
         val encoded = BackupManifestCodec.encode(manifest).decodeToString()
         assertReason(
-            encoded.replace("\"formatVersion\":1", "\"formatVersion\":2")
+            encoded.replace("\"formatVersion\":1", "\"formatVersion\":99")
                 .encodeToByteArray(),
             AppError.BackupValidationReason.UNSUPPORTED_VERSION,
         )

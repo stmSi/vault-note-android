@@ -2,7 +2,7 @@
 
 ## Current boundary
 
-VaultNote protects imported attachments and thumbnails with versioned AES-256-GCM envelopes backed by Android Keystore. Manual backups use an independent password-derived AES-256-GCM format so they can be restored on another installation. The app also provides offline search, OCR, durable synchronization plumbing, optional biometric/device-credential locking, automatic background timeout, secure recent-apps treatment, configurable screenshot blocking, and an authenticated streaming content provider.
+VaultNote protects imported attachments and thumbnails with versioned AES-256-GCM envelopes backed by Android Keystore. Manual backups default to an independent password-derived AES-256-GCM format so they can be restored on another installation. The user may explicitly export an unencrypted backup after an in-app disclosure; that format has no confidentiality or keyed authenticity. The app also provides offline search, OCR, durable synchronization plumbing, optional biometric/device-credential locking, automatic background timeout, secure recent-apps treatment, configurable screenshot blocking, and an authenticated streaming content provider.
 
 This is not whole-vault encryption. Note titles, bodies, tag names, OCR fields, attachment display names, and the Room FTS index remain plaintext in the app-private database. Anyone who can extract app data or execute in the app process may access those values. This limitation must remain visible until a separately designed database/search encryption strategy exists.
 
@@ -16,7 +16,7 @@ OCR requires plaintext input. Only after the encrypted envelope authenticates, V
 - Room remains the only displayed source of truth. The replaceable sync boundary consumes a durable queue; the included in-memory backend contains no credential, stores no attachment bytes, and is not remote backup.
 - Attachment ciphertext can cross the sync boundary, but note/title/tag/OCR metadata is not end-to-end encrypted. A future production backend administrator could read that metadata unless the protocol changes.
 - Imported providers, filenames, MIME claims, sizes, file contents, camera apps, external viewers, and future remote systems are untrusted.
-- Backup document providers and archives are untrusted. Restore accepts only bounded exact paths and strict versioned metadata, authenticates every encrypted entry, validates content in private staging, and changes live Room only after confirmation.
+- Backup document providers and archives are untrusted. Restore accepts only bounded exact paths and strict versioned metadata, authenticates every encrypted entry or checksum-verifies explicitly unencrypted entries, validates content in private staging, and changes live Room only after confirmation. Unkeyed plaintext checksums do not defend against a malicious archive author.
 
 ## App lock
 
@@ -56,7 +56,7 @@ An explicit open or share action issues a random 144-bit token bound to one atta
 
 The attachment key does not leave Android Keystore. There is no recovery phrase, escrow key or cloud key copy. Clearing app data removes the database and keys; loss or invalidation of a required historical key makes device ciphertext unavailable. A separately exported manual backup remains recoverable because it contains password-encrypted plaintext-equivalent content rather than Keystore keys. Restore validates it and encrypts attachments under the destination installation's current Keystore key. Without both a valid archive and its password, key loss remains unrecoverable. Versioned aliases and envelopes provide the structural seam for key rotation.
 
-The app intentionally sets `allowBackup=false` and does not rely on Android Auto Backup. Passwords are never saved to Room, preferences, files, saved state or intents. The complete portable format, temporary-plaintext boundary and restore transaction are documented in [Backup format](backup-format.md).
+The app intentionally sets `allowBackup=false` and does not rely on Android Auto Backup. Passwords are never saved to Room, preferences, files, saved state or intents. Encryption remains selected by default; disabling it clears the password inputs and exposes a warning that all notes, OCR, filenames and attachments will be readable outside VaultNote. The complete portable format, temporary-plaintext boundary and restore transaction are documented in [Backup format](backup-format.md).
 
 ## Operational rules
 

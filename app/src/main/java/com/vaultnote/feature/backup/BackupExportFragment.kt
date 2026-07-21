@@ -18,6 +18,7 @@ import com.google.android.material.snackbar.Snackbar
 import com.vaultnote.R
 import com.vaultnote.app.MainNavigator
 import com.vaultnote.app.appContainer
+import com.vaultnote.core.backup.BackupProtection
 import com.vaultnote.databinding.FragmentBackupExportBinding
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -52,6 +53,15 @@ class BackupExportFragment : Fragment() {
         }
         current.passwordInput.configureBackupPasswordInput()
         current.confirmationInput.configureBackupPasswordInput()
+        current.encryptBackupSwitch.setOnCheckedChangeListener { _, checked ->
+            if (!checked) {
+                current.passwordInput.text?.clear()
+                current.confirmationInput.text?.clear()
+            }
+            viewModel.setProtection(
+                if (checked) BackupProtection.ENCRYPTED else BackupProtection.PLAINTEXT,
+            )
+        }
         current.exportButton.setOnClickListener { requestExport(current) }
         applyInsets(current)
         viewLifecycleOwner.lifecycleScope.launch {
@@ -72,7 +82,12 @@ class BackupExportFragment : Fragment() {
     private fun requestExport(current: FragmentBackupExportBinding) {
         val password = current.passwordInput.consumePasswordChars()
         val confirmation = current.confirmationInput.consumePasswordChars()
-        viewModel.requestExport(password, confirmation)
+        val protection = if (current.encryptBackupSwitch.isChecked) {
+            BackupProtection.ENCRYPTED
+        } else {
+            BackupProtection.PLAINTEXT
+        }
+        viewModel.requestExport(password, confirmation, protection)
     }
 
     private fun render(current: FragmentBackupExportBinding, state: BackupExportState) {
@@ -80,13 +95,36 @@ class BackupExportFragment : Fragment() {
         current.progress.isVisible = state.isExporting
         current.passwordContainer.isEnabled = !busy
         current.confirmationContainer.isEnabled = !busy
+        current.encryptBackupSwitch.isEnabled = !busy
+        current.encryptBackupSwitch.isChecked = state.protection == BackupProtection.ENCRYPTED
+        val encrypted = state.protection == BackupProtection.ENCRYPTED
+        current.passwordContainer.isVisible = encrypted
+        current.confirmationContainer.isVisible = encrypted
+        current.passwordWarning.isVisible = encrypted
+        current.plaintextWarning.isVisible = !encrypted
+        current.progress.contentDescription = getString(
+            if (encrypted) {
+                R.string.backup_export_in_progress
+            } else {
+                R.string.backup_plaintext_export_in_progress
+            },
+        )
+        current.exportButton.setText(
+            if (encrypted) R.string.create_encrypted_backup else R.string.create_plaintext_backup,
+        )
         current.exportButton.isEnabled = !busy
     }
 
     private fun handleEvent(event: BackupExportEvent) {
         when (event) {
             BackupExportEvent.ChooseDestination -> launchDocumentPicker()
-            BackupExportEvent.ExportComplete -> showMessage(R.string.backup_export_complete)
+            is BackupExportEvent.ExportComplete -> showMessage(
+                if (event.protection == BackupProtection.ENCRYPTED) {
+                    R.string.backup_export_complete
+                } else {
+                    R.string.backup_plaintext_export_complete
+                },
+            )
             is BackupExportEvent.ShowError -> showMessage(errorMessage(event.reason))
         }
     }
@@ -123,6 +161,9 @@ class BackupExportFragment : Fragment() {
         BackupUiError.PASSWORD_INVALID -> R.string.backup_password_invalid
         BackupUiError.WRONG_PASSWORD -> R.string.backup_wrong_password
         BackupUiError.INVALID_BACKUP -> R.string.backup_invalid
+        BackupUiError.CORRUPTED_BACKUP -> R.string.backup_corrupted
+        BackupUiError.UNSUPPORTED_BACKUP -> R.string.backup_unsupported
+        BackupUiError.UNSAFE_BACKUP -> R.string.backup_unsafe
         BackupUiError.INSUFFICIENT_SPACE -> R.string.backup_insufficient_storage
         BackupUiError.PERMISSION_DENIED -> R.string.backup_permission_denied
         BackupUiError.LOCKED -> R.string.vault_locked_message

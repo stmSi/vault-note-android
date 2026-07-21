@@ -50,6 +50,7 @@ import kotlinx.coroutines.withContext
 
 class PreparedBackupExport internal constructor(
     internal val password: CharArray,
+    internal val protection: BackupProtection,
 ) {
     internal fun clear() = password.fill('\u0000')
     override fun toString(): String = "PreparedBackupExport(redacted)"
@@ -64,7 +65,10 @@ class PreparedBackupRestore internal constructor(
 }
 
 interface BackupRepository {
-    fun prepareExport(password: CharArray): RepositoryResult<PreparedBackupExport>
+    fun prepareExport(
+        password: CharArray,
+        protection: BackupProtection = BackupProtection.ENCRYPTED,
+    ): RepositoryResult<PreparedBackupExport>
 
     suspend fun export(
         prepared: PreparedBackupExport,
@@ -118,17 +122,29 @@ internal class AndroidBackupRepository(
     private val exportRoot = File(applicationContext.cacheDir, EXPORT_DIRECTORY)
     private val restoreRoot = File(applicationContext.cacheDir, RESTORE_DIRECTORY)
 
-    override fun prepareExport(password: CharArray): RepositoryResult<PreparedBackupExport> {
+    override fun prepareExport(
+        password: CharArray,
+        protection: BackupProtection,
+    ): RepositoryResult<PreparedBackupExport> {
         if (!lockManager.isContentAccessAllowed()) {
             password.fill('\u0000')
             return RepositoryResult.Failure(AppError.AuthenticationExpired)
         }
-        val validation = validatePassword(password)
+        val validation = if (protection == BackupProtection.ENCRYPTED) {
+            validatePassword(password)
+        } else {
+            null
+        }
         if (validation != null) {
             password.fill('\u0000')
             return RepositoryResult.Failure(validation)
         }
-        return RepositoryResult.Success(PreparedBackupExport(password.copyOf())).also {
+        val retainedPassword = if (protection == BackupProtection.ENCRYPTED) {
+            password.copyOf()
+        } else {
+            CharArray(0)
+        }
+        return RepositoryResult.Success(PreparedBackupExport(retainedPassword, protection)).also {
             password.fill('\u0000')
         }
     }
@@ -201,12 +217,10 @@ internal class AndroidBackupRepository(
             var staging: RestoreStagingStore? = null
             var stagingDirectory: File? = null
             var keepStaging = false
-            var key: BackupCrypto.BackupKey? = null
             try {
                 if (!lockManager.isContentAccessAllowed()) {
                     return@withContext RepositoryResult.Failure(AppError.AuthenticationExpired)
                 }
-                validatePassword(password)?.let { return@withContext RepositoryResult.Failure(it) }
                 if (source.scheme != ContentResolver.SCHEME_CONTENT) {
                     return@withContext RepositoryResult.Failure(AppError.PermissionDenied)
                 }
@@ -228,118 +242,21 @@ internal class AndroidBackupRepository(
                         is RepositoryResult.Success -> decoded.value
                         is RepositoryResult.Failure -> abort(decoded.error)
                     }
-                    key = when (
-                        val derived = crypto.deriveKey(
-                            password,
-                            manifest.salt,
-                            manifest.kdfIterations,
-                        )
-                    ) {
-                        is RepositoryResult.Success -> derived.value
-                        is RepositoryResult.Failure -> abort(derived.error)
-                    }
                     requireUnlocked()
-                    val binding = BackupManifestCodec.binding(manifest)
-                    val checksumsEntry = requireNotNull(zip.getEntry(BackupFormat.CHECKSUMS_PATH))
-                    verifyCiphertextEntry(
-                        zip,
-                        checksumsEntry,
-                        manifest.checksumsCiphertextSize,
-                        manifest.checksumsCiphertextSha256,
-                    )
-                    val checksumsPlaintext = File(stagingDirectory, CHECKSUMS_FILE)
-                    FileOutputStream(checksumsPlaintext).use { output ->
-                        when (
-                            val decrypted = crypto.decryptVerifiedTo(
-                                path = BackupFormat.CHECKSUMS_PATH,
-                                key = requireNotNull(key),
-                                manifestBinding = binding,
-                                openInput = { bufferedZipInput(zip, checksumsEntry) },
-                                output = BufferedOutputStream(output, BUFFER_BYTES),
-                                authenticationFailure = AppError.BackupValidationReason.WRONG_KEY,
-                            )
-                        ) {
-                            is RepositoryResult.Success -> Unit
-                            is RepositoryResult.Failure -> abort(decrypted.error)
+                    val mapping = when (manifest.protection) {
+                        BackupProtection.ENCRYPTED -> {
+                            validatePassword(password)?.let(::abort)
+                            prepareEncryptedRestore(zip, names, manifest, password, staging)
                         }
-                        syncFile(output)
+                        BackupProtection.PLAINTEXT ->
+                            preparePlaintextRestore(zip, names, manifest, staging)
                     }
-                    val checksumPaths = linkedSetOf<String>()
-                    checksumsPlaintext.reader(StandardCharsets.UTF_8).use { reader ->
-                        BackupChecksumsCodec.read(reader) { checksum ->
-                            if (!checksumPaths.add(checksum.path)) {
-                                abortValidation(AppError.BackupValidationReason.DUPLICATE_ENTRY)
-                            }
-                            val entry = zip.getEntry(checksum.path)
-                                ?: abortValidation(
-                                    AppError.BackupValidationReason.MISSING_ENTRY,
-                                )
-                            verifyCiphertextEntry(
-                                zip,
-                                entry,
-                                checksum.ciphertextSize,
-                                checksum.ciphertextSha256,
-                            )
-                            staging.addArchiveEntry(checksum)
-                        }
-                    }
-                    checksumsPlaintext.delete()
-                    if (BackupFormat.DATABASE_PATH !in checksumPaths) {
-                        abortValidation(AppError.BackupValidationReason.MISSING_ENTRY)
-                    }
-                    val expectedNames = checksumPaths + setOf(
-                        BackupFormat.MANIFEST_PATH,
-                        BackupFormat.CHECKSUMS_PATH,
-                    )
-                    if (names != expectedNames) {
-                        abortValidation(
-                            if (expectedNames.any { it !in names }) {
-                                AppError.BackupValidationReason.MISSING_ENTRY
-                            } else {
-                                AppError.BackupValidationReason.INVALID_DATA
-                            },
-                        )
-                    }
-
-                    val databaseEntry = requireNotNull(zip.getEntry(BackupFormat.DATABASE_PATH))
-                    requireUnlocked()
-                    val databasePlaintext = File(stagingDirectory, DATABASE_PLAINTEXT_FILE)
-                    FileOutputStream(databasePlaintext).use { output ->
-                        when (
-                            val decrypted = crypto.decryptVerifiedTo(
-                                path = BackupFormat.DATABASE_PATH,
-                                key = requireNotNull(key),
-                                manifestBinding = binding,
-                                openInput = { bufferedZipInput(zip, databaseEntry) },
-                                output = BufferedOutputStream(output, BUFFER_BYTES),
-                                authenticationFailure =
-                                    AppError.BackupValidationReason.CHECKSUM_MISMATCH,
-                            )
-                        ) {
-                            is RepositoryResult.Success -> Unit
-                            is RepositoryResult.Failure -> abort(decrypted.error)
-                        }
-                        syncFile(output)
-                    }
-                    FileInputStream(databasePlaintext).buffered(BUFFER_BYTES).use { input ->
-                        databaseCodec.read(input, staging)
-                    }
-                    databasePlaintext.delete()
-                    if (staging.archiveEntryCount() != staging.counts().second + 1L) {
-                        abortValidation(AppError.BackupValidationReason.MISSING_ENTRY)
-                    }
-                    val mapping = staging.planMappings(
-                        itemDao = database.vaultItemDao(),
-                        tagDao = database.tagDao(),
-                        attachmentDao = database.attachmentDao(),
-                        idGenerator = idGenerator,
-                    )
-                    stageRestoredAttachments(zip, requireNotNull(key), binding, staging)
                     val counts = staging.counts()
                     val summary = BackupSummary(
                         itemCount = counts.first,
                         attachmentCount = counts.second,
                         createdAtEpochMillis = manifest.createdAtEpochMillis,
+                        protection = manifest.protection,
                     )
                     archive.delete()
                     staging.close()
@@ -372,7 +289,6 @@ internal class AndroidBackupRepository(
                 validationFailure(AppError.BackupValidationReason.INVALID_DATA)
             } finally {
                 password.fill('\u0000')
-                key?.close()
                 if (!keepStaging) {
                     staging?.let { current ->
                         if (current.isReadyForCommit()) discardStagedFiles(current)
@@ -382,6 +298,148 @@ internal class AndroidBackupRepository(
                 }
             }
         }
+    }
+
+    private suspend fun prepareEncryptedRestore(
+        zip: ZipFile,
+        names: Set<String>,
+        manifest: BackupManifest,
+        password: CharArray,
+        staging: RestoreStagingStore,
+    ): RestoreMappingStats {
+        val key = when (
+            val derived = withContext(dispatchers.default) {
+                crypto.deriveKey(password, manifest.salt, manifest.kdfIterations)
+            }
+        ) {
+            is RepositoryResult.Success -> derived.value
+            is RepositoryResult.Failure -> abort(derived.error)
+        }
+        try {
+            val binding = BackupManifestCodec.binding(manifest)
+            val checksumsEntry = zip.getEntry(manifest.checksumsPath)
+                ?: abortValidation(AppError.BackupValidationReason.MISSING_ENTRY)
+            verifyArchiveEntry(
+                zip,
+                checksumsEntry,
+                manifest.checksumsCiphertextSize,
+                manifest.checksumsCiphertextSha256,
+            )
+            val checksumsPlaintext = File(staging.directory, CHECKSUMS_FILE)
+            try {
+                FileOutputStream(checksumsPlaintext).use { output ->
+                    when (
+                        val decrypted = crypto.decryptVerifiedTo(
+                            path = manifest.checksumsPath,
+                            key = key,
+                            manifestBinding = binding,
+                            openInput = { bufferedZipInput(zip, checksumsEntry) },
+                            output = BufferedOutputStream(output, BUFFER_BYTES),
+                            authenticationFailure = AppError.BackupValidationReason.WRONG_KEY,
+                        )
+                    ) {
+                        is RepositoryResult.Success -> Unit
+                        is RepositoryResult.Failure -> abort(decrypted.error)
+                    }
+                    syncFile(output)
+                }
+                val checksumPaths = readAndVerifyChecksums(
+                    zip = zip,
+                    staging = staging,
+                    read = { consume ->
+                        checksumsPlaintext.reader(StandardCharsets.UTF_8).use { reader ->
+                            BackupChecksumsCodec.read(reader, consume)
+                        }
+                    },
+                )
+                verifyExpectedNames(
+                    names,
+                    checksumPaths,
+                    BackupFormat.DATABASE_PATH,
+                    manifest.checksumsPath,
+                )
+            } finally {
+                checksumsPlaintext.delete()
+            }
+
+            val databaseEntry = zip.getEntry(BackupFormat.DATABASE_PATH)
+                ?: abortValidation(AppError.BackupValidationReason.MISSING_ENTRY)
+            requireUnlocked()
+            val databasePlaintext = File(staging.directory, DATABASE_PLAINTEXT_FILE)
+            try {
+                FileOutputStream(databasePlaintext).use { output ->
+                    when (
+                        val decrypted = crypto.decryptVerifiedTo(
+                            path = BackupFormat.DATABASE_PATH,
+                            key = key,
+                            manifestBinding = binding,
+                            openInput = { bufferedZipInput(zip, databaseEntry) },
+                            output = BufferedOutputStream(output, BUFFER_BYTES),
+                            authenticationFailure =
+                                AppError.BackupValidationReason.CHECKSUM_MISMATCH,
+                        )
+                    ) {
+                        is RepositoryResult.Success -> Unit
+                        is RepositoryResult.Failure -> abort(decrypted.error)
+                    }
+                    syncFile(output)
+                }
+                readDatabaseSnapshot(databasePlaintext, staging)
+            } finally {
+                databasePlaintext.delete()
+            }
+            verifyStagedArchiveCounts(staging)
+            val mapping = planRestoreMappings(staging)
+            stageRestoredAttachments(zip, key, binding, staging)
+            return mapping
+        } finally {
+            key.close()
+        }
+    }
+
+    private suspend fun preparePlaintextRestore(
+        zip: ZipFile,
+        names: Set<String>,
+        manifest: BackupManifest,
+        staging: RestoreStagingStore,
+    ): RestoreMappingStats {
+        val checksumsEntry = zip.getEntry(manifest.checksumsPath)
+            ?: abortValidation(AppError.BackupValidationReason.MISSING_ENTRY)
+        verifyArchiveEntry(
+            zip,
+            checksumsEntry,
+            manifest.checksumsCiphertextSize,
+            manifest.checksumsCiphertextSha256,
+        )
+        val checksumPaths = readAndVerifyChecksums(
+            zip = zip,
+            staging = staging,
+            read = { consume ->
+                bufferedZipInput(zip, checksumsEntry).reader(StandardCharsets.UTF_8).use { reader ->
+                    PlaintextBackupChecksumsCodec.read(reader, consume)
+                }
+            },
+        )
+        verifyExpectedNames(
+            names,
+            checksumPaths,
+            BackupFormat.PLAINTEXT_DATABASE_PATH,
+            manifest.checksumsPath,
+        )
+        requireUnlocked()
+        val databaseEntry = zip.getEntry(BackupFormat.PLAINTEXT_DATABASE_PATH)
+            ?: abortValidation(AppError.BackupValidationReason.MISSING_ENTRY)
+        val databasePlaintext = File(staging.directory, DATABASE_PLAINTEXT_FILE)
+        try {
+            copyZipEntryToFile(zip, databaseEntry, databasePlaintext)
+            readDatabaseSnapshot(databasePlaintext, staging)
+        } finally {
+            databasePlaintext.delete()
+        }
+        verifyStagedArchiveCounts(staging)
+        val mapping = planRestoreMappings(staging)
+        stageRestoredPlaintextAttachments(zip, staging)
+        return mapping
     }
 
     override suspend fun commitRestore(
@@ -472,6 +530,14 @@ internal class AndroidBackupRepository(
     private suspend fun buildArchive(
         prepared: PreparedBackupExport,
         destination: File,
+    ): BackupSummary = when (prepared.protection) {
+        BackupProtection.ENCRYPTED -> buildEncryptedArchive(prepared, destination)
+        BackupProtection.PLAINTEXT -> buildPlaintextArchive(destination)
+    }
+
+    private suspend fun buildEncryptedArchive(
+        prepared: PreparedBackupExport,
+        destination: File,
     ): BackupSummary {
         val salt = crypto.newSalt()
         val archiveId = crypto.newArchiveId()
@@ -499,7 +565,8 @@ internal class AndroidBackupRepository(
         try {
             requireUnlocked()
             FileOutputStream(destination).use { fileOutput ->
-                ZipOutputStream(BufferedOutputStream(fileOutput, BUFFER_BYTES)).use { zip ->
+                val zip = ZipOutputStream(BufferedOutputStream(fileOutput, BUFFER_BYTES))
+                try {
                     zip.setLevel(Deflater.NO_COMPRESSION)
                     checksumsFile.writer(StandardCharsets.UTF_8).use { checksumText ->
                         val checksumJson = BackupChecksumsCodec.newWriter(checksumText)
@@ -578,15 +645,246 @@ internal class AndroidBackupRepository(
                     zip.write(BackupManifestCodec.encode(manifest))
                     zip.closeEntry()
                     zip.finish()
+                    zip.flush()
+                    syncFile(fileOutput)
+                } finally {
+                    zip.close()
                 }
-                syncFile(fileOutput)
             }
             val stats = requireNotNull(snapshotStats)
-            return BackupSummary(stats.itemCount, stats.attachmentCount, createdAt)
+            return BackupSummary(
+                stats.itemCount,
+                stats.attachmentCount,
+                createdAt,
+                BackupProtection.ENCRYPTED,
+            )
         } finally {
             key.close()
             sourcesFile.delete()
             checksumsFile.delete()
+        }
+    }
+
+    private suspend fun buildPlaintextArchive(destination: File): BackupSummary {
+        val createdAt = clock.nowEpochMillis()
+        val archiveId = crypto.newArchiveId()
+        val sourcesFile = File(exportRoot, ".sources-${UUID.randomUUID()}.json")
+        val checksumsFile = File(exportRoot, ".checksums-${UUID.randomUUID()}.json")
+        var snapshotStats: BackupSnapshotStats? = null
+        try {
+            requireUnlocked()
+            FileOutputStream(destination).use { fileOutput ->
+                val zip = ZipOutputStream(BufferedOutputStream(fileOutput, BUFFER_BYTES))
+                try {
+                    zip.setLevel(Deflater.NO_COMPRESSION)
+                    checksumsFile.writer(StandardCharsets.UTF_8).use { checksumText ->
+                        val checksumJson = PlaintextBackupChecksumsCodec.newWriter(checksumText)
+                        putZipEntry(zip, BackupFormat.PLAINTEXT_DATABASE_PATH)
+                        val databaseOutput = PlaintextVerifierOutputStream(zip)
+                        sourcesFile.writer(StandardCharsets.UTF_8).use { sources ->
+                            snapshotStats = database.withTransaction {
+                                databaseCodec.write(databaseOutput, sources)
+                            }
+                        }
+                        val databaseSha256 = databaseOutput.sha256()
+                        zip.closeEntry()
+                        PlaintextBackupChecksumsCodec.writeEntry(
+                            checksumJson,
+                            BackupEntryChecksum(
+                                BackupFormat.PLAINTEXT_DATABASE_PATH,
+                                databaseOutput.byteCount,
+                                databaseSha256,
+                            ),
+                        )
+
+                        sourcesFile.reader(StandardCharsets.UTF_8).use { sourcesText ->
+                            BackupAttachmentSourcesCodec.openReader(sourcesText).use { sources ->
+                                while (true) {
+                                    currentCoroutineContext().ensureActive()
+                                    val source = sources.next() ?: break
+                                    requireUnlocked()
+                                    putZipEntry(zip, source.entryPath)
+                                    val attachmentOutput = PlaintextVerifierOutputStream(zip)
+                                    when (
+                                        val copied = attachmentReader.writeVerifiedAttachment(
+                                            attachmentId = source.attachmentId,
+                                            relativePath = source.localRelativePath,
+                                            output = attachmentOutput,
+                                        )
+                                    ) {
+                                        is RepositoryResult.Failure -> abort(copied.error)
+                                        is RepositoryResult.Success -> Unit
+                                    }
+                                    val attachmentSha256 = attachmentOutput.sha256()
+                                    if (
+                                        attachmentOutput.byteCount != source.plaintextSize ||
+                                        attachmentSha256 != source.plaintextSha256
+                                    ) {
+                                        abort(AppError.CorruptedFile)
+                                    }
+                                    zip.closeEntry()
+                                    PlaintextBackupChecksumsCodec.writeEntry(
+                                        checksumJson,
+                                        BackupEntryChecksum(
+                                            source.entryPath,
+                                            attachmentOutput.byteCount,
+                                            attachmentSha256,
+                                        ),
+                                    )
+                                }
+                            }
+                        }
+                        PlaintextBackupChecksumsCodec.finish(checksumJson)
+                    }
+
+                    putZipEntry(zip, BackupFormat.PLAINTEXT_CHECKSUMS_PATH)
+                    val checksumOutput = PlaintextVerifierOutputStream(zip)
+                    FileInputStream(checksumsFile).buffered(BUFFER_BYTES).use { input ->
+                        input.copyTo(checksumOutput, BUFFER_BYTES)
+                    }
+                    val checksumsSha256 = checksumOutput.sha256()
+                    zip.closeEntry()
+                    val manifest = BackupManifest(
+                        archiveId = archiveId,
+                        createdAtEpochMillis = createdAt,
+                        salt = byteArrayOf(),
+                        kdfIterations = 0,
+                        checksumsCiphertextSize = checksumOutput.byteCount,
+                        checksumsCiphertextSha256 = checksumsSha256,
+                        formatVersion = BackupFormat.PLAINTEXT_VERSION,
+                        minimumReaderVersion = BackupFormat.PLAINTEXT_MIN_READER_VERSION,
+                        protection = BackupProtection.PLAINTEXT,
+                        checksumsPath = BackupFormat.PLAINTEXT_CHECKSUMS_PATH,
+                    )
+                    putZipEntry(zip, BackupFormat.MANIFEST_PATH)
+                    zip.write(BackupManifestCodec.encode(manifest))
+                    zip.closeEntry()
+                    zip.finish()
+                    zip.flush()
+                    syncFile(fileOutput)
+                } finally {
+                    zip.close()
+                }
+            }
+            val stats = requireNotNull(snapshotStats)
+            return BackupSummary(
+                stats.itemCount,
+                stats.attachmentCount,
+                createdAt,
+                BackupProtection.PLAINTEXT,
+            )
+        } finally {
+            sourcesFile.delete()
+            checksumsFile.delete()
+        }
+    }
+
+    private fun readAndVerifyChecksums(
+        zip: ZipFile,
+        staging: RestoreStagingStore,
+        read: (((BackupEntryChecksum) -> Unit) -> Unit),
+    ): Set<String> {
+        val checksumPaths = linkedSetOf<String>()
+        read { checksum ->
+            if (!checksumPaths.add(checksum.path)) {
+                abortValidation(AppError.BackupValidationReason.DUPLICATE_ENTRY)
+            }
+            val entry = zip.getEntry(checksum.path)
+                ?: abortValidation(AppError.BackupValidationReason.MISSING_ENTRY)
+            verifyArchiveEntry(
+                zip,
+                entry,
+                checksum.ciphertextSize,
+                checksum.ciphertextSha256,
+            )
+            staging.addArchiveEntry(checksum)
+        }
+        return checksumPaths
+    }
+
+    private fun verifyExpectedNames(
+        names: Set<String>,
+        checksumPaths: Set<String>,
+        databasePath: String,
+        checksumsPath: String,
+    ) {
+        if (databasePath !in checksumPaths) {
+            abortValidation(AppError.BackupValidationReason.MISSING_ENTRY)
+        }
+        val expectedNames = checksumPaths + setOf(BackupFormat.MANIFEST_PATH, checksumsPath)
+        if (names != expectedNames) {
+            abortValidation(
+                if (expectedNames.any { it !in names }) {
+                    AppError.BackupValidationReason.MISSING_ENTRY
+                } else {
+                    AppError.BackupValidationReason.INVALID_DATA
+                },
+            )
+        }
+    }
+
+    private fun readDatabaseSnapshot(file: File, staging: RestoreStagingStore) {
+        FileInputStream(file).buffered(BUFFER_BYTES).use { input ->
+            databaseCodec.read(input, staging)
+        }
+    }
+
+    private fun verifyStagedArchiveCounts(staging: RestoreStagingStore) {
+        if (staging.archiveEntryCount() != staging.counts().second + 1L) {
+            abortValidation(AppError.BackupValidationReason.MISSING_ENTRY)
+        }
+    }
+
+    private suspend fun planRestoreMappings(staging: RestoreStagingStore): RestoreMappingStats =
+        staging.planMappings(
+            itemDao = database.vaultItemDao(),
+            tagDao = database.tagDao(),
+            attachmentDao = database.attachmentDao(),
+            idGenerator = idGenerator,
+        )
+
+    private fun copyZipEntryToFile(zip: ZipFile, entry: ZipEntry, destination: File) {
+        FileOutputStream(destination).use { output ->
+            val buffered = BufferedOutputStream(output, BUFFER_BYTES)
+            bufferedZipInput(zip, entry).use { input ->
+                input.copyTo(buffered, BUFFER_BYTES)
+            }
+            buffered.flush()
+            syncFile(output)
+        }
+    }
+
+    private suspend fun stageRestoredPlaintextAttachments(
+        zip: ZipFile,
+        staging: RestoreStagingStore,
+    ) {
+        var after = ""
+        while (true) {
+            val page = staging.attachmentPlansPage(after, BackupFormat.PAGE_SIZE)
+            for (plan in page) {
+                currentCoroutineContext().ensureActive()
+                requireUnlocked()
+                val expected = staging.archiveEntry(plan.entryPath)
+                    ?: abortValidation(AppError.BackupValidationReason.INVALID_DATA)
+                val entry = zip.getEntry(plan.entryPath)
+                    ?: abortValidation(AppError.BackupValidationReason.INVALID_DATA)
+                if (
+                    expected.ciphertextSize != entry.size ||
+                    expected.path != plan.entryPath ||
+                    entry.size != plan.fileSize
+                ) {
+                    abortValidation(AppError.BackupValidationReason.CHECKSUM_MISMATCH)
+                }
+                val plaintext = File(staging.directory, ".attachment-${UUID.randomUUID()}.tmp")
+                try {
+                    copyZipEntryToFile(zip, entry, plaintext)
+                    stageRestoredAttachment(staging, plan, plaintext)
+                } finally {
+                    plaintext.delete()
+                }
+            }
+            if (page.size < BackupFormat.PAGE_SIZE) break
+            after = page.last().originalId
         }
     }
 
@@ -637,25 +935,7 @@ internal class AndroidBackupRepository(
                     ) {
                         abortValidation(AppError.BackupValidationReason.CHECKSUM_MISMATCH)
                     }
-                    val staged = when (
-                        val result = restoredAttachmentStore.stage(
-                            plaintext = plaintext,
-                            attachmentId = plan.finalId,
-                            filename = plan.filename,
-                            mimeType = plan.mimeType,
-                            expectedSize = plan.fileSize,
-                            expectedSha256 = plan.sha256,
-                        )
-                    ) {
-                        is RepositoryResult.Success -> result.value
-                        is RepositoryResult.Failure -> abort(result.error)
-                    }
-                    staging.setAttachmentStage(
-                        originalId = plan.originalId,
-                        pendingFile = staged.pendingFile,
-                        destinationFile = staged.destinationFile,
-                        relativePath = staged.relativePath,
-                    )
+                    stageRestoredAttachment(staging, plan, plaintext)
                 } finally {
                     plaintext.delete()
                 }
@@ -663,6 +943,32 @@ internal class AndroidBackupRepository(
             if (page.size < BackupFormat.PAGE_SIZE) break
             after = page.last().originalId
         }
+    }
+
+    private suspend fun stageRestoredAttachment(
+        staging: RestoreStagingStore,
+        plan: RestoreAttachmentPlan,
+        plaintext: File,
+    ) {
+        val staged = when (
+            val result = restoredAttachmentStore.stage(
+                plaintext = plaintext,
+                attachmentId = plan.finalId,
+                filename = plan.filename,
+                mimeType = plan.mimeType,
+                expectedSize = plan.fileSize,
+                expectedSha256 = plan.sha256,
+            )
+        ) {
+            is RepositoryResult.Success -> result.value
+            is RepositoryResult.Failure -> abort(result.error)
+        }
+        staging.setAttachmentStage(
+            originalId = plan.originalId,
+            pendingFile = staged.pendingFile,
+            destinationFile = staged.destinationFile,
+            relativePath = staged.relativePath,
+        )
     }
 
     private suspend fun persistCleanupJournal(staging: RestoreStagingStore) {
@@ -871,11 +1177,7 @@ internal class AndroidBackupRepository(
                 abortValidation(AppError.BackupValidationReason.LIMIT_EXCEEDED)
             }
         }
-        if (
-            BackupFormat.MANIFEST_PATH !in names ||
-            BackupFormat.CHECKSUMS_PATH !in names ||
-            BackupFormat.DATABASE_PATH !in names
-        ) {
+        if (BackupFormat.MANIFEST_PATH !in names) {
             abortValidation(AppError.BackupValidationReason.MISSING_ENTRY)
         }
         return names
@@ -894,10 +1196,12 @@ internal class AndroidBackupRepository(
         return name == BackupFormat.MANIFEST_PATH ||
             name == BackupFormat.CHECKSUMS_PATH ||
             name == BackupFormat.DATABASE_PATH ||
+            name == BackupFormat.PLAINTEXT_CHECKSUMS_PATH ||
+            name == BackupFormat.PLAINTEXT_DATABASE_PATH ||
             ATTACHMENT_ENTRY_PATTERN.matches(name)
     }
 
-    private fun verifyCiphertextEntry(
+    private fun verifyArchiveEntry(
         zip: ZipFile,
         entry: ZipEntry,
         expectedSize: Long,

@@ -19,6 +19,7 @@ import com.google.android.material.snackbar.Snackbar
 import com.vaultnote.R
 import com.vaultnote.app.MainNavigator
 import com.vaultnote.app.appContainer
+import com.vaultnote.core.backup.BackupProtection
 import com.vaultnote.databinding.FragmentBackupRestoreBinding
 import kotlinx.coroutines.launch
 
@@ -95,7 +96,11 @@ class BackupRestoreFragment : Fragment() {
             .setTitle(R.string.confirm_backup_restore_title)
             .setMessage(
                 getString(
-                    R.string.confirm_backup_restore_message,
+                    if (confirmation.summary.protection == BackupProtection.PLAINTEXT) {
+                        R.string.confirm_plaintext_backup_restore_message
+                    } else {
+                        R.string.confirm_backup_restore_message
+                    },
                     confirmation.summary.itemCount,
                     confirmation.summary.attachmentCount,
                     confirmation.copiedItemCount,
@@ -156,6 +161,9 @@ class BackupRestoreFragment : Fragment() {
         BackupUiError.PASSWORD_INVALID -> R.string.backup_password_invalid
         BackupUiError.WRONG_PASSWORD -> R.string.backup_wrong_password
         BackupUiError.INVALID_BACKUP -> R.string.backup_invalid
+        BackupUiError.CORRUPTED_BACKUP -> R.string.backup_corrupted
+        BackupUiError.UNSUPPORTED_BACKUP -> R.string.backup_unsupported
+        BackupUiError.UNSAFE_BACKUP -> R.string.backup_unsafe
         BackupUiError.INSUFFICIENT_SPACE -> R.string.backup_insufficient_storage
         BackupUiError.PERMISSION_DENIED -> R.string.backup_permission_denied
         BackupUiError.LOCKED -> R.string.vault_locked_message

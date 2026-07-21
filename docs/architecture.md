@@ -2,7 +2,7 @@
 
 ## Scope and quality boundary
 
-VaultNote combines a secured local foundation with encrypted attachments, offline full-text search and OCR, durable WorkManager synchronization, preserve-both conflict resolution, and password-encrypted manual backup/restore. The included remote implementation is an in-memory development fake, not cloud backup. Room note/search/metadata content is still plaintext, so attachment and backup encryption are not presented as whole-vault encryption.
+VaultNote combines a secured local foundation with encrypted attachments, offline full-text search and OCR, durable WorkManager synchronization, preserve-both conflict resolution, and manual backup/restore. Backups default to password encryption; explicitly selected plaintext backups are supported with a prominent disclosure. The included remote implementation is an in-memory development fake, not cloud backup. Room note/search/metadata content is still plaintext, so attachment and backup encryption are not presented as whole-vault encryption.
 
 The current build has one `:app` module. That keeps startup, ownership, and build configuration straightforward while the product surface is small. Baseline Profile and Macrobenchmark modules remain deferred to Phase 7, after the measured journeys and release behavior are stable enough to make those profiles meaningful.
 
@@ -220,7 +220,7 @@ Mitigations already enforced by the architecture include:
 - optional biometric/device-credential lock gates UI and secure provider access;
 - recent-apps content is hidden and screenshot capture is blocked according to policy/platform capability;
 - external open/share requires an explicit action, bounded in-memory token, and narrow temporary URI permission; saving requires an explicit SAF destination.
-- manual backup uses a versioned password-derived AES-256-GCM archive, per-entry nonces and authenticated entry paths; restore validates into private staging before a separate confirmation and live transaction.
+- manual backup defaults to a versioned password-derived AES-256-GCM archive with per-entry nonces and authenticated paths; an explicit plaintext version uses unkeyed integrity checks only. Both restore into private staging before a separate confirmation and live transaction.
 
 Known residual risks include:
 

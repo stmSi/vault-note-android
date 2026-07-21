@@ -34,6 +34,7 @@
             android:padding="@dimen/space_m">
 
             <TextView
+                android:id="@+id/password_warning"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/backup_export_description"
@@ -46,11 +47,30 @@
                 android:text="@string/backup_password_warning"
                 android:textAppearance="?attr/textAppearanceBodyMedium" />
 
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/encrypt_backup_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_l"
+                android:checked="true"
+                android:minHeight="@dimen/touch_target"
+                android:text="@string/encrypt_backup" />
+
+            <TextView
+                android:id="@+id/plaintext_warning"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_s"
+                android:text="@string/plaintext_backup_warning"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="?attr/colorError"
+                android:visibility="gone" />
+
             <com.google.android.material.textfield.TextInputLayout
                 android:id="@+id/password_container"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_l"
+                android:layout_marginTop="@dimen/space_m"
                 android:hint="@string/backup_password"
                 app:endIconMode="password_toggle">
 

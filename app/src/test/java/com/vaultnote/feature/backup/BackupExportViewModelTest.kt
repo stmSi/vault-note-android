@@ -2,6 +2,7 @@ package com.vaultnote.feature.backup
 
 import android.net.Uri
 import com.vaultnote.core.backup.BackupRepository
+import com.vaultnote.core.backup.BackupProtection
 import com.vaultnote.core.backup.BackupSummary
 import com.vaultnote.core.backup.PreparedBackupExport
 import com.vaultnote.core.backup.PreparedBackupRestore
@@ -49,7 +50,11 @@ class BackupExportViewModelTest {
             val viewModel = BackupExportViewModel(repository, lockManager)
             val chooseDestination = async { viewModel.events.first() }
 
-            viewModel.requestExport(PASSWORD.toCharArray(), PASSWORD.toCharArray())
+            viewModel.requestExport(
+                PASSWORD.toCharArray(),
+                PASSWORD.toCharArray(),
+                BackupProtection.ENCRYPTED,
+            )
             runCurrent()
             assertEquals(BackupExportEvent.ChooseDestination, chooseDestination.await())
 
@@ -67,13 +72,37 @@ class BackupExportViewModelTest {
             assertFalse(viewModel.state.value.isExporting)
         }
 
+    @Test
+    fun `plaintext export accepts empty password only after explicit selection`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val repository = FakeBackupRepository()
+            val lockManager = VaultLockManager().apply { applyPolicy(LockPolicy.DEFAULT) }
+            val viewModel = BackupExportViewModel(repository, lockManager)
+            val chooseDestination = async { viewModel.events.first() }
+
+            viewModel.requestExport(
+                CharArray(0),
+                CharArray(0),
+                BackupProtection.PLAINTEXT,
+            )
+            runCurrent()
+
+            assertEquals(BackupExportEvent.ChooseDestination, chooseDestination.await())
+            assertEquals(BackupProtection.PLAINTEXT, repository.preparedProtection)
+        }
+
     private class FakeBackupRepository : BackupRepository {
         var exportCalls: Int = 0
+        var preparedProtection: BackupProtection? = null
 
-        override fun prepareExport(password: CharArray): RepositoryResult<PreparedBackupExport> {
+        override fun prepareExport(
+            password: CharArray,
+            protection: BackupProtection,
+        ): RepositoryResult<PreparedBackupExport> {
+            preparedProtection = protection
             val retainedPassword = password.copyOf()
             password.fill('\u0000')
-            return RepositoryResult.Success(PreparedBackupExport(retainedPassword))
+            return RepositoryResult.Success(PreparedBackupExport(retainedPassword, protection))
         }
 
         override suspend fun export(

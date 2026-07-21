@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.vaultnote.core.backup.BackupRepository
+import com.vaultnote.core.backup.BackupProtection
 import com.vaultnote.core.backup.PreparedBackupExport
 import com.vaultnote.core.common.AppError
 import com.vaultnote.core.common.RepositoryResult
@@ -24,11 +25,12 @@ import kotlinx.coroutines.withContext
 internal data class BackupExportState(
     val isWaitingForDestination: Boolean = false,
     val isExporting: Boolean = false,
+    val protection: BackupProtection = BackupProtection.ENCRYPTED,
 )
 
 internal sealed interface BackupExportEvent {
     data object ChooseDestination : BackupExportEvent
-    data object ExportComplete : BackupExportEvent
+    data class ExportComplete(val protection: BackupProtection) : BackupExportEvent
     data class ShowError(val reason: BackupUiError) : BackupExportEvent
 }
 
@@ -37,6 +39,9 @@ internal enum class BackupUiError {
     PASSWORD_INVALID,
     WRONG_PASSWORD,
     INVALID_BACKUP,
+    CORRUPTED_BACKUP,
+    UNSUPPORTED_BACKUP,
+    UNSAFE_BACKUP,
     INSUFFICIENT_SPACE,
     PERMISSION_DENIED,
     LOCKED,
@@ -54,13 +59,25 @@ internal class BackupExportViewModel(
     val state: StateFlow<BackupExportState> = mutableState.asStateFlow()
     val events: Flow<BackupExportEvent> = mutableEvents.receiveAsFlow()
 
-    fun requestExport(password: CharArray, confirmation: CharArray) {
+    fun setProtection(protection: BackupProtection) {
+        if (mutableState.value.isExporting || mutableState.value.isWaitingForDestination) return
+        mutableState.value = mutableState.value.copy(protection = protection)
+    }
+
+    fun requestExport(
+        password: CharArray,
+        confirmation: CharArray,
+        protection: BackupProtection,
+    ) {
         if (mutableState.value.isExporting || mutableState.value.isWaitingForDestination) {
             password.fill('\u0000')
             confirmation.fill('\u0000')
             return
         }
-        if (!password.contentEquals(confirmation)) {
+        if (
+            protection == BackupProtection.ENCRYPTED &&
+            !password.contentEquals(confirmation)
+        ) {
             password.fill('\u0000')
             confirmation.fill('\u0000')
             viewModelScope.launch {
@@ -71,10 +88,13 @@ internal class BackupExportViewModel(
             return
         }
         confirmation.fill('\u0000')
-        when (val result = repository.prepareExport(password)) {
+        when (val result = repository.prepareExport(password, protection)) {
             is RepositoryResult.Success -> {
                 prepared = result.value
-                mutableState.value = BackupExportState(isWaitingForDestination = true)
+                mutableState.value = BackupExportState(
+                    isWaitingForDestination = true,
+                    protection = protection,
+                )
                 viewModelScope.launch { mutableEvents.send(BackupExportEvent.ChooseDestination) }
             }
             is RepositoryResult.Failure -> viewModelScope.launch {
@@ -97,10 +117,13 @@ internal class BackupExportViewModel(
         prepared = null
         if (destination == null) {
             repository.cancelExport(export)
-            mutableState.value = BackupExportState()
+            mutableState.value = BackupExportState(protection = export.protection)
             return
         }
-        mutableState.value = BackupExportState(isExporting = true)
+        mutableState.value = BackupExportState(
+            isExporting = true,
+            protection = export.protection,
+        )
         viewModelScope.launch {
             var handedToRepository = false
             try {
@@ -108,11 +131,11 @@ internal class BackupExportViewModel(
                 handedToRepository = true
                 when (val result = repository.export(export, destination)) {
                     is RepositoryResult.Success -> {
-                        mutableState.value = BackupExportState()
-                        mutableEvents.send(BackupExportEvent.ExportComplete)
+                        mutableState.value = BackupExportState(protection = export.protection)
+                        mutableEvents.send(BackupExportEvent.ExportComplete(export.protection))
                     }
                     is RepositoryResult.Failure -> {
-                        mutableState.value = BackupExportState()
+                        mutableState.value = BackupExportState(protection = export.protection)
                         mutableEvents.send(
                             BackupExportEvent.ShowError(result.error.toBackupUiError()),
                         )
@@ -157,6 +180,12 @@ internal fun AppError.toBackupUiError(): BackupUiError = when (this) {
     is AppError.InvalidInput -> BackupUiError.PASSWORD_INVALID
     is AppError.BackupValidationFailure -> when (reason) {
         AppError.BackupValidationReason.WRONG_KEY -> BackupUiError.WRONG_PASSWORD
+        AppError.BackupValidationReason.CHECKSUM_MISMATCH -> BackupUiError.CORRUPTED_BACKUP
+        AppError.BackupValidationReason.UNSUPPORTED_VERSION -> BackupUiError.UNSUPPORTED_BACKUP
+        AppError.BackupValidationReason.UNSAFE_ARCHIVE_ENTRY,
+        AppError.BackupValidationReason.DUPLICATE_ENTRY,
+        AppError.BackupValidationReason.LIMIT_EXCEEDED,
+        -> BackupUiError.UNSAFE_BACKUP
         else -> BackupUiError.INVALID_BACKUP
     }
     else -> BackupUiError.UNKNOWN
