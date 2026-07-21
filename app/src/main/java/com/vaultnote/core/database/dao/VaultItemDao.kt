@@ -22,6 +22,9 @@ interface VaultItemDao {
     @Query("SELECT * FROM vault_items WHERE id = :itemId LIMIT 1")
     suspend fun getById(itemId: String): VaultItemEntity?
 
+    @Query("UPDATE vault_items SET ocr_text = :ocrText WHERE id = :itemId")
+    suspend fun updateOcrText(itemId: String, ocrText: String): Int
+
     @Transaction
     @Query("SELECT * FROM vault_items WHERE id = :itemId LIMIT 1")
     fun observeItemWithTags(itemId: String): Flow<VaultItemWithTags?>

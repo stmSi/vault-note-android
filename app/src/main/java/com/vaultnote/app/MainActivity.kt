@@ -21,6 +21,7 @@ import com.vaultnote.databinding.ActivityMainBinding
 import com.vaultnote.feature.editor.NoteEditorFragment
 import com.vaultnote.feature.lock.LockFragment
 import com.vaultnote.feature.settings.SecuritySettingsFragment
+import com.vaultnote.feature.search.SearchFragment
 import com.vaultnote.feature.importing.ImportPreviewFragment
 import com.vaultnote.feature.importing.IncomingImport
 import com.vaultnote.feature.importing.IncomingImportCoordinator
@@ -39,6 +40,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
     private lateinit var binding: ActivityMainBinding
     private val incomingImports: IncomingImportCoordinator by viewModels()
     private var securityMigrationJob: Job? = null
+    private var ocrProcessingJob: Job? = null
     private var securityMaintenanceStarted = false
     private var policyErrorShown = false
 
@@ -123,6 +125,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         if (!canNavigate()) return
         supportFragmentManager.popBackStackImmediate()
         if (createdItem) openNoteEditor(itemId)
+        startOcrProcessing()
     }
 
     override fun openAttachment(attachmentId: String) {
@@ -140,6 +143,15 @@ class MainActivity : AppCompatActivity(), MainNavigator {
             setReorderingAllowed(true)
             replace(R.id.fragment_container, SecuritySettingsFragment.newInstance())
             addToBackStack(SecuritySettingsFragment.BACK_STACK_NAME)
+        }
+    }
+
+    override fun openSearch() {
+        if (!canNavigate()) return
+        supportFragmentManager.commit {
+            setReorderingAllowed(true)
+            replace(R.id.fragment_container, SearchFragment.newInstance())
+            addToBackStack(SearchFragment.BACK_STACK_NAME)
         }
     }
 
@@ -233,6 +245,8 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         if (locked) {
             securityMigrationJob?.cancel()
             securityMigrationJob = null
+            ocrProcessingJob?.cancel()
+            ocrProcessingJob = null
             securityMaintenanceStarted = false
             if (::binding.isInitialized) appContainer().imageLoader.memoryCache?.clear()
         } else {
@@ -281,6 +295,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
                     Snackbar.LENGTH_LONG,
                 ).show()
             }
+            if (appContainer().lockManager.isContentAccessAllowed()) startOcrProcessing()
             while (appContainer().lockManager.isContentAccessAllowed()) {
                 when (
                     val result = appContainer().attachmentRepository
@@ -303,11 +318,29 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         }
     }
 
+    private fun startOcrProcessing() {
+        if (ocrProcessingJob?.isActive == true || !appContainer().lockManager.isContentAccessAllowed()) {
+            return
+        }
+        ocrProcessingJob = lifecycleScope.launch {
+            while (appContainer().lockManager.isContentAccessAllowed()) {
+                when (val result = appContainer().ocrRepository.processPending(OCR_BATCH)) {
+                    is RepositoryResult.Failure -> break
+                    is RepositoryResult.Success -> {
+                        if (!result.value.mayHaveMore) break
+                        yield()
+                    }
+                }
+            }
+        }
+    }
+
     private fun canNavigate(): Boolean =
         appContainer().lockManager.isContentAccessAllowed() &&
             !supportFragmentManager.isStateSaved
 
     private companion object {
         const val SECURITY_MIGRATION_BATCH = 8
+        const val OCR_BATCH = 2
     }
 }

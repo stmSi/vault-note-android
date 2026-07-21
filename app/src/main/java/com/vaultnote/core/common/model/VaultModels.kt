@@ -71,6 +71,7 @@ data class VaultAttachment(
     val uploadStatus: AttachmentUploadStatus,
     val createdAtEpochMillis: Long,
     val ocrState: OcrState,
+    val ocrFailureCode: String?,
 )
 
 data class AttachmentImportResult(

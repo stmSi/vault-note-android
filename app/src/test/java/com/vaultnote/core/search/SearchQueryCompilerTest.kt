@@ -1,0 +1,30 @@
+package com.vaultnote.core.search
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class SearchQueryCompilerTest {
+    @Test
+    fun `untrusted operators are converted to quoted prefix terms`() {
+        val compiled = SearchQueryCompiler.compile("paper OR secret* -tag")
+
+        assertTrue(compiled is SearchQueryCompilation.Valid)
+        val valid = compiled as SearchQueryCompilation.Valid
+        assertEquals("\"paper\"* AND \"OR\"* AND \"secret\"* AND \"tag\"*", valid.query.matchExpression)
+        assertEquals(listOf("paper", "OR", "secret", "tag"), valid.query.displayTerms)
+    }
+
+    @Test
+    fun `oversized input is rejected before querying SQLite`() {
+        assertTrue(
+            SearchQueryCompiler.compile("a".repeat(SearchQueryCompiler.MAX_QUERY_CODE_POINTS + 1))
+                is SearchQueryCompilation.TooLong,
+        )
+    }
+
+    @Test
+    fun `punctuation-only input does not create an FTS expression`() {
+        assertTrue(SearchQueryCompiler.compile("\"*()-") is SearchQueryCompilation.Empty)
+    }
+}

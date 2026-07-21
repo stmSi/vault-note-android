@@ -19,5 +19,7 @@ interface MainNavigator {
 
     fun openSecuritySettings()
 
+    fun openSearch()
+
     fun navigateBack()
 }

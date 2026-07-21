@@ -75,6 +75,13 @@ class RoomAttachmentRepository(
             .flowOn(dispatchers.io)
     }
 
+    override fun observeById(attachmentId: String): Flow<VaultAttachment?> {
+        if (attachmentId.isBlank()) return flowOf(null)
+        return attachmentDao.observeById(attachmentId)
+            .map { attachment -> attachment?.toDomain() }
+            .flowOn(dispatchers.io)
+    }
+
     override suspend fun importFromUri(
         parentItemId: String,
         sourceUri: Uri,
@@ -193,7 +200,9 @@ class RoomAttachmentRepository(
                     throw IllegalStateException("Committed attachment did not clear its cleanup journal")
                 }
 
-                val updatedParent = parent.withLocalChange(now)
+                val updatedParent = parent.withLocalChange(now).copy(
+                    ocrText = attachmentDao.getSearchableOcrText(parent.id).orEmpty(),
+                )
                 updateItemExactlyOnce(updatedParent)
                 updateAttachmentSearchText(updatedParent)
                 enqueueAttachmentOperation(
@@ -311,7 +320,9 @@ class RoomAttachmentRepository(
                     throw IllegalStateException("Attachment delete did not affect exactly one row")
                 }
 
-                val updatedParent = parent.withLocalChange(now)
+                val updatedParent = parent.withLocalChange(now).copy(
+                    ocrText = attachmentDao.getSearchableOcrText(parent.id).orEmpty(),
+                )
                 updateItemExactlyOnce(updatedParent)
                 updateAttachmentSearchText(updatedParent)
                 enqueueAttachmentOperation(
@@ -798,6 +809,7 @@ class RoomAttachmentRepository(
         uploadStatus = uploadStatus,
         createdAtEpochMillis = createdAt,
         ocrState = ocrState,
+        ocrFailureCode = ocrFailureCode,
     )
 
     private suspend fun ensureEncrypted(

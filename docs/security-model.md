@@ -2,9 +2,11 @@
 
 ## Current boundary
 
-Phase 3 protects imported attachments and thumbnails with versioned AES-256-GCM envelopes backed by Android Keystore. It also adds an optional biometric/device-credential app lock, automatic background timeout, secure recent-apps treatment, configurable screenshot blocking, and an authenticated streaming content provider.
+Phase 4 protects imported attachments and thumbnails with versioned AES-256-GCM envelopes backed by Android Keystore and adds offline search plus OCR. It retains the optional biometric/device-credential app lock, automatic background timeout, secure recent-apps treatment, configurable screenshot blocking, and authenticated streaming content provider.
 
 This is not whole-vault encryption. Note titles, bodies, tag names, OCR fields, attachment display names, and the Room FTS index remain plaintext in the app-private database. Anyone who can extract app data or execute in the app process may access those values. This limitation must remain visible until a separately designed database/search encryption strategy exists.
+
+OCR requires plaintext input. Only after the encrypted envelope authenticates, VaultNote creates a random app-private cache lease, processes bounded image data or one PDF page at a time, and logically deletes the lease on completion or cancellation. A process-killed lease is removed when older than one hour on the next OCR pass. Filesystem and flash-controller behavior means the app cannot guarantee forensic secure erasure. Locking cancels active OCR, but an OS- or process-level compromise remains outside this boundary.
 
 ## Trust boundaries
 

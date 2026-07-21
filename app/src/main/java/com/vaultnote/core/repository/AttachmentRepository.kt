@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.Flow
 
 interface AttachmentRepository {
     fun observeForItem(itemId: String): Flow<List<VaultAttachment>>
+    fun observeById(attachmentId: String): Flow<VaultAttachment?>
 
     suspend fun importFromUri(
         parentItemId: String,

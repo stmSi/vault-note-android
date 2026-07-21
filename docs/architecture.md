@@ -1,8 +1,8 @@
-# VaultNote Phase 3 architecture
+# VaultNote Phase 4 architecture
 
 ## Scope and quality boundary
 
-Phase 3 extends the offline note and defensive import foundation with Keystore-backed attachment encryption, authenticated streaming, optional app locking, and secure-window controls. It does not simulate cloud behavior that is not implemented: the sync scheduler remains fake and non-networking. Room note/search/metadata content is still plaintext, so attachment encryption is not presented as whole-vault encryption.
+Phase 4 extends the secured local foundation with a complete offline search screen and a lazy asynchronous OCR pipeline. It does not simulate cloud behavior that is not implemented: the sync scheduler remains fake and non-networking. Room note/search/metadata content is still plaintext, so attachment encryption is not presented as whole-vault encryption.
 
 The current build has one `:app` module. That keeps startup, ownership, and build configuration straightforward while the product surface is small. Baseline Profile and Macrobenchmark modules remain deferred to Phase 7, after the measured journeys and release behavior are stable enough to make those profiles meaningful.
 
@@ -139,9 +139,17 @@ The public item ID is a UUID-like string, while FTS external content requires an
 
 `search_fts` indexes the corresponding text columns with Room FTS4 and the `unicode61` tokenizer. Room-managed external-content triggers keep the index aligned when the aggregate row changes. Application code writes `search_documents`, never the FTS virtual table directly. A search query joins FTS to the aggregate by `rowid`, then to `vault_items` by item ID, so results retain the canonical domain identity and deletion/archive rules.
 
-The foundation creates and maintains this storage contract but does not expose the Phase 4 search UI. Before that UI accepts arbitrary input, it must tokenize, bound, and quote user text rather than passing raw FTS operator syntax. `unicode61` also does not provide sophisticated Thai or CJK word segmentation; improving language-specific search requires a measured, compatible tokenizer strategy.
+The search screen accepts at most 200 Unicode code points, extracts at most eight bounded letter/number terms, and compiles only quoted prefix expressions. Raw FTS operators are never accepted. Input is debounced for 300 ms and switched with `flatMapLatest`; results remain a live Room `Flow`, are limited to 100 narrow rows, and contain only a title and bounded highlighted snippet. Deleted items are excluded while archived items remain discoverable. Attachment filenames are included in the same aggregate and are covered by repository integration tests. `unicode61` does not provide sophisticated Thai or CJK word segmentation; improving language-specific search requires a measured, compatible tokenizer strategy.
 
-The FTS table duplicates searchable plaintext. This remains a deliberate known Phase 3 security limitation, not encryption.
+### OCR pipeline
+
+Image and PDF imports begin in a durable `PENDING` state. After unlock and first display, the activity processes two attachments at a time through `OcrRepository`; opening a pending attachment can also request that single item. ML Kit's automatic initialization provider is removed from the merged manifest; the bundled Latin engine is initialized and constructed only on its first OCR request. Images are sampled to at most a 2048-pixel edge and roughly four million pixels. PDFs are rendered sequentially, one page and bitmap at a time, with a 50-page limit. Extracted text is control-character filtered and bounded to 200,000 characters.
+
+Before recognition, the authenticated attachment envelope is streamed into a random app-cache lease. Cancellation deletes the lease; process death leaves only an app-private `ocr-*.tmp` file that the next pipeline pass removes after one hour. Flash storage cannot promise physical secure erasure, so this is logical deletion, not a claim of forensic wiping. App lock cancellation stops the pipeline and content access is rechecked around decryption.
+
+Room conditionally claims `PENDING` or stale `PROCESSING` work by attachment ID and checksum. Success records the source checksum and extracted text, then recomputes the parent aggregate and updates `vault_items` plus `search_documents` in one transaction. A completed unchanged checksum is never selected again. Failures use stable non-sensitive codes; transient engine/memory failures may be explicitly retried, while corrupted, unsupported, or over-limit content is not retried indefinitely. OCR is derived local data and does not increment the user-content revision or add a sync operation in Phase 4.
+
+The FTS table duplicates searchable plaintext. This remains a deliberate known Phase 4 security limitation, not encryption.
 
 ## Transaction and revision model
 
@@ -157,7 +165,7 @@ Repository methods expose domain models and commands rather than Room entities. 
 
 Queue coalescing must not use SQLite `REPLACE`, because replacement is implemented as delete plus insert and can invalidate ownership of in-flight work. The queue instead inserts-if-absent and updates the deduplication slot. A newer local revision replaces retry/lease ownership with a new operation identity. In later phases, completion must be conditional on the worker's claimed operation identity so an old in-flight upload cannot erase a newer edit.
 
-The Phase 3 fake implementation records scheduling demand and exposes pending state for tests. It has no API or credential, performs no network I/O, and leaves operations pending. Attachment imports queue an `UPLOAD_ATTACHMENT` operation plus the item metadata upsert. A future WorkManager implementation must enforce attachment completion before uploading or marking referenced item metadata synchronized.
+The Phase 4 fake implementation records scheduling demand and exposes pending state for tests. It has no API or credential, performs no network I/O, and leaves operations pending. Attachment imports queue an `UPLOAD_ATTACHMENT` operation plus the item metadata upsert. A future WorkManager implementation must enforce attachment completion before uploading or marking referenced item metadata synchronized.
 
 ### Soft deletion
 
@@ -167,7 +175,7 @@ Deleting sets `deleted_at`, advances the local revision, and enqueues a delete/t
 
 Repository failures cross the presentation boundary as typed application failures or sealed results; views receive a non-sensitive message and no database/stack details. Cancellation is rethrown and never translated into a generic failure. A failed transaction commits none of its item, search, or queue changes. Attachment cleanup runs in a non-cancellable reconciliation section after checking Room references, while the durable journal covers process termination that no coroutine handler can observe. A post-commit scheduler failure does not roll back valid local data and cannot lose sync intent because that intent is already durable. UI warnings distinguish delayed sync, unavailable derived previews, and pending local file cleanup.
 
-The UI offers retry only where meaningful. Authentication, encryption/decryption, and policy-storage errors are typed in Phase 3; network, quota, and backup errors remain future boundaries and are not fabricated by the fake scheduler.
+The UI offers retry only where meaningful. Authentication, encryption/decryption, OCR, and policy-storage errors are typed in Phase 4; network, quota, and backup errors remain future boundaries and are not fabricated by the fake scheduler.
 
 ## Startup and performance decisions
 
@@ -186,9 +194,9 @@ There is no splash delay and no initial network dependency. Policy loading is a 
 
 The merged manifest retains only the profile installer’s AndroidX Startup entry; unused EmojiCompat and process-lifecycle initializers are explicitly removed, as is Room’s unused multi-process invalidation service. Any later library that adds a `ContentProvider` must receive the same audit. Performance claims must eventually be measured in release-like builds by the deferred baseline-profile and benchmark modules; debug timing is not an acceptance measurement.
 
-## Security boundary and known Phase 3 risks
+## Security boundary and known Phase 4 risks
 
-Phase 3 adds attachment confidentiality/integrity and a local access gate, but it is not the final VaultNote confidentiality model.
+Phase 4 retains attachment confidentiality/integrity and a local access gate, but it is not the final VaultNote confidentiality model.
 
 Mitigations already enforced by the architecture include:
 
@@ -208,7 +216,7 @@ Mitigations already enforced by the architecture include:
 
 Known residual risks include:
 
-- title, body, tags, and FTS text are plaintext in Room;
+- title, body, tags, attachment filenames, extracted OCR, and FTS text are plaintext in Room;
 - an unlocked device, root access, OS compromise, debug backup/extraction, or a compromised app process can expose local data;
 - app lock defaults off, and its process-local session is not a per-read Keystore authentication requirement;
 - an explicitly chosen external viewer receives plaintext and may retain it;
@@ -217,7 +225,7 @@ Known residual risks include:
 - no encrypted manual backup or restore validation exists yet;
 - no server revision or conflict-resolution implementation has been exercised against a real backend.
 
-Accordingly, Phase 3 should not be represented as whole-vault encryption or the sole copy of irreplaceable material. The detailed boundaries are documented in [Security model](security-model.md), [Encryption format](encryption-format.md), and [Threat model](threat-model.md).
+Accordingly, Phase 4 should not be represented as whole-vault encryption or the sole copy of irreplaceable material. The detailed boundaries are documented in [Security model](security-model.md), [Encryption format](encryption-format.md), and [Threat model](threat-model.md).
 
 ## Testing strategy
 
@@ -249,7 +257,7 @@ The standard verification commands and required SDK/JDK versions are listed in t
 
 ## Evolution seams
 
-The Phase 3 boundaries are designed for replacement rather than rewrites:
+The Phase 4 boundaries are designed for replacement rather than rewrites:
 
 - the fake scheduler becomes a unique WorkManager chain while the durable queue remains authoritative;
 - remote API, authentication, and file storage implementations sit behind interfaces and write successful results back to Room;

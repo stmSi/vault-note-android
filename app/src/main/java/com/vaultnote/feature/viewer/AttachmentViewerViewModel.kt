@@ -6,7 +6,10 @@ import androidx.lifecycle.viewModelScope
 import com.vaultnote.core.common.AppError
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.model.OpenableAttachment
+import com.vaultnote.core.common.model.OcrState
+import com.vaultnote.core.ocr.OcrRepository
 import com.vaultnote.core.repository.AttachmentRepository
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +31,7 @@ internal sealed interface AttachmentViewerState {
     data class Content(
         val attachment: OpenableAttachment,
         val isDeleting: Boolean = false,
+        val isRetryingOcr: Boolean = false,
     ) : AttachmentViewerState
     data class Error(
         val reason: ViewerFailureReason,
@@ -50,9 +54,11 @@ internal enum class AttachmentDeleteWarningReason {
 internal class AttachmentViewerViewModel(
     private val attachmentId: String,
     private val repository: AttachmentRepository,
+    private val ocrRepository: OcrRepository,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow<AttachmentViewerState>(AttachmentViewerState.Loading)
     private val mutableEvents = Channel<AttachmentViewerEvent>(Channel.BUFFERED)
+    private var attachmentObservation: Job? = null
 
     val state: StateFlow<AttachmentViewerState> = mutableState.asStateFlow()
     val events: Flow<AttachmentViewerEvent> = mutableEvents.receiveAsFlow()
@@ -98,11 +104,32 @@ internal class AttachmentViewerViewModel(
         }
     }
 
+    fun retryOcr() {
+        val current = mutableState.value as? AttachmentViewerState.Content ?: return
+        if (current.isRetryingOcr || !ocrRepository.isRetryable(current.attachment.attachment.ocrFailureCode)) {
+            return
+        }
+        mutableState.value = current.copy(isRetryingOcr = true)
+        viewModelScope.launch {
+            val reset = ocrRepository.retry(attachmentId)
+            if (reset is RepositoryResult.Success && reset.value) {
+                ocrRepository.processAttachment(attachmentId)
+            } else {
+                mutableState.value = current
+                mutableEvents.send(AttachmentViewerEvent.ShowError(ViewerFailureReason.UNKNOWN))
+            }
+        }
+    }
+
     private fun load() {
         viewModelScope.launch {
             when (val result = repository.getOpenableAttachment(attachmentId)) {
                 is RepositoryResult.Success -> {
                     mutableState.value = AttachmentViewerState.Content(result.value)
+                    observeAttachmentChanges(result.value)
+                    if (result.value.attachment.ocrState == OcrState.PENDING) {
+                        viewModelScope.launch { ocrRepository.processAttachment(attachmentId) }
+                    }
                 }
                 is RepositoryResult.Failure -> {
                     mutableState.value = AttachmentViewerState.Error(
@@ -114,14 +141,30 @@ internal class AttachmentViewerViewModel(
         }
     }
 
+    private fun observeAttachmentChanges(openable: OpenableAttachment) {
+        attachmentObservation?.cancel()
+        attachmentObservation = viewModelScope.launch {
+            repository.observeById(attachmentId).collect { latest ->
+                latest ?: return@collect
+                val current = mutableState.value as? AttachmentViewerState.Content ?: return@collect
+                mutableState.value = current.copy(
+                    attachment = openable.copy(attachment = latest),
+                    isRetryingOcr = latest.ocrState == OcrState.PENDING ||
+                        latest.ocrState == OcrState.PROCESSING,
+                )
+            }
+        }
+    }
+
     class Factory(
         private val attachmentId: String,
         private val repository: AttachmentRepository,
+        private val ocrRepository: OcrRepository,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             require(modelClass.isAssignableFrom(AttachmentViewerViewModel::class.java))
-            return AttachmentViewerViewModel(attachmentId, repository) as T
+            return AttachmentViewerViewModel(attachmentId, repository, ocrRepository) as T
         }
     }
 }

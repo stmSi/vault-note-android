@@ -43,6 +43,7 @@ class AttachmentViewerFragment : Fragment() {
         AttachmentViewerViewModel.Factory(
             attachmentId,
             requireContext().appContainer().attachmentRepository,
+            requireContext().appContainer().ocrRepository,
         )
     }
 
@@ -65,6 +66,7 @@ class AttachmentViewerFragment : Fragment() {
         currentBinding.toolbar.setOnMenuItemClickListener(::onMenuItemSelected)
         currentBinding.retryButton.setOnClickListener { viewModel.retry() }
         currentBinding.openExternalButton.setOnClickListener { openExternally() }
+        currentBinding.retryOcrButton.setOnClickListener { viewModel.retryOcr() }
         applyWindowInsets(currentBinding)
         collectState(currentBinding)
     }
@@ -137,6 +139,21 @@ class AttachmentViewerFragment : Fragment() {
         }
         currentBinding.deletingIndicator.isVisible = state.isDeleting
         currentBinding.openExternalButton.isEnabled = !state.isDeleting
+        currentBinding.ocrStatus.isVisible = attachment.ocrState !=
+            com.vaultnote.core.common.model.OcrState.NOT_APPLICABLE
+        currentBinding.ocrStatus.setText(
+            when (attachment.ocrState) {
+                com.vaultnote.core.common.model.OcrState.NOT_APPLICABLE -> R.string.ocr_not_applicable
+                com.vaultnote.core.common.model.OcrState.PENDING -> R.string.ocr_pending
+                com.vaultnote.core.common.model.OcrState.PROCESSING -> R.string.ocr_processing
+                com.vaultnote.core.common.model.OcrState.COMPLETE -> R.string.ocr_complete
+                com.vaultnote.core.common.model.OcrState.FAILED -> R.string.ocr_failed
+            },
+        )
+        currentBinding.retryOcrButton.isVisible = attachment.ocrState ==
+            com.vaultnote.core.common.model.OcrState.FAILED &&
+            requireContext().appContainer().ocrRepository.isRetryable(attachment.ocrFailureCode)
+        currentBinding.retryOcrButton.isEnabled = !state.isRetryingOcr
 
         val isImage = attachment.mimeType.startsWith("image/")
         currentBinding.imagePreview.isVisible = isImage

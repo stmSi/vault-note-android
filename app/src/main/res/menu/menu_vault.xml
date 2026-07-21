@@ -20,6 +20,11 @@
             app:showAsAction="never" />
     </group>
     <item
+        android:id="@+id/action_search"
+        android:icon="@drawable/ic_search"
+        android:title="@string/search_title"
+        app:showAsAction="ifRoom" />
+    <item
         android:id="@+id/action_security_settings"
         android:icon="@drawable/ic_settings"
         android:title="@string/security_settings_title"

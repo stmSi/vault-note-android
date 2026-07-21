@@ -63,3 +63,19 @@ data class VaultItemSummaryWithTags(
     )
     val tags: List<TagEntity>,
 )
+
+/** Bounded FTS projection; no attachment bytes or complete note bodies are loaded. */
+data class SearchResultRow(
+    @ColumnInfo(name = "id")
+    val id: String,
+    @ColumnInfo(name = "title")
+    val title: String,
+    @ColumnInfo(name = "highlighted_title")
+    val highlightedTitle: String,
+    @ColumnInfo(name = "highlighted_snippet")
+    val highlightedSnippet: String,
+    @ColumnInfo(name = "is_archived")
+    val isArchived: Boolean,
+    @ColumnInfo(name = "updated_at")
+    val updatedAt: Long,
+)

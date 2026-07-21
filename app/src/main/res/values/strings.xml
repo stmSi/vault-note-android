@@ -146,4 +146,18 @@
     <string name="timeout_30_seconds">After 30 seconds</string>
     <string name="timeout_1_minute">After 1 minute</string>
     <string name="timeout_5_minutes">After 5 minutes</string>
+    <string name="search_title">Search</string>
+    <string name="search_input_hint">Search notes, tags, filenames, and scanned text</string>
+    <string name="search_hint_message">Search titles, note text, tags, attachment filenames, and extracted text.</string>
+    <string name="search_no_results">No matching items.</string>
+    <string name="search_query_too_long">Search is limited to 200 characters.</string>
+    <string name="search_failed">Search could not be completed.</string>
+    <string name="searching">Searching</string>
+    <string name="archived_badge">Archived</string>
+    <string name="ocr_not_applicable">Text scan is not available for this file.</string>
+    <string name="ocr_pending">Text scan pending</string>
+    <string name="ocr_processing">Scanning text…</string>
+    <string name="ocr_complete">Text scan complete</string>
+    <string name="ocr_failed">Text scan failed</string>
+    <string name="retry_text_scan">Retry text scan</string>
 </resources>

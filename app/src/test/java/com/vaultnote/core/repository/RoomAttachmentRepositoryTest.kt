@@ -26,6 +26,9 @@ import com.vaultnote.core.encryption.EncryptedFilePurpose
 import com.vaultnote.core.security.SecureAttachmentUriFactory
 import com.vaultnote.core.sync.SyncScheduleResult
 import com.vaultnote.core.sync.SyncScheduler
+import com.vaultnote.core.search.RoomSearchRepository
+import com.vaultnote.core.search.SearchQueryCompilation
+import com.vaultnote.core.search.SearchQueryCompiler
 import java.io.File
 import java.io.OutputStream
 import java.util.concurrent.atomic.AtomicInteger
@@ -112,6 +115,11 @@ class RoomAttachmentRepositoryTest {
             database.searchDao().getDocumentForItem(itemId)?.attachmentFilenames,
         )
         assertEquals(1, searchMatchCount("paper"))
+        val filenameQuery = SearchQueryCompiler.compile("paper") as SearchQueryCompilation.Valid
+        val filenameResults = RoomSearchRepository(database.searchDao(), TestDispatchers)
+            .observe(filenameQuery.query, 10)
+            .first()
+        assertEquals(listOf(itemId), filenameResults.map { it.itemId })
         val upload = requireNotNull(
             database.syncOperationDao().getByDedupeKey("attachment:${attachment.id}"),
         )

@@ -27,6 +27,12 @@ import com.vaultnote.core.security.RoomSecureAttachmentContentSource
 import com.vaultnote.core.security.SecureAttachmentContentSource
 import com.vaultnote.core.security.SecureAttachmentUriFactory
 import com.vaultnote.core.security.VaultLockManager
+import com.vaultnote.core.search.RoomSearchRepository
+import com.vaultnote.core.search.SearchRepository
+import com.vaultnote.core.ocr.AndroidOcrPlaintextStore
+import com.vaultnote.core.ocr.MlKitOcrProcessor
+import com.vaultnote.core.ocr.OcrRepository
+import com.vaultnote.core.ocr.RoomOcrRepository
 
 interface AppContainer {
     val vaultRepository: VaultRepository
@@ -37,6 +43,8 @@ interface AppContainer {
     val lockPolicyRepository: LockPolicyRepository
     val lockManager: VaultLockManager
     val secureAttachmentContentSource: SecureAttachmentContentSource
+    val searchRepository: SearchRepository
+    val ocrRepository: OcrRepository
 }
 
 class DefaultAppContainer(context: Context) : AppContainer {
@@ -133,6 +141,28 @@ class DefaultAppContainer(context: Context) : AppContainer {
             lockManager = lockManager,
             externalGrants = externalGrants,
             dispatchers = DefaultDispatcherProvider,
+        )
+    }
+
+    override val searchRepository: SearchRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        RoomSearchRepository(
+            searchDao = database.searchDao(),
+            dispatchers = DefaultDispatcherProvider,
+        )
+    }
+
+    override val ocrRepository: OcrRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        RoomOcrRepository(
+            database = database,
+            plaintextStore = AndroidOcrPlaintextStore(
+                context = applicationContext,
+                fileManager = attachmentFileManager,
+                dispatchers = DefaultDispatcherProvider,
+                isContentAccessAllowed = lockManager::isContentAccessAllowed,
+            ),
+            processor = MlKitOcrProcessor(applicationContext),
+            dispatchers = DefaultDispatcherProvider,
+            clock = SystemClock,
         )
     }
 }

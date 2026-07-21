@@ -19,6 +19,9 @@ interface AttachmentDao {
     @Query("SELECT * FROM attachments WHERE id = :attachmentId LIMIT 1")
     suspend fun getById(attachmentId: String): AttachmentEntity?
 
+    @Query("SELECT * FROM attachments WHERE id = :attachmentId LIMIT 1")
+    fun observeById(attachmentId: String): Flow<AttachmentEntity?>
+
     @Query(
         """
         SELECT * FROM attachments
@@ -74,6 +77,112 @@ interface AttachmentDao {
         """,
     )
     suspend fun getSearchableFilenames(itemId: String): String?
+
+    @Query(
+        """
+        SELECT group_concat(extracted_ocr_text, char(10))
+        FROM (
+            SELECT extracted_ocr_text FROM attachments
+            WHERE parent_item_id = :itemId
+              AND ocr_state = 'COMPLETE'
+              AND extracted_ocr_text != ''
+            ORDER BY created_at ASC, id ASC
+        )
+        """,
+    )
+    suspend fun getSearchableOcrText(itemId: String): String?
+
+    @Query(
+        """
+        SELECT * FROM attachments
+        WHERE encryption_format_version = :encryptionFormatVersion
+          AND (
+              ocr_state = 'PENDING'
+              OR (ocr_state = 'PROCESSING' AND (ocr_updated_at IS NULL OR ocr_updated_at <= :staleBefore))
+          )
+        ORDER BY created_at ASC, id ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getOcrCandidates(
+        staleBefore: Long,
+        encryptionFormatVersion: Int,
+        limit: Int,
+    ): List<AttachmentEntity>
+
+    @Query(
+        """
+        UPDATE attachments
+        SET ocr_state = 'PROCESSING',
+            ocr_failure_code = NULL,
+            ocr_updated_at = :now
+        WHERE id = :attachmentId
+          AND sha256_checksum = :sourceChecksum
+          AND (
+              ocr_state = 'PENDING'
+              OR (ocr_state = 'PROCESSING' AND (ocr_updated_at IS NULL OR ocr_updated_at <= :staleBefore))
+          )
+        """,
+    )
+    suspend fun claimOcr(
+        attachmentId: String,
+        sourceChecksum: String,
+        staleBefore: Long,
+        now: Long,
+    ): Int
+
+    @Query(
+        """
+        UPDATE attachments
+        SET ocr_state = 'COMPLETE',
+            extracted_ocr_text = :text,
+            ocr_source_checksum = :sourceChecksum,
+            ocr_failure_code = NULL,
+            ocr_updated_at = :now
+        WHERE id = :attachmentId
+          AND sha256_checksum = :sourceChecksum
+          AND ocr_state = 'PROCESSING'
+        """,
+    )
+    suspend fun completeOcr(
+        attachmentId: String,
+        sourceChecksum: String,
+        text: String,
+        now: Long,
+    ): Int
+
+    @Query(
+        """
+        UPDATE attachments
+        SET ocr_state = 'FAILED',
+            extracted_ocr_text = '',
+            ocr_source_checksum = NULL,
+            ocr_failure_code = :failureCode,
+            ocr_updated_at = :now
+        WHERE id = :attachmentId
+          AND sha256_checksum = :sourceChecksum
+          AND ocr_state = 'PROCESSING'
+        """,
+    )
+    suspend fun failOcr(
+        attachmentId: String,
+        sourceChecksum: String,
+        failureCode: String,
+        now: Long,
+    ): Int
+
+    @Query(
+        """
+        UPDATE attachments
+        SET ocr_state = 'PENDING',
+            extracted_ocr_text = '',
+            ocr_source_checksum = NULL,
+            ocr_failure_code = NULL,
+            ocr_updated_at = NULL
+        WHERE id = :attachmentId AND ocr_state = 'FAILED'
+        """,
+    )
+    suspend fun retryOcr(attachmentId: String): Int
 
     @Query(
         """

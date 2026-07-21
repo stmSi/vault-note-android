@@ -66,6 +66,10 @@
         <service
             android:name="androidx.room.MultiInstanceInvalidationService"
             tools:node="remove" />
+
+        <provider
+            android:name="com.google.mlkit.common.internal.MlKitInitProvider"
+            tools:node="remove" />
     </application>
 
 </manifest>
