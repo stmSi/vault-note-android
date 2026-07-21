@@ -66,7 +66,7 @@ class ImportPreviewFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         val currentBinding = requireNotNull(binding)
-        val listAdapter = ImportPreviewAdapter()
+        val listAdapter = ImportPreviewAdapter(requireContext().appContainer().imageLoader)
         adapter = listAdapter
         currentBinding.filesList.adapter = listAdapter
         currentBinding.filesList.setHasFixedSize(true)
@@ -177,6 +177,8 @@ class ImportPreviewFragment : Fragment() {
             mimeType = preview?.mimeType,
             sizeBytes = preview?.declaredSize,
             accepted = preview != null,
+            sourceUri = candidate.source.uri,
+            category = preview?.format?.category,
         )
     }
 

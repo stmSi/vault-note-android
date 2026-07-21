@@ -491,7 +491,7 @@ class NoteEditorFragment : Fragment() {
 
     private fun launchDocumentPicker() {
         try {
-            documentPicker.launch(SUPPORTED_DOCUMENT_MIME_TYPES)
+            documentPicker.launch(arrayOf(ANY_FILE_MIME_TYPE))
         } catch (_: ActivityNotFoundException) {
             showMessage(R.string.file_picker_unavailable)
         }
@@ -660,21 +660,7 @@ class NoteEditorFragment : Fragment() {
     companion object {
         const val BACK_STACK_NAME = "note_editor"
         private const val ARG_ITEM_ID = "item_id"
-        private val SUPPORTED_DOCUMENT_MIME_TYPES = arrayOf(
-            "application/pdf",
-            "text/plain",
-            "text/markdown",
-            "text/csv",
-            "application/json",
-            "application/rtf",
-            "text/rtf",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            "application/vnd.oasis.opendocument.text",
-            "application/vnd.oasis.opendocument.spreadsheet",
-            "application/vnd.oasis.opendocument.presentation",
-        )
+        private const val ANY_FILE_MIME_TYPE = "*/*"
 
         fun newInstance(itemId: String): NoteEditorFragment = NoteEditorFragment().apply {
             arguments = Bundle().apply { putString(ARG_ITEM_ID, itemId) }

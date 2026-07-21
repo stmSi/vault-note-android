@@ -10,13 +10,26 @@
     android:paddingBottom="@dimen/space_s">
 
     <ImageView
+        android:id="@+id/file_preview"
+        android:layout_width="@dimen/file_list_thumbnail"
+        android:layout_height="@dimen/file_list_thumbnail"
+        android:contentDescription="@null"
+        android:padding="@dimen/space_xs"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_document"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:tint="@null" />
+
+    <ImageView
         android:id="@+id/status_icon"
         android:layout_width="@dimen/touch_target"
         android:layout_height="@dimen/touch_target"
         android:contentDescription="@string/file_ready"
         android:padding="12dp"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
     <TextView
@@ -26,8 +39,9 @@
         android:ellipsize="middle"
         android:maxLines="1"
         android:textAppearance="?attr/textAppearanceBodyLarge"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toEndOf="@id/status_icon"
+        android:layout_marginStart="@dimen/space_m"
+        app:layout_constraintEnd_toStartOf="@id/status_icon"
+        app:layout_constraintStart_toEndOf="@id/file_preview"
         app:layout_constraintTop_toTopOf="parent" />
 
     <TextView
@@ -40,7 +54,7 @@
         android:textAppearance="?attr/textAppearanceBodySmall"
         android:textColor="@color/vault_on_surface_variant"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/status_icon"
         app:layout_constraintStart_toStartOf="@id/name"
         app:layout_constraintTop_toBottomOf="@id/name" />
 

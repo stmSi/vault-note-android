@@ -79,7 +79,7 @@
     <string name="add_attachment_short">Add</string>
     <string name="open_attachment_content_description">Open attachment %1$s</string>
     <string name="choose_photos">Choose photos</string>
-    <string name="choose_documents">Choose PDFs or documents</string>
+    <string name="choose_documents">Choose files</string>
     <string name="take_photo">Take a photo</string>
     <string name="file_picker_unavailable">No compatible file picker is available.</string>
     <string name="camera_unavailable">No compatible camera app is available.</string>
