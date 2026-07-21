@@ -111,6 +111,12 @@ class AttachmentViewerViewModelTest {
         override fun observeActiveFiles(limit: Int, offset: Int): Flow<List<VaultAttachment>> =
             attachments
 
+        override fun observeActiveFilesMatchingName(
+            searchText: String,
+            limit: Int,
+            offset: Int,
+        ): Flow<List<VaultAttachment>> = attachments
+
         override fun observeForItem(itemId: String): Flow<List<VaultAttachment>> = attachments
 
         override fun observeById(attachmentId: String): Flow<VaultAttachment?> =

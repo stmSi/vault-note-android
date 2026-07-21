@@ -6,6 +6,9 @@
     <string name="archived_title">Archived</string>
     <string name="trash_title">Trash</string>
     <string name="files_title">Files</string>
+    <string name="file_search_hint">Search filenames</string>
+    <string name="no_matching_files_title">No matching files</string>
+    <string name="no_matching_files_message">Try another filename or fewer characters.</string>
     <string name="archive_and_trash_title">Archive</string>
     <string name="new_note">New note</string>
     <string name="empty_vault_title">Your vault is empty</string>

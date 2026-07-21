@@ -256,6 +256,43 @@ class RoomAttachmentRepositoryTest {
     }
 
     @Test
+    fun `files search matches filenames only including ordered characters`() = runBlocking {
+        val noteTitleMatch = vaultRepository.createNote("Bangkok parent", "bkk in note body")
+            .successValue()
+        val unrelated = repository.importFromUri(noteTitleMatch, SOURCE_URI)
+            .successValue()
+            .attachment
+        val matchingParent = vaultRepository.createAttachmentContainer(
+            title = "Unrelated container title",
+            type = com.vaultnote.core.common.model.VaultItemType.DOCUMENT,
+        ).successValue()
+        val matching = repository.importFromUri(matchingParent, SOURCE_URI)
+            .successValue()
+            .attachment
+        repository.rename(matching.id, "Bangkok itinerary").successValue()
+
+        val results = repository.observeActiveFilesMatchingName(
+            searchText = "bkk",
+            limit = 10,
+            offset = 0,
+        ).first()
+
+        assertEquals(listOf(matching.id), results.map { it.id })
+        assertFalse(results.any { it.id == unrelated.id })
+        assertTrue(
+            repository.observeActiveFilesMatchingName("note body", 10, 0).first().isEmpty(),
+        )
+        repository.rename(unrelated.id, "100%_done").successValue()
+        assertEquals(
+            listOf(unrelated.id),
+            repository.observeActiveFilesMatchingName("%_", 10, 0).first().map { it.id },
+        )
+
+        vaultRepository.setArchived(matchingParent, true).requireSuccess()
+        assertTrue(repository.observeActiveFilesMatchingName("bkk", 10, 0).first().isEmpty())
+    }
+
+    @Test
     fun `delete updates parent search and sync tombstone before best effort file cleanup`() = runBlocking {
         val itemId = vaultRepository.createNote().successValue()
         val attachmentId = repository.importFromUri(itemId, SOURCE_URI)

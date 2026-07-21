@@ -12,6 +12,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.core.view.updatePaddingRelative
+import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
@@ -33,7 +34,7 @@ import kotlinx.coroutines.launch
 class FilesFragment : Fragment() {
     private var binding: FragmentFilesBinding? = null
     private var adapter: FilesAdapter? = null
-    private var lastPage: Int? = null
+    private var lastContentKey: Pair<String, Int>? = null
     private val viewModel: FilesViewModel by viewModels {
         FilesViewModel.Factory(requireContext().appContainer().attachmentRepository)
     }
@@ -68,6 +69,13 @@ class FilesFragment : Fragment() {
             layoutManager = LinearLayoutManager(requireContext())
             adapter = filesAdapter
             setHasFixedSize(true)
+        }
+        currentBinding.fileSearchInput.setText(viewModel.searchText.value)
+        currentBinding.fileSearchInput.setSelection(
+            currentBinding.fileSearchInput.text?.length ?: 0,
+        )
+        currentBinding.fileSearchInput.doAfterTextChanged { editable ->
+            viewModel.updateSearchText(editable?.toString().orEmpty())
         }
         currentBinding.addFileButton.setOnClickListener { showImportSourceChooser() }
         currentBinding.retryButton.setOnClickListener { viewModel.retry() }
@@ -114,10 +122,18 @@ class FilesFragment : Fragment() {
             state.pageIndex > 0 && state !is FilesUiState.Loading
         currentBinding.nextPageButton.isEnabled =
             (state as? FilesUiState.Content)?.hasNextPage == true
+        val hasSearch = state.searchText.isNotBlank()
+        currentBinding.emptyTitle.setText(
+            if (hasSearch) R.string.no_matching_files_title else R.string.empty_files_title,
+        )
+        currentBinding.emptyMessage.setText(
+            if (hasSearch) R.string.no_matching_files_message else R.string.empty_files_message,
+        )
 
         if (state is FilesUiState.Content) {
-            val shouldScrollToStart = lastPage != null && lastPage != state.pageIndex
-            lastPage = state.pageIndex
+            val contentKey = state.searchText to state.pageIndex
+            val shouldScrollToStart = lastContentKey != null && lastContentKey != contentKey
+            lastContentKey = contentKey
             filesAdapter.submitList(state.files) {
                 if (shouldScrollToStart && binding === currentBinding) {
                     currentBinding.fileList.scrollToPosition(0)
@@ -195,7 +211,7 @@ class FilesFragment : Fragment() {
     private fun applyWindowInsets(currentBinding: FragmentFilesBinding) {
         val rootStart = currentBinding.root.paddingStart
         val rootEnd = currentBinding.root.paddingEnd
-        val listTop = currentBinding.fileList.paddingTop
+        val rootTop = currentBinding.root.paddingTop
         ViewCompat.setOnApplyWindowInsetsListener(currentBinding.root) { _, insets ->
             val safe = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
@@ -205,7 +221,7 @@ class FilesFragment : Fragment() {
                 start = rootStart + if (isRtl) safe.right else safe.left,
                 end = rootEnd + if (isRtl) safe.left else safe.right,
             )
-            currentBinding.fileList.updatePadding(top = listTop + safe.top)
+            currentBinding.root.updatePadding(top = rootTop + safe.top)
             insets
         }
         ViewCompat.requestApplyInsets(currentBinding.root)

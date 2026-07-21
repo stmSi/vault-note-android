@@ -227,6 +227,32 @@ interface AttachmentDao {
     )
     fun observeActiveFiles(limit: Int, offset: Int): Flow<List<AttachmentEntity>>
 
+    @Query(
+        """
+        SELECT attachments.* FROM attachments
+        INNER JOIN vault_items ON vault_items.id = attachments.parent_item_id
+        WHERE vault_items.deleted_at IS NULL
+          AND vault_items.is_archived = 0
+          AND (
+              attachments.original_filename LIKE :contiguousPattern ESCAPE '\'
+              OR attachments.original_filename LIKE :subsequencePattern ESCAPE '\'
+          )
+        ORDER BY
+          CASE WHEN attachments.original_filename LIKE :contiguousPattern ESCAPE '\'
+               THEN 0 ELSE 1 END,
+          attachments.created_at DESC,
+          attachments.id ASC
+        LIMIT :limit
+        OFFSET :offset
+        """,
+    )
+    fun observeActiveFilesMatchingName(
+        contiguousPattern: String,
+        subsequencePattern: String,
+        limit: Int,
+        offset: Int,
+    ): Flow<List<AttachmentEntity>>
+
     @Query("SELECT * FROM attachments WHERE sha256_checksum = :checksum ORDER BY created_at ASC")
     suspend fun findByChecksum(checksum: String): List<AttachmentEntity>
 

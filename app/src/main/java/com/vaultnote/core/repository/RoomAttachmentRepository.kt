@@ -28,6 +28,7 @@ import com.vaultnote.core.encryption.CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSIO
 import com.vaultnote.core.files.AttachmentCategory
 import com.vaultnote.core.files.AttachmentFileManager
 import com.vaultnote.core.files.AttachmentFilenamePolicy
+import com.vaultnote.core.files.AttachmentFilenameSearch
 import com.vaultnote.core.files.PreparedAttachment
 import com.vaultnote.core.files.PlannedAttachmentPaths
 import com.vaultnote.core.security.SecureAttachmentUriFactory
@@ -76,6 +77,23 @@ class RoomAttachmentRepository(
         )
             .map { attachments -> attachments.map { attachment -> attachment.toDomain() } }
             .flowOn(dispatchers.io)
+
+    override fun observeActiveFilesMatchingName(
+        searchText: String,
+        limit: Int,
+        offset: Int,
+    ): Flow<List<VaultAttachment>> {
+        val patterns = AttachmentFilenameSearch.compile(searchText)
+            ?: return observeActiveFiles(limit, offset)
+        return attachmentDao.observeActiveFilesMatchingName(
+            contiguousPattern = patterns.contiguous,
+            subsequencePattern = patterns.subsequence,
+            limit = limit.coerceIn(1, MAX_OBSERVED_FILE_LIMIT),
+            offset = offset.coerceAtLeast(0),
+        )
+            .map { attachments -> attachments.map { attachment -> attachment.toDomain() } }
+            .flowOn(dispatchers.io)
+    }
 
     override fun observeForItem(itemId: String): Flow<List<VaultAttachment>> {
         if (itemId.isBlank()) return flowOf(emptyList())
