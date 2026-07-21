@@ -11,7 +11,7 @@ class CompiledSearchQuery internal constructor(
     val displayTerms: List<String>,
 )
 
-/** Converts untrusted text into bounded quoted FTS prefix terms without accepting operators. */
+/** Converts untrusted text into bounded FTS prefix terms without accepting operators. */
 object SearchQueryCompiler {
     fun compile(input: String): SearchQueryCompilation {
         if (input.isBlank()) return SearchQueryCompilation.Empty
@@ -26,10 +26,11 @@ object SearchQueryCompiler {
             .take(MAX_TERMS)
             .toList()
         if (terms.isEmpty()) return SearchQueryCompilation.Empty
-        // FTS4 on Android uses adjacent quoted terms as implicit AND. The explicit AND keyword
-        // is not enabled consistently and can be interpreted as a literal token.
+        // TOKEN_PATTERN reduces every term to letters and numbers before the suffix is added.
+        // Quoting a term here would disable FTS4 prefix matching ("paper"* is an exact token),
+        // so safe terms intentionally use the unquoted paper* form. Adjacent terms are ANDed.
         val expression = terms.joinToString(separator = " ") { term ->
-            "\"$term\"*"
+            "$term*"
         }
         return SearchQueryCompilation.Valid(CompiledSearchQuery(expression, terms))
     }

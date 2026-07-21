@@ -122,6 +122,13 @@ class RoomAttachmentRepositoryTest {
             .observe(filenameQuery.query, 10)
             .first()
         assertEquals(listOf(itemId), filenameResults.map { it.itemId })
+        val incrementalFilenameQuery = SearchQueryCompiler.compile("p")
+            as SearchQueryCompilation.Valid
+        val incrementalFilenameResults = RoomSearchRepository(
+            database.searchDao(),
+            TestDispatchers,
+        ).observe(incrementalFilenameQuery.query, 10).first()
+        assertEquals(listOf(itemId), incrementalFilenameResults.map { it.itemId })
         val fullFilenameQuery = SearchQueryCompiler.compile("paper.pdf")
             as SearchQueryCompilation.Valid
         val fullFilenameResults = RoomSearchRepository(database.searchDao(), TestDispatchers)

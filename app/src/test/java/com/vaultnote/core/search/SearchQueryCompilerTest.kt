@@ -9,7 +9,7 @@ class SearchQueryCompilerTest {
     fun `a single letter creates a prefix query for incremental search`() {
         val compiled = SearchQueryCompiler.compile("p") as SearchQueryCompilation.Valid
 
-        assertEquals("\"p\"*", compiled.query.matchExpression)
+        assertEquals("p*", compiled.query.matchExpression)
     }
 
     @Test
@@ -18,7 +18,7 @@ class SearchQueryCompilerTest {
 
         assertTrue(compiled is SearchQueryCompilation.Valid)
         val valid = compiled as SearchQueryCompilation.Valid
-        assertEquals("\"paper\"* \"OR\"* \"secret\"* \"tag\"*", valid.query.matchExpression)
+        assertEquals("paper* OR* secret* tag*", valid.query.matchExpression)
         assertEquals(listOf("paper", "OR", "secret", "tag"), valid.query.displayTerms)
     }
 
@@ -41,7 +41,7 @@ class SearchQueryCompilerTest {
             as SearchQueryCompilation.Valid
 
         assertEquals(
-            "\"Samsung\"* \"scan\"* \"2026\"* \"pdf\"*",
+            "Samsung* scan* 2026* pdf*",
             compiled.query.matchExpression,
         )
     }
