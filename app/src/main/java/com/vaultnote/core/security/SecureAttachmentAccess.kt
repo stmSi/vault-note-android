@@ -34,7 +34,7 @@ class SecureAttachmentUriFactory(context: Context) {
     }
 }
 
-/** One-use, short-lived authority for a user-requested handoff to an external viewer. */
+/** Short-lived, bounded authority for a user-requested handoff to an external app. */
 class ExternalAttachmentGrantRegistry(
     private val elapsedRealtime: ElapsedRealtimeProvider =
         ElapsedRealtimeProvider(SystemClock::elapsedRealtime),
@@ -55,16 +55,33 @@ class ExternalAttachmentGrantRegistry(
         grants[token] = Grant(
             attachmentId = attachmentId,
             expiresAt = elapsedRealtime.nowMillis() + GRANT_LIFETIME_MILLIS,
+            remainingContentReads = MAX_CONTENT_READS,
         )
         return token
     }
 
     @Synchronized
-    fun consume(attachmentId: String, token: String?): Boolean {
+    fun validate(attachmentId: String, token: String?): Boolean {
         if (token == null || token.length !in 20..64) return false
         pruneExpired()
-        val grant = grants.remove(token) ?: return false
-        return grant.attachmentId == attachmentId && grant.expiresAt >= elapsedRealtime.nowMillis()
+        val grant = grants[token] ?: return false
+        return grant.attachmentId == attachmentId &&
+            grant.expiresAt >= elapsedRealtime.nowMillis() &&
+            grant.remainingContentReads > 0
+    }
+
+    @Synchronized
+    fun acquireContentRead(attachmentId: String, token: String?): Boolean {
+        if (!validate(attachmentId, token)) return false
+        val grant = grants.getValue(requireNotNull(token))
+        grant.remainingContentReads -= 1
+        if (grant.remainingContentReads == 0) grants.remove(token)
+        return true
+    }
+
+    @Synchronized
+    fun revoke(token: String) {
+        grants.remove(token)
     }
 
     @Synchronized
@@ -77,11 +94,16 @@ class ExternalAttachmentGrantRegistry(
         grants.entries.removeAll { it.value.expiresAt < now }
     }
 
-    private data class Grant(val attachmentId: String, val expiresAt: Long)
+    private data class Grant(
+        val attachmentId: String,
+        val expiresAt: Long,
+        var remainingContentReads: Int,
+    )
 
     private companion object {
         const val TOKEN_BYTES = 18
         const val MAX_GRANTS = 16
-        const val GRANT_LIFETIME_MILLIS = 60_000L
+        const val GRANT_LIFETIME_MILLIS = 300_000L
+        const val MAX_CONTENT_READS = 8
     }
 }

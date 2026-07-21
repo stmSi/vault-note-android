@@ -6,4 +6,6 @@ Search waits for 120 ms of input inactivity beginning with the first character, 
 
 OCR is serial at the activity level in batches of two. Images are sampled to a maximum 2048-pixel edge and approximately four million pixels. PDFs are limited to 50 pages, rendered sequentially, and never loaded into a byte array. OCR output is capped at 200,000 characters. Completed attachments retain their source SHA-256 so unchanged files are not processed again.
 
+Attachment save/export uses 64 KiB buffered streaming and never loads a complete file in memory. External viewers require a seekable descriptor, so the provider verifies and decrypts to private cache with at least 16 MiB of free-space reserve, opens the file read-only, and immediately unlinks its name. This disk pass occurs only after an explicit open/share action and never during startup or list scrolling.
+
 These are architectural bounds, not benchmark claims. Release-like startup, list, search, and note-opening measurements remain Phase 7 work in the planned `:baselineprofile` and `:benchmark` modules.

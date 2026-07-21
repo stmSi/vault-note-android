@@ -23,6 +23,8 @@ import com.vaultnote.core.sync.SyncRepository
 import com.vaultnote.core.sync.SyncScheduler
 import com.vaultnote.core.sync.WorkManagerSyncScheduler
 import com.vaultnote.feature.viewer.AndroidFileViewer
+import com.vaultnote.feature.viewer.AndroidAttachmentExporter
+import com.vaultnote.feature.viewer.AttachmentExporter
 import com.vaultnote.feature.viewer.FileViewer
 import com.vaultnote.core.security.ExternalAttachmentGrantRegistry
 import com.vaultnote.core.security.LockPolicyRepository
@@ -44,6 +46,7 @@ interface AppContainer {
     val attachmentFileManager: AttachmentFileManager
     val imageLoader: ImageLoader
     val fileViewer: FileViewer
+    val attachmentExporter: AttachmentExporter
     val lockPolicyRepository: LockPolicyRepository
     val lockManager: VaultLockManager
     val secureAttachmentContentSource: SecureAttachmentContentSource
@@ -129,6 +132,17 @@ class DefaultAppContainer(context: Context) : AppContainer {
 
     override val fileViewer: FileViewer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         AndroidFileViewer(secureUris, externalGrants)
+    }
+
+    override val attachmentExporter: AttachmentExporter by lazy(
+        LazyThreadSafetyMode.SYNCHRONIZED,
+    ) {
+        AndroidAttachmentExporter(
+            contentResolver = applicationContext.contentResolver,
+            contentSource = secureAttachmentContentSource,
+            externalGrants = externalGrants,
+            dispatchers = DefaultDispatcherProvider,
+        )
     }
 
     override val lockPolicyRepository: LockPolicyRepository by lazy(

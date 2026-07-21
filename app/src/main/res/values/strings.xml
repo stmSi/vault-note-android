@@ -135,6 +135,11 @@
     <string name="no_viewer_available">No installed app can open this file type.</string>
     <string name="viewer_access_denied">The file could not be shared securely with another app.</string>
     <string name="viewer_file_invalid">The attachment is missing or corrupted.</string>
+    <string name="save_attachment_copy">Save a copy</string>
+    <string name="share_attachment">Share attachment</string>
+    <string name="saving_attachment">Saving attachment</string>
+    <string name="attachment_saved_copy">Attachment copy saved.</string>
+    <string name="attachment_save_failed">The attachment could not be saved to that location.</string>
     <string name="vault_locked_title">Vault locked</string>
     <string name="vault_locked_message">Use your biometric or device screen lock to continue.</string>
     <string name="unlock_vault">Unlock</string>

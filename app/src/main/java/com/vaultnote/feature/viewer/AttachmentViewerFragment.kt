@@ -33,6 +33,9 @@ class AttachmentViewerFragment : Fragment() {
     private var imageRequest: Disposable? = null
     private var loadedImageAttachmentId: String? = null
     private var openableAttachment: OpenableAttachment? = null
+    private val saveDocument = registerForActivityResult(CreateAttachmentDocumentContract()) { uri ->
+        viewModel.completeSave(uri)
+    }
     private val attachmentId: String by lazy(LazyThreadSafetyMode.NONE) {
         requireNotNull(requireArguments().getString(ARG_ATTACHMENT_ID)) { "Missing attachment ID" }
     }
@@ -44,6 +47,7 @@ class AttachmentViewerFragment : Fragment() {
             attachmentId,
             requireContext().appContainer().attachmentRepository,
             requireContext().appContainer().ocrRepository,
+            requireContext().appContainer().attachmentExporter,
         )
     }
 
@@ -98,7 +102,11 @@ class AttachmentViewerFragment : Fragment() {
         currentBinding.errorState.isVisible = state is AttachmentViewerState.Error
         currentBinding.content.isVisible = state is AttachmentViewerState.Content
         currentBinding.toolbar.menu.findItem(R.id.action_delete_attachment).isEnabled =
-            state is AttachmentViewerState.Content && !state.isDeleting
+            state is AttachmentViewerState.Content && !state.isDeleting && !state.isSaving
+        currentBinding.toolbar.menu.findItem(R.id.action_save_attachment).isEnabled =
+            state is AttachmentViewerState.Content && !state.isDeleting && !state.isSaving
+        currentBinding.toolbar.menu.findItem(R.id.action_share_attachment).isEnabled =
+            state is AttachmentViewerState.Content && !state.isDeleting && !state.isSaving
 
         when (state) {
             AttachmentViewerState.Loading -> Unit
@@ -137,8 +145,11 @@ class AttachmentViewerFragment : Fragment() {
             )
             else -> getString(R.string.document_attachment)
         }
-        currentBinding.deletingIndicator.isVisible = state.isDeleting
-        currentBinding.openExternalButton.isEnabled = !state.isDeleting
+        currentBinding.operationIndicator.isVisible = state.isDeleting || state.isSaving
+        currentBinding.operationIndicator.contentDescription = getString(
+            if (state.isDeleting) R.string.deleting_attachment else R.string.saving_attachment,
+        )
+        currentBinding.openExternalButton.isEnabled = !state.isDeleting && !state.isSaving
         currentBinding.ocrStatus.isVisible = attachment.ocrState !=
             com.vaultnote.core.common.model.OcrState.NOT_APPLICABLE
         currentBinding.ocrStatus.setText(
@@ -178,6 +189,14 @@ class AttachmentViewerFragment : Fragment() {
     }
 
     private fun onMenuItemSelected(item: MenuItem): Boolean = when (item.itemId) {
+        R.id.action_save_attachment -> {
+            viewModel.prepareSave()?.let(saveDocument::launch)
+            true
+        }
+        R.id.action_share_attachment -> {
+            shareAttachment()
+            true
+        }
         R.id.action_delete_attachment -> {
             MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.delete_attachment_title)
@@ -193,6 +212,16 @@ class AttachmentViewerFragment : Fragment() {
     private fun openExternally() {
         val attachment = openableAttachment ?: return
         val outcome = requireContext().appContainer().fileViewer.open(requireActivity(), attachment)
+        showHandoffFailure(outcome)
+    }
+
+    private fun shareAttachment() {
+        val attachment = openableAttachment ?: return
+        val outcome = requireContext().appContainer().fileViewer.share(requireActivity(), attachment)
+        showHandoffFailure(outcome)
+    }
+
+    private fun showHandoffFailure(outcome: FileViewerResult) {
         val message = when (outcome) {
             FileViewerResult.Opened -> return
             FileViewerResult.NoCompatibleApp -> R.string.no_viewer_available
@@ -220,6 +249,12 @@ class AttachmentViewerFragment : Fragment() {
             }
             is AttachmentViewerEvent.ShowError -> binding?.root?.let {
                 Snackbar.make(it, errorMessage(event.reason), Snackbar.LENGTH_LONG).show()
+            }
+            AttachmentViewerEvent.SaveComplete -> binding?.root?.let {
+                Snackbar.make(it, R.string.attachment_saved_copy, Snackbar.LENGTH_LONG).show()
+            }
+            AttachmentViewerEvent.SaveFailed -> binding?.root?.let {
+                Snackbar.make(it, R.string.attachment_save_failed, Snackbar.LENGTH_LONG).show()
             }
         }
     }

@@ -33,7 +33,8 @@ VaultNote assumes the Android OS, verified boot, sandbox, Keystore implementatio
 - Old key versions remain readable after a test rotation; missing historical keys fail without output.
 - Legacy migration checks the persisted SHA-256 before encryption and changes Room version only after success.
 - Lock state fails closed, respects monotonic background timeouts, and does not treat rotation as backgrounding.
-- External viewer grants are random, attachment-bound, expiring, and one use.
+- External viewer/share grants are random, attachment-bound, expire after five minutes, permit at most eight content reads for viewer compatibility, and disappear on process death.
+- External handoff plaintext is authenticated before a seekable descriptor is exposed; the private cache name is immediately unlinked. Explicit save failures delete or truncate partial output where the selected document provider permits it.
 - Search input is bounded and compiled to quoted prefix terms instead of raw FTS syntax; attachment filenames are verified through the public search repository.
 - OCR transitions, checksum-based unchanged-file avoidance, FTS updates, and retry classification are verified with deterministic fakes.
 - Per-character prefix search begins with one letter and never accepts raw FTS operators.

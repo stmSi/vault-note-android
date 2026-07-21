@@ -117,7 +117,7 @@
             android:text="@string/open_with_another_app" />
 
         <com.google.android.material.progressindicator.CircularProgressIndicator
-            android:id="@+id/deleting_indicator"
+            android:id="@+id/operation_indicator"
             android:layout_width="32dp"
             android:layout_height="32dp"
             android:layout_marginTop="@dimen/space_s"

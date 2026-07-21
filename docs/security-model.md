@@ -43,11 +43,13 @@ The provider:
 - reads current metadata from Room and rejects anything not marked format `1`;
 - requires an unlocked session for internal reads;
 - authenticates the entire GCM envelope before writing plaintext;
-- streams through a pipe on a bounded two-thread executor;
-- reports generic query metadata rather than a potentially sensitive original filename; and
-- never writes a plaintext temporary viewer file.
+- reports the validated filename, canonical MIME type, and size required by external apps;
+- materializes verified plaintext only in private cache when a seekable descriptor is required, opens it read-only, and immediately unlinks the filename; and
+- removes abandoned named handoff files older than ten minutes before creating another handoff.
 
-An explicit “open with another app” action issues a random 144-bit, one-use token bound to one attachment and valid for 60 seconds, adds a narrow Android read grant, and sends the canonical validated MIME type. A wrong attachment consumes the token. At most 16 live tokens are retained in memory, and process death invalidates all of them. Once plaintext enters an external viewer, that viewer and the operating system are outside VaultNote's confidentiality boundary.
+An explicit open or share action issues a random 144-bit token bound to one attachment, valid for five minutes and at most eight content reads. Multiple reads are necessary because document viewers commonly probe, reopen, and seek. Metadata probes do not consume a read, a mismatched attachment cannot consume another attachment's token, at most 16 tokens remain live, and process death invalidates all of them. Android receives a narrow read URI grant and the canonical validated MIME type.
+
+“Save a copy” streams authenticated plaintext directly to a user-created Storage Access Framework document. VaultNote never requests broad storage access or persists destination access. Cancellation and failure revoke the in-memory authorization and attempt to delete the partial document, falling back to truncation when deletion is unsupported. Once plaintext reaches a viewer, share recipient, or selected document provider, that app/provider and the operating system are outside VaultNote's confidentiality boundary.
 
 ## Key lifecycle and recovery
 

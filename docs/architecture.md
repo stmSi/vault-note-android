@@ -40,7 +40,7 @@ These rules are invariants, not conventions:
 7. WorkManager is only a durable wake-up mechanism. A queue row, leased operation identity, verified remote result, and Room commit determine completion.
 8. External filenames, MIME claims, sizes, and URIs are untrusted. Only a fully validated, checksummed internal copy may be referenced by Room.
 9. RecyclerView binding performs no hash, metadata parsing, decryption, or thumbnail generation; rows receive prepared metadata and a secure thumbnail content URI.
-10. Attachment plaintext is released only after full AES-GCM authentication and only through the non-exported secure provider while unlocked or under an explicit one-use external grant.
+10. Attachment plaintext is released only after full AES-GCM authentication and only through the non-exported secure provider while unlocked or under an explicit short-lived, bounded external grant.
 
 ## Application and dependency lifetime
 
@@ -101,7 +101,7 @@ The preview performs a bounded inspection for a sanitized display name, declared
 
 Attachment deletion applies the inverse protocol. The metadata transaction first records relative ciphertext paths in the cleanup journal, then deletes metadata, updates the parent/search aggregate, and writes sync intent. File deletion happens after commit. A crash or filesystem failure therefore leaves durable, non-sensitive retry state. Reconciliation processes at most 64 journal rows per pass, rechecks Room references, never deletes a live attachment, and removes aged `.pending-*` files. It runs off-main after unlock or from an attachment surface, not during cold startup or row binding.
 
-Thumbnails are stored separately as encrypted thumbnail-sized payloads and passed to Coil through the secure content provider. The Coil loader is manually constructed and lazy; no network fetcher or startup initializer is added, and its memory cache is cleared on lock. Opening an attachment upgrades legacy storage if necessary and returns a secure content URI. An explicit external-open action issues a random attachment-bound one-use token and narrow read grant; `FileProvider` is restricted to system-camera cache capture. Room and UI models never contain attachment bytes or raw file paths.
+Thumbnails are stored separately as encrypted thumbnail-sized payloads and passed to Coil through the secure content provider. The Coil loader is manually constructed and lazy; no network fetcher or startup initializer is added, and its memory cache is cleared on lock. Opening an attachment upgrades legacy storage if necessary and returns a secure content URI. Explicit external open/share actions issue a random attachment-bound, five-minute, eight-read token and a narrow read grant. The provider exposes validated metadata and authenticates/decrypts into a private cache file before returning a seekable read-only descriptor, then immediately unlinks the filename. “Save a copy” streams verified content directly to a user-selected SAF document and removes or truncates partial output after failure. `FileProvider` remains restricted to system-camera cache capture. Room and UI models never contain attachment bytes or raw file paths.
 
 Format version `0` remains only as a legacy migration input. After unlock, maintenance checks the stored original SHA-256 and rewrites at most eight rows per batch. An already rewritten envelope is authenticated and resumed rather than encrypted twice. Room changes to format `1` only after the original and optional thumbnail both authenticate. The byte-level contract and failure behavior are in [Encryption format](encryption-format.md).
 
@@ -219,14 +219,14 @@ Mitigations already enforced by the architecture include:
 - legacy plaintext is checksum-verified and upgraded atomically in bounded resumable batches;
 - optional biometric/device-credential lock gates UI and secure provider access;
 - recent-apps content is hidden and screenshot capture is blocked according to policy/platform capability;
-- external viewing requires an explicit action, one-use in-memory token, and narrow temporary URI permission.
+- external open/share requires an explicit action, bounded in-memory token, and narrow temporary URI permission; saving requires an explicit SAF destination.
 
 Known residual risks include:
 
 - title, body, tags, attachment filenames, extracted OCR, and FTS text are plaintext in Room;
 - an unlocked device, root access, OS compromise, debug backup/extraction, or a compromised app process can expose local data;
 - app lock defaults off, and its process-local session is not a per-read Keystore authentication requirement;
-- an explicitly chosen external viewer receives plaintext and may retain it;
+- an explicitly chosen external viewer, share recipient, or save destination receives plaintext and may retain it;
 - key loss or app-data clearing makes attachments unrecoverable because encrypted backup is not implemented;
 - the in-memory fake backend provides neither remote backup nor multi-device durability;
 - note/title/tag/OCR metadata is not end-to-end encrypted for a future production backend;
