@@ -111,7 +111,6 @@ class MainActivity : AppCompatActivity(), MainNavigator {
             setReorderingAllowed(true)
             replace(R.id.fragment_container, NoteEditorFragment.newInstance(itemId))
             addToBackStack(NoteEditorFragment.BACK_STACK_NAME)
-            runOnCommit(::updatePrimaryNavigation)
         }
     }
 
@@ -138,7 +137,6 @@ class MainActivity : AppCompatActivity(), MainNavigator {
                 ImportPreviewFragment.newInstance(token, parentItemId, cameraCaptureId),
             )
             addToBackStack(ImportPreviewFragment.BACK_STACK_NAME)
-            runOnCommit(::updatePrimaryNavigation)
         }
         return true
     }
@@ -159,7 +157,6 @@ class MainActivity : AppCompatActivity(), MainNavigator {
             setReorderingAllowed(true)
             replace(R.id.fragment_container, AttachmentViewerFragment.newInstance(attachmentId))
             addToBackStack(AttachmentViewerFragment.BACK_STACK_NAME)
-            runOnCommit(::updatePrimaryNavigation)
         }
     }
 
@@ -481,7 +478,6 @@ class MainActivity : AppCompatActivity(), MainNavigator {
             setReorderingAllowed(true)
             replace(R.id.fragment_container, fragment)
             addToBackStack(backStackName)
-            runOnCommit(::updatePrimaryNavigation)
         }
     }
 
