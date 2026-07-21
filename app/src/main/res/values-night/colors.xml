@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="vault_primary">#AFC6FF</color>
+    <color name="vault_action_active">#8AB4F8</color>
     <color name="vault_on_primary">#002E69</color>
     <color name="vault_primary_container">#164582</color>
     <color name="vault_on_primary_container">#D8E2FF</color>
