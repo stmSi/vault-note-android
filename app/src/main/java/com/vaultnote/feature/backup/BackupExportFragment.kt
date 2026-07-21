@@ -1,5 +1,6 @@
 package com.vaultnote.feature.backup
 
+import android.content.ActivityNotFoundException
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -25,10 +26,12 @@ import kotlinx.coroutines.launch
 class BackupExportFragment : Fragment() {
     private var binding: FragmentBackupExportBinding? = null
     private val createDocument = registerForActivityResult(CreateBackupDocumentContract()) { uri ->
+        (activity as? MainNavigator)?.endSecureDocumentPicker()
         viewModel.completeDestination(uri)
     }
     private val viewModel: BackupExportViewModel by viewModels {
-        BackupExportViewModel.Factory(requireContext().appContainer().backupRepository)
+        val container = requireContext().appContainer()
+        BackupExportViewModel.Factory(container.backupRepository, container.lockManager)
     }
 
     override fun onCreateView(
@@ -82,9 +85,34 @@ class BackupExportFragment : Fragment() {
 
     private fun handleEvent(event: BackupExportEvent) {
         when (event) {
-            BackupExportEvent.ChooseDestination -> createDocument.launch(backupFilename())
+            BackupExportEvent.ChooseDestination -> launchDocumentPicker()
             BackupExportEvent.ExportComplete -> showMessage(R.string.backup_export_complete)
             is BackupExportEvent.ShowError -> showMessage(errorMessage(event.reason))
+        }
+    }
+
+    private fun launchDocumentPicker() {
+        val navigator = activity as? MainNavigator
+        if (navigator == null) {
+            viewModel.completeDestination(null)
+            showMessage(R.string.file_picker_unavailable)
+            return
+        }
+        if (!navigator.beginSecureDocumentPicker()) {
+            viewModel.completeDestination(null)
+            showMessage(R.string.vault_locked_message)
+            return
+        }
+        try {
+            createDocument.launch(backupFilename())
+        } catch (_: ActivityNotFoundException) {
+            navigator.endSecureDocumentPicker()
+            viewModel.completeDestination(null)
+            showMessage(R.string.file_picker_unavailable)
+        } catch (_: SecurityException) {
+            navigator.endSecureDocumentPicker()
+            viewModel.completeDestination(null)
+            showMessage(R.string.file_picker_unavailable)
         }
     }
 

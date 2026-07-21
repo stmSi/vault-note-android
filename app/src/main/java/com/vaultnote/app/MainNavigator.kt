@@ -29,5 +29,13 @@ interface MainNavigator {
 
     fun openBackupRestore()
 
+    /**
+     * Starts a bounded handoff to Android's document picker without treating the picker as an
+     * ordinary background transition. Returns false when sensitive content is already locked.
+     */
+    fun beginSecureDocumentPicker(): Boolean
+
+    fun endSecureDocumentPicker()
+
     fun navigateBack()
 }

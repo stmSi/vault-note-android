@@ -60,6 +60,21 @@ class MainActivityNavigationTest {
         assertEquals(1, activity.supportFragmentManager.backStackEntryCount)
     }
 
+    @Test
+    fun `short secure document picker handoff does not trigger immediate lock`() {
+        val lockManager = activity.appContainer().lockManager
+        lockManager.applyPolicy(LockPolicy(true, 0L, true))
+        lockManager.unlock()
+
+        assertTrue(activity.beginSecureDocumentPicker())
+        controller.pause().stop()
+        assertTrue(lockManager.isContentAccessAllowed())
+
+        controller.start().resume()
+        activity.endSecureDocumentPicker()
+        assertTrue(lockManager.isContentAccessAllowed())
+    }
+
     private fun currentFragment() =
         activity.supportFragmentManager.findFragmentById(R.id.fragment_container)
 

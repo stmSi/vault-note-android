@@ -3,6 +3,7 @@ package com.vaultnote.app
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.View
 import android.view.WindowManager
 import androidx.activity.OnBackPressedCallback
@@ -42,6 +43,7 @@ import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.security.LockPolicy
 import com.vaultnote.core.security.VaultLockState
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 
@@ -54,6 +56,9 @@ class MainActivity : AppCompatActivity(), MainNavigator {
     private var policyErrorShown = false
     private var isRenderingPrimaryNavigation = false
     private var backgroundSyncScheduled = false
+    private var secureDocumentPickerDepth = 0
+    private var secureDocumentPickerBackgroundedAt: Long? = null
+    private var secureDocumentPickerLockJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -98,11 +103,28 @@ class MainActivity : AppCompatActivity(), MainNavigator {
 
     override fun onStart() {
         super.onStart()
-        appContainer().lockManager.onForeground()
+        val pickerBackgroundedAt = secureDocumentPickerBackgroundedAt
+        secureDocumentPickerLockJob?.cancel()
+        secureDocumentPickerLockJob = null
+        secureDocumentPickerBackgroundedAt = null
+        if (secureDocumentPickerDepth > 0 && pickerBackgroundedAt != null) {
+            val elapsed = (SystemClock.elapsedRealtime() - pickerBackgroundedAt).coerceAtLeast(0L)
+            if (elapsed >= secureDocumentPickerGraceMillis()) {
+                appContainer().lockManager.lockNow()
+            }
+        } else {
+            appContainer().lockManager.onForeground()
+        }
     }
 
     override fun onStop() {
-        if (!isChangingConfigurations) appContainer().lockManager.onBackground()
+        if (!isChangingConfigurations) {
+            if (secureDocumentPickerDepth > 0) {
+                beginPickerBackgroundGrace()
+            } else {
+                appContainer().lockManager.onBackground()
+            }
+        }
         super.onStop()
     }
 
@@ -202,6 +224,22 @@ class MainActivity : AppCompatActivity(), MainNavigator {
             fragment = BackupRestoreFragment.newInstance(),
             backStackName = BackupRestoreFragment.BACK_STACK_NAME,
         )
+    }
+
+    override fun beginSecureDocumentPicker(): Boolean {
+        if (!appContainer().lockManager.isContentAccessAllowed()) return false
+        secureDocumentPickerDepth += 1
+        return true
+    }
+
+    override fun endSecureDocumentPicker() {
+        if (secureDocumentPickerDepth == 0) return
+        secureDocumentPickerDepth -= 1
+        if (secureDocumentPickerDepth == 0) {
+            secureDocumentPickerLockJob?.cancel()
+            secureDocumentPickerLockJob = null
+            secureDocumentPickerBackgroundedAt = null
+        }
     }
 
     override fun navigateBack() {
@@ -403,6 +441,23 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         appContainer().lockManager.isContentAccessAllowed() &&
             !supportFragmentManager.isStateSaved
 
+    private fun beginPickerBackgroundGrace() {
+        if (secureDocumentPickerBackgroundedAt != null) return
+        secureDocumentPickerBackgroundedAt = SystemClock.elapsedRealtime()
+        secureDocumentPickerLockJob?.cancel()
+        secureDocumentPickerLockJob = lifecycleScope.launch {
+            delay(secureDocumentPickerGraceMillis())
+            if (secureDocumentPickerDepth > 0 && secureDocumentPickerBackgroundedAt != null) {
+                appContainer().lockManager.lockNow()
+            }
+        }
+    }
+
+    private fun secureDocumentPickerGraceMillis(): Long = maxOf(
+        MIN_DOCUMENT_PICKER_GRACE_MILLIS,
+        appContainer().lockManager.state.value.policy.backgroundTimeoutMillis,
+    )
+
     private fun configurePrimaryNavigation() {
         binding.primaryNavigation.setOnItemSelectedListener { item ->
             if (isRenderingPrimaryNavigation) return@setOnItemSelectedListener true
@@ -550,5 +605,6 @@ class MainActivity : AppCompatActivity(), MainNavigator {
     private companion object {
         const val SECURITY_MIGRATION_BATCH = 8
         const val OCR_BATCH = 2
+        const val MIN_DOCUMENT_PICKER_GRACE_MILLIS = 120_000L
     }
 }

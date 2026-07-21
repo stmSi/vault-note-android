@@ -8,14 +8,18 @@ import com.vaultnote.core.backup.BackupRepository
 import com.vaultnote.core.backup.PreparedBackupExport
 import com.vaultnote.core.common.AppError
 import com.vaultnote.core.common.RepositoryResult
+import com.vaultnote.core.security.VaultLockManager
 import java.util.concurrent.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 internal data class BackupExportState(
     val isWaitingForDestination: Boolean = false,
@@ -41,6 +45,7 @@ internal enum class BackupUiError {
 
 internal class BackupExportViewModel(
     private val repository: BackupRepository,
+    private val lockManager: VaultLockManager,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(BackupExportState())
     private val mutableEvents = Channel<BackupExportEvent>(Channel.BUFFERED)
@@ -97,7 +102,10 @@ internal class BackupExportViewModel(
         }
         mutableState.value = BackupExportState(isExporting = true)
         viewModelScope.launch {
+            var handedToRepository = false
             try {
+                lockManager.state.first { it.isPolicyLoaded && !it.isLocked }
+                handedToRepository = true
                 when (val result = repository.export(export, destination)) {
                     is RepositoryResult.Success -> {
                         mutableState.value = BackupExportState()
@@ -111,6 +119,12 @@ internal class BackupExportViewModel(
                     }
                 }
             } catch (cancelled: CancellationException) {
+                if (!handedToRepository) {
+                    repository.cancelExport(export)
+                    withContext(NonCancellable) {
+                        repository.discardDestination(destination)
+                    }
+                }
                 throw cancelled
             }
         }
@@ -122,11 +136,14 @@ internal class BackupExportViewModel(
         super.onCleared()
     }
 
-    class Factory(private val repository: BackupRepository) : ViewModelProvider.Factory {
+    class Factory(
+        private val repository: BackupRepository,
+        private val lockManager: VaultLockManager,
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             require(modelClass.isAssignableFrom(BackupExportViewModel::class.java))
-            return BackupExportViewModel(repository) as T
+            return BackupExportViewModel(repository, lockManager) as T
         }
     }
 }

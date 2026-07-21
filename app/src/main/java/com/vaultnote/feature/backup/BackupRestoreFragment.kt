@@ -1,5 +1,6 @@
 package com.vaultnote.feature.backup
 
+import android.content.ActivityNotFoundException
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -25,6 +26,7 @@ class BackupRestoreFragment : Fragment() {
     private var binding: FragmentBackupRestoreBinding? = null
     private var confirmationVisible = false
     private val openDocument = registerForActivityResult(OpenBackupDocumentContract()) { uri ->
+        (activity as? MainNavigator)?.endSecureDocumentPicker()
         viewModel.selectSource(uri)
     }
     private val viewModel: BackupRestoreViewModel by viewModels {
@@ -48,7 +50,7 @@ class BackupRestoreFragment : Fragment() {
             (activity as? MainNavigator)?.navigateBack()
         }
         current.passwordInput.configureBackupPasswordInput()
-        current.selectBackupButton.setOnClickListener { openDocument.launch(Unit) }
+        current.selectBackupButton.setOnClickListener { launchDocumentPicker() }
         current.validateButton.setOnClickListener {
             val password = current.passwordInput.consumePasswordChars()
             viewModel.validate(password)
@@ -125,6 +127,27 @@ class BackupRestoreFragment : Fragment() {
                 showMessage(message)
             }
             is BackupRestoreEvent.ShowError -> showMessage(errorMessage(event.reason))
+        }
+    }
+
+    private fun launchDocumentPicker() {
+        val navigator = activity as? MainNavigator
+        if (navigator == null) {
+            showMessage(R.string.file_picker_unavailable)
+            return
+        }
+        if (!navigator.beginSecureDocumentPicker()) {
+            showMessage(R.string.vault_locked_message)
+            return
+        }
+        try {
+            openDocument.launch(Unit)
+        } catch (_: ActivityNotFoundException) {
+            navigator.endSecureDocumentPicker()
+            showMessage(R.string.file_picker_unavailable)
+        } catch (_: SecurityException) {
+            navigator.endSecureDocumentPicker()
+            showMessage(R.string.file_picker_unavailable)
         }
     }
 
