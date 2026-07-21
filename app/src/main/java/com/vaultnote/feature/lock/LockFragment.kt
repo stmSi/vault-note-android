@@ -9,6 +9,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -21,6 +22,7 @@ import kotlinx.coroutines.launch
 class LockFragment : Fragment() {
     private var binding: FragmentLockBinding? = null
     private var authenticator: VaultAuthenticator? = null
+    private val promptSession: LockPromptSessionViewModel by viewModels()
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -35,14 +37,7 @@ class LockFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         val currentBinding = requireNotNull(binding)
-        currentBinding.unlockButton.setOnClickListener {
-            val prompt = getOrCreateAuthenticator()
-            if (prompt.isAvailable()) {
-                prompt.authenticate()
-            } else {
-                showMessage(R.string.unlock_unavailable)
-            }
-        }
+        currentBinding.unlockButton.setOnClickListener { requestAuthentication() }
         applyInsets(currentBinding)
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -50,6 +45,19 @@ class LockFragment : Fragment() {
                     currentBinding.loadingIndicator.isVisible = !state.isPolicyLoaded
                     currentBinding.unlockButton.isVisible = state.isPolicyLoaded && state.isLocked
                     currentBinding.message.isVisible = state.isPolicyLoaded && state.isLocked
+                    if (state.isPolicyLoaded && !state.isLocked) promptSession.onVaultUnlocked()
+                }
+            }
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                requireContext().appContainer().lockManager.state.collect { state ->
+                    if (state.isPolicyLoaded && state.isLocked) {
+                        // Recreate the BiometricPrompt wrapper after rotation so AndroidX can
+                        // reconnect the callback without launching a second system prompt.
+                        getOrCreateAuthenticator()
+                    }
+                    if (promptSession.claimAutomaticAttempt(state)) requestAuthentication()
                 }
             }
         }
@@ -77,11 +85,30 @@ class LockFragment : Fragment() {
         binding?.root?.let { Snackbar.make(it, message, Snackbar.LENGTH_LONG).show() }
     }
 
+    private fun requestAuthentication() {
+        val prompt = getOrCreateAuthenticator()
+        if (!prompt.isAvailable()) {
+            showMessage(R.string.unlock_unavailable)
+            return
+        }
+        if (!promptSession.beginPrompt()) return
+        try {
+            prompt.authenticate()
+        } catch (_: IllegalStateException) {
+            promptSession.onPromptFinished()
+            showMessage(R.string.unlock_failed)
+        }
+    }
+
     private fun getOrCreateAuthenticator(): VaultAuthenticator = authenticator
         ?: AndroidVaultAuthenticator(
             fragment = this,
-            onSuccess = { requireContext().appContainer().lockManager.unlock() },
+            onSuccess = {
+                promptSession.onPromptFinished()
+                context?.appContainer()?.lockManager?.unlock()
+            },
             onError = { cancelled ->
+                promptSession.onPromptFinished()
                 if (!cancelled) showMessage(R.string.unlock_failed)
             },
         ).also { authenticator = it }
