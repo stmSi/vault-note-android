@@ -27,6 +27,7 @@ import com.vaultnote.core.database.entity.VaultItemEntity
 import com.vaultnote.core.encryption.CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION
 import com.vaultnote.core.files.AttachmentCategory
 import com.vaultnote.core.files.AttachmentFileManager
+import com.vaultnote.core.files.AttachmentFilenamePolicy
 import com.vaultnote.core.files.PreparedAttachment
 import com.vaultnote.core.files.PlannedAttachmentPaths
 import com.vaultnote.core.security.SecureAttachmentUriFactory
@@ -93,13 +94,15 @@ class RoomAttachmentRepository(
     override suspend fun importFromUri(
         parentItemId: String,
         sourceUri: Uri,
+        displayName: String?,
     ): RepositoryResult<AttachmentImportResult> = cleanupMutex.withLock {
-        importFromUriInternal(parentItemId, sourceUri)
+        importFromUriInternal(parentItemId, sourceUri, displayName)
     }
 
     private suspend fun importFromUriInternal(
         parentItemId: String,
         sourceUri: Uri,
+        displayName: String?,
     ): RepositoryResult<AttachmentImportResult> = withContext(dispatchers.io) {
         if (parentItemId.isBlank()) {
             return@withContext RepositoryResult.Failure(
@@ -187,6 +190,20 @@ class RoomAttachmentRepository(
             )
         }
 
+        val namedPrepared = when (
+            val renamed = AttachmentFilenamePolicy.rename(
+                requestedName = displayName ?: prepared.originalFilename,
+                currentName = prepared.originalFilename,
+                format = prepared.format,
+            )
+        ) {
+            is RepositoryResult.Failure -> {
+                cleanupJournalEntry(journalEntry)
+                return@withContext renamed
+            }
+            is RepositoryResult.Success -> prepared.copy(originalFilename = renamed.value)
+        }
+
         val mutation = try {
             database.withTransaction {
                 val parent = requireItem(parentItemId)
@@ -195,14 +212,48 @@ class RoomAttachmentRepository(
                 }
                 val duplicate = attachmentDao.findForItemByChecksum(
                     parentItemId,
-                    prepared.sha256Checksum,
+                    namedPrepared.sha256Checksum,
                 )
                 if (duplicate != null) {
-                    return@withTransaction ImportMutation(duplicate, wasDuplicate = true)
+                    if (duplicate.originalFilename == namedPrepared.originalFilename) {
+                        return@withTransaction ImportMutation(
+                            duplicate,
+                            wasDuplicate = true,
+                            metadataChanged = false,
+                        )
+                    }
+                    val renamedDuplicate = duplicate.copy(
+                        originalFilename = namedPrepared.originalFilename,
+                        uploadStatus = AttachmentUploadStatus.PENDING,
+                    )
+                    if (attachmentDao.update(renamedDuplicate) != 1) {
+                        throw IllegalStateException("Attachment rename did not affect exactly one row")
+                    }
+                    val now = clock.nowEpochMillis()
+                    val updatedParent = parent.withLocalChange(now)
+                    updateItemExactlyOnce(updatedParent)
+                    updateAttachmentSearchText(updatedParent)
+                    enqueueAttachmentOperation(
+                        attachmentId = duplicate.id,
+                        itemId = parentItemId,
+                        targetRevision = updatedParent.localRevision,
+                        operationType = SyncOperationType.UPLOAD_ATTACHMENT,
+                        now = now,
+                    )
+                    enqueueItemOperation(
+                        item = updatedParent,
+                        operationType = SyncOperationType.UPSERT_ITEM,
+                        now = now,
+                    )
+                    return@withTransaction ImportMutation(
+                        renamedDuplicate,
+                        wasDuplicate = true,
+                        metadataChanged = true,
+                    )
                 }
 
                 val now = clock.nowEpochMillis()
-                val attachment = prepared.toEntity(parentItemId, now)
+                val attachment = namedPrepared.toEntity(parentItemId, now)
                 attachmentDao.insert(attachment)
                 if (cleanupDao.deleteByCleanupId(journalEntry.cleanupId) != 1) {
                     throw IllegalStateException("Committed attachment did not clear its cleanup journal")
@@ -225,7 +276,7 @@ class RoomAttachmentRepository(
                     operationType = SyncOperationType.UPSERT_ITEM,
                     now = now,
                 )
-                ImportMutation(attachment, wasDuplicate = false)
+                ImportMutation(attachment, wasDuplicate = false, metadataChanged = true)
             }
         } catch (cancellation: CancellationException) {
             cleanupJournalAfterCancellation(journalEntry, cancellation)
@@ -239,12 +290,13 @@ class RoomAttachmentRepository(
 
         if (mutation.wasDuplicate) {
             val cleanupWarning = cleanupJournalEntry(journalEntry)
+            val syncWarning = if (mutation.metadataChanged) requestSyncWarning() else null
             return@withContext RepositoryResult.Success(
                 AttachmentImportResult(
                     attachment = mutation.attachment.toDomain(),
                     wasDuplicate = true,
                 ),
-                warning = cleanupWarning,
+                warning = syncWarning ?: cleanupWarning,
             )
         }
 
@@ -309,6 +361,70 @@ class RoomAttachmentRepository(
         attachmentId: String,
     ): RepositoryResult<AttachmentDeleteResult> = cleanupMutex.withLock {
         deleteInternal(attachmentId)
+    }
+
+    override suspend fun rename(
+        attachmentId: String,
+        displayName: String,
+    ): RepositoryResult<VaultAttachment> = withContext(dispatchers.io) {
+        if (attachmentId.isBlank()) return@withContext attachmentNotFound()
+        val renamed = try {
+            database.withTransaction {
+                val attachment = attachmentDao.getById(attachmentId)
+                    ?: abort(AppError.InvalidInput("attachment_id", "not_found"))
+                val parent = requireItem(attachment.parentItemId)
+                if (parent.deletedAt != null) {
+                    abort(AppError.InvalidItemState(parent.id, "in_trash"))
+                }
+                val validatedName = when (
+                    val validation = AttachmentFilenamePolicy.renameForMimeType(
+                        requestedName = displayName,
+                        currentName = attachment.originalFilename,
+                        mimeType = attachment.mimeType,
+                    )
+                ) {
+                    is RepositoryResult.Failure -> abort(validation.error)
+                    is RepositoryResult.Success -> validation.value
+                }
+                if (validatedName == attachment.originalFilename) {
+                    return@withTransaction RenameMutation(attachment, changed = false)
+                }
+
+                val updatedAttachment = attachment.copy(
+                    originalFilename = validatedName,
+                    uploadStatus = AttachmentUploadStatus.PENDING,
+                )
+                if (attachmentDao.update(updatedAttachment) != 1) {
+                    throw IllegalStateException("Attachment rename did not affect exactly one row")
+                }
+                val now = clock.nowEpochMillis()
+                val updatedParent = parent.withLocalChange(now)
+                updateItemExactlyOnce(updatedParent)
+                updateAttachmentSearchText(updatedParent)
+                enqueueAttachmentOperation(
+                    attachmentId = attachment.id,
+                    itemId = attachment.parentItemId,
+                    targetRevision = updatedParent.localRevision,
+                    operationType = SyncOperationType.UPLOAD_ATTACHMENT,
+                    now = now,
+                )
+                enqueueItemOperation(
+                    item = updatedParent,
+                    operationType = SyncOperationType.UPSERT_ITEM,
+                    now = now,
+                )
+                RenameMutation(updatedAttachment, changed = true)
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (aborted: RepositoryAbort) {
+            return@withContext RepositoryResult.Failure(aborted.error)
+        } catch (failure: Exception) {
+            return@withContext databaseFailure(OPERATION_RENAME_ATTACHMENT, failure)
+        }
+
+        val warning = if (renamed.changed) requestSyncWarning() else null
+        RepositoryResult.Success(renamed.attachment.toDomain(), warning)
     }
 
     private suspend fun deleteInternal(
@@ -873,6 +989,12 @@ class RoomAttachmentRepository(
     private data class ImportMutation(
         val attachment: AttachmentEntity,
         val wasDuplicate: Boolean,
+        val metadataChanged: Boolean,
+    )
+
+    private data class RenameMutation(
+        val attachment: AttachmentEntity,
+        val changed: Boolean,
     )
 
     private data class DeletedAttachment(
@@ -897,6 +1019,7 @@ class RoomAttachmentRepository(
         const val OPERATION_GET_ATTACHMENT: String = "get_attachment"
         const val OPERATION_OPEN_ATTACHMENT: String = "open_attachment"
         const val OPERATION_DELETE_ATTACHMENT: String = "delete_attachment"
+        const val OPERATION_RENAME_ATTACHMENT: String = "rename_attachment"
         const val OPERATION_RECONCILE_FILES: String = "reconcile_attachment_files"
         const val OPERATION_MIGRATE_ENCRYPTION: String = "migrate_attachment_encryption"
         const val CLEANUP_RECONCILE_LIMIT: Int = 64

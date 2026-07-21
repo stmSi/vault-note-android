@@ -30,29 +30,22 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/toolbar">
 
-        <FrameLayout
+        <androidx.viewpager2.widget.ViewPager2
+            android:id="@+id/attachment_pager"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1">
+            android:layout_weight="1"
+            android:contentDescription="@string/attachment_preview_pager"
+            android:orientation="horizontal" />
 
-            <ImageView
-                android:id="@+id/image_preview"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:adjustViewBounds="true"
-                android:contentDescription="@string/image_attachment_preview"
-                android:scaleType="fitCenter"
-                android:visibility="gone" />
-
-            <ImageView
-                android:id="@+id/document_icon"
-                android:layout_width="96dp"
-                android:layout_height="96dp"
-                android:layout_gravity="center"
-                android:contentDescription="@string/document_attachment"
-                android:padding="@dimen/space_m"
-                android:src="@drawable/ic_document" />
-        </FrameLayout>
+        <TextView
+            android:id="@+id/attachment_position"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:textAppearance="?attr/textAppearanceLabelMedium"
+            android:textColor="@color/vault_on_surface_variant"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/filename"

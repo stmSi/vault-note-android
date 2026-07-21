@@ -8,6 +8,7 @@ import com.vaultnote.core.common.AppError
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.model.OpenableAttachment
 import com.vaultnote.core.common.model.OcrState
+import com.vaultnote.core.common.model.VaultAttachment
 import com.vaultnote.core.ocr.OcrRepository
 import com.vaultnote.core.repository.AttachmentRepository
 import kotlinx.coroutines.Job
@@ -29,12 +30,24 @@ internal enum class ViewerFailureReason {
 
 internal sealed interface AttachmentViewerState {
     data object Loading : AttachmentViewerState
+
     data class Content(
-        val attachment: OpenableAttachment,
+        val attachments: List<VaultAttachment>,
+        val selectedAttachmentId: String,
+        val openableAttachment: OpenableAttachment?,
+        val isLoadingSelection: Boolean = false,
         val isDeleting: Boolean = false,
         val isRetryingOcr: Boolean = false,
         val isSaving: Boolean = false,
-    ) : AttachmentViewerState
+        val isRenaming: Boolean = false,
+    ) : AttachmentViewerState {
+        val selectedAttachment: VaultAttachment?
+            get() = attachments.firstOrNull { it.id == selectedAttachmentId }
+
+        val isBusy: Boolean
+            get() = isDeleting || isSaving || isRenaming
+    }
+
     data class Error(
         val reason: ViewerFailureReason,
         val retryable: Boolean,
@@ -46,6 +59,8 @@ internal sealed interface AttachmentViewerEvent {
     data class DeleteComplete(
         val warnings: Set<AttachmentDeleteWarningReason>,
     ) : AttachmentViewerEvent
+    data class RenameComplete(val syncDelayed: Boolean) : AttachmentViewerEvent
+    data object RenameFailed : AttachmentViewerEvent
     data object SaveComplete : AttachmentViewerEvent
     data object SaveFailed : AttachmentViewerEvent
 }
@@ -61,33 +76,76 @@ internal enum class AttachmentDeleteWarningReason {
 }
 
 internal class AttachmentViewerViewModel(
-    private val attachmentId: String,
+    private val initialAttachmentId: String,
     private val repository: AttachmentRepository,
     private val ocrRepository: OcrRepository,
     private val exporter: AttachmentExporter,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow<AttachmentViewerState>(AttachmentViewerState.Loading)
     private val mutableEvents = Channel<AttachmentViewerEvent>(Channel.BUFFERED)
-    private var attachmentObservation: Job? = null
+    private var siblingsObservation: Job? = null
+    private var selectionLoad: Job? = null
     private var pendingExport: PreparedAttachmentExport? = null
 
     val state: StateFlow<AttachmentViewerState> = mutableState.asStateFlow()
     val events: Flow<AttachmentViewerEvent> = mutableEvents.receiveAsFlow()
 
     init {
-        load()
+        loadInitialAttachment()
     }
 
     fun retry() {
         val current = mutableState.value as? AttachmentViewerState.Error ?: return
         if (!current.retryable) return
         mutableState.value = AttachmentViewerState.Loading
-        load()
+        loadInitialAttachment()
+    }
+
+    fun selectAttachment(attachmentId: String) {
+        val current = mutableState.value as? AttachmentViewerState.Content ?: return
+        if (current.isBusy || current.attachments.none { it.id == attachmentId }) return
+        if (
+            current.selectedAttachmentId == attachmentId &&
+            (current.openableAttachment != null || current.isLoadingSelection)
+        ) {
+            return
+        }
+        selectionLoad?.cancel()
+        mutableState.value = current.copy(
+            selectedAttachmentId = attachmentId,
+            openableAttachment = null,
+            isLoadingSelection = true,
+            isRetryingOcr = false,
+        )
+        selectionLoad = viewModelScope.launch {
+            when (val result = repository.getOpenableAttachment(attachmentId)) {
+                is RepositoryResult.Success -> {
+                    val latest = mutableState.value as? AttachmentViewerState.Content
+                        ?: return@launch
+                    if (latest.selectedAttachmentId != attachmentId) return@launch
+                    mutableState.value = latest.copy(
+                        openableAttachment = result.value,
+                        isLoadingSelection = false,
+                    )
+                    processPendingOcr(result.value.attachment)
+                }
+                is RepositoryResult.Failure -> {
+                    val latest = mutableState.value as? AttachmentViewerState.Content
+                        ?: return@launch
+                    if (latest.selectedAttachmentId != attachmentId) return@launch
+                    mutableState.value = latest.copy(isLoadingSelection = false)
+                    mutableEvents.send(
+                        AttachmentViewerEvent.ShowError(result.error.toViewerFailureReason()),
+                    )
+                }
+            }
+        }
     }
 
     fun delete() {
         val current = mutableState.value as? AttachmentViewerState.Content ?: return
-        if (current.isDeleting || current.isSaving) return
+        if (current.isBusy || current.isLoadingSelection) return
+        val attachmentId = current.selectedAttachment?.id ?: return
         mutableState.value = current.copy(isDeleting = true)
         viewModelScope.launch {
             when (val result = repository.delete(attachmentId)) {
@@ -106,7 +164,7 @@ internal class AttachmentViewerViewModel(
                     )
                 }
                 is RepositoryResult.Failure -> {
-                    mutableState.value = current
+                    restoreOperationFlag { copy(isDeleting = false) }
                     mutableEvents.send(
                         AttachmentViewerEvent.ShowError(result.error.toViewerFailureReason()),
                     )
@@ -115,21 +173,54 @@ internal class AttachmentViewerViewModel(
         }
     }
 
+    fun rename(displayName: String) {
+        val current = mutableState.value as? AttachmentViewerState.Content ?: return
+        if (current.isBusy || current.isLoadingSelection) return
+        val attachmentId = current.selectedAttachment?.id ?: return
+        mutableState.value = current.copy(isRenaming = true)
+        viewModelScope.launch {
+            when (val result = repository.rename(attachmentId, displayName)) {
+                is RepositoryResult.Success -> {
+                    val latest = mutableState.value as? AttachmentViewerState.Content
+                    if (latest != null && latest.selectedAttachmentId == attachmentId) {
+                        mutableState.value = latest.copy(
+                            attachments = latest.attachments.map { attachment ->
+                                if (attachment.id == attachmentId) result.value else attachment
+                            },
+                            openableAttachment = latest.openableAttachment?.copy(
+                                attachment = result.value,
+                            ),
+                            isRenaming = false,
+                        )
+                    }
+                    mutableEvents.send(
+                        AttachmentViewerEvent.RenameComplete(syncDelayed = result.warning != null),
+                    )
+                }
+                is RepositoryResult.Failure -> {
+                    restoreOperationFlag { copy(isRenaming = false) }
+                    mutableEvents.send(AttachmentViewerEvent.RenameFailed)
+                }
+            }
+        }
+    }
+
     fun retryOcr() {
         val current = mutableState.value as? AttachmentViewerState.Content ?: return
+        val attachment = current.selectedAttachment ?: return
         if (
-            current.isRetryingOcr || current.isDeleting || current.isSaving ||
-            !ocrRepository.isRetryable(current.attachment.attachment.ocrFailureCode)
+            current.isRetryingOcr || current.isBusy || current.isLoadingSelection ||
+            !ocrRepository.isRetryable(attachment.ocrFailureCode)
         ) {
             return
         }
         mutableState.value = current.copy(isRetryingOcr = true)
         viewModelScope.launch {
-            val reset = ocrRepository.retry(attachmentId)
+            val reset = ocrRepository.retry(attachment.id)
             if (reset is RepositoryResult.Success && reset.value) {
-                ocrRepository.processAttachment(attachmentId)
+                ocrRepository.processAttachment(attachment.id)
             } else {
-                mutableState.value = current
+                restoreOperationFlag { copy(isRetryingOcr = false) }
                 mutableEvents.send(AttachmentViewerEvent.ShowError(ViewerFailureReason.UNKNOWN))
             }
         }
@@ -137,13 +228,15 @@ internal class AttachmentViewerViewModel(
 
     fun prepareSave(): AttachmentSavePickerRequest? {
         val current = mutableState.value as? AttachmentViewerState.Content ?: return null
-        if (current.isDeleting || current.isSaving || pendingExport != null) return null
-        return when (val prepared = exporter.prepare(attachmentId)) {
+        val attachment = current.selectedAttachment ?: return null
+        if (current.isBusy || current.isLoadingSelection || pendingExport != null) return null
+        return when (val prepared = exporter.prepare(attachment.id)) {
             is RepositoryResult.Success -> {
                 pendingExport = prepared.value
+                mutableState.value = current.copy(isSaving = true)
                 AttachmentSavePickerRequest(
-                    displayName = current.attachment.attachment.displayName,
-                    mimeType = current.attachment.attachment.mimeType,
+                    displayName = attachment.displayName,
+                    mimeType = attachment.mimeType,
                 )
             }
             is RepositoryResult.Failure -> {
@@ -158,18 +251,17 @@ internal class AttachmentViewerViewModel(
         pendingExport = null
         if (destination == null) {
             exporter.cancel(prepared)
+            restoreOperationFlag { copy(isSaving = false) }
             return
         }
         val current = mutableState.value as? AttachmentViewerState.Content
-        if (current == null || current.isDeleting || current.isSaving) {
+        if (current == null || current.isDeleting || current.isRenaming) {
             exporter.cancel(prepared)
             return
         }
-        mutableState.value = current.copy(isSaving = true)
         viewModelScope.launch {
             val result = exporter.save(prepared, destination)
-            val latest = mutableState.value as? AttachmentViewerState.Content
-            if (latest != null) mutableState.value = latest.copy(isSaving = false)
+            restoreOperationFlag { copy(isSaving = false) }
             mutableEvents.send(
                 if (result is RepositoryResult.Success) {
                     AttachmentViewerEvent.SaveComplete
@@ -180,15 +272,20 @@ internal class AttachmentViewerViewModel(
         }
     }
 
-    private fun load() {
-        viewModelScope.launch {
-            when (val result = repository.getOpenableAttachment(attachmentId)) {
+    private fun loadInitialAttachment() {
+        selectionLoad?.cancel()
+        siblingsObservation?.cancel()
+        selectionLoad = viewModelScope.launch {
+            when (val result = repository.getOpenableAttachment(initialAttachmentId)) {
                 is RepositoryResult.Success -> {
-                    mutableState.value = AttachmentViewerState.Content(result.value)
-                    observeAttachmentChanges(result.value)
-                    if (result.value.attachment.ocrState == OcrState.PENDING) {
-                        viewModelScope.launch { ocrRepository.processAttachment(attachmentId) }
-                    }
+                    val attachment = result.value.attachment
+                    mutableState.value = AttachmentViewerState.Content(
+                        attachments = listOf(attachment),
+                        selectedAttachmentId = attachment.id,
+                        openableAttachment = result.value,
+                    )
+                    observeSiblings(attachment.parentItemId)
+                    processPendingOcr(attachment)
                 }
                 is RepositoryResult.Failure -> {
                     mutableState.value = AttachmentViewerState.Error(
@@ -200,25 +297,49 @@ internal class AttachmentViewerViewModel(
         }
     }
 
-    private fun observeAttachmentChanges(openable: OpenableAttachment) {
-        attachmentObservation?.cancel()
-        attachmentObservation = viewModelScope.launch {
-            repository.observeById(attachmentId).collect { latest ->
-                latest ?: return@collect
-                val current = mutableState.value as? AttachmentViewerState.Content ?: return@collect
+    private fun observeSiblings(parentItemId: String) {
+        siblingsObservation?.cancel()
+        siblingsObservation = viewModelScope.launch {
+            repository.observeForItem(parentItemId).collect { attachments ->
+                val current = mutableState.value as? AttachmentViewerState.Content
+                    ?: return@collect
+                val selected = attachments.firstOrNull { it.id == current.selectedAttachmentId }
+                if (selected == null) {
+                    if (current.isDeleting) return@collect
+                    mutableState.value = AttachmentViewerState.Error(
+                        reason = ViewerFailureReason.NOT_FOUND,
+                        retryable = false,
+                    )
+                    return@collect
+                }
+                val latestOpenable = current.openableAttachment?.takeIf {
+                    it.attachment.id == selected.id
+                }?.copy(attachment = selected)
                 mutableState.value = current.copy(
-                    attachment = openable.copy(attachment = latest),
-                    isRetryingOcr = latest.ocrState == OcrState.PENDING ||
-                        latest.ocrState == OcrState.PROCESSING,
+                    attachments = attachments,
+                    openableAttachment = latestOpenable,
+                    isRetryingOcr = selected.ocrState == OcrState.PENDING ||
+                        selected.ocrState == OcrState.PROCESSING,
                 )
             }
         }
     }
 
+    private fun processPendingOcr(attachment: VaultAttachment) {
+        if (attachment.ocrState != OcrState.PENDING) return
+        viewModelScope.launch { ocrRepository.processAttachment(attachment.id) }
+    }
+
+    private inline fun restoreOperationFlag(
+        update: AttachmentViewerState.Content.() -> AttachmentViewerState.Content,
+    ) {
+        val latest = mutableState.value as? AttachmentViewerState.Content ?: return
+        mutableState.value = latest.update()
+    }
+
     override fun onCleared() {
         pendingExport?.let(exporter::cancel)
         pendingExport = null
-        super.onCleared()
     }
 
     class Factory(

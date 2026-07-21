@@ -20,12 +20,14 @@ internal data class ImportCandidateRow(
     val mimeType: String?,
     val sizeBytes: Long?,
     val accepted: Boolean,
+    val renameEnabled: Boolean,
     val sourceUri: Uri,
     val category: AttachmentCategory?,
 )
 
 internal class ImportPreviewAdapter(
     private val imageLoader: ImageLoader,
+    private val onRename: (ImportCandidateRow) -> Unit,
 ) :
     ListAdapter<ImportCandidateRow, ImportPreviewAdapter.ViewHolder>(DiffCallback) {
     init {
@@ -37,6 +39,7 @@ internal class ImportPreviewAdapter(
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder = ViewHolder(
         ItemImportCandidateBinding.inflate(LayoutInflater.from(parent.context), parent, false),
         imageLoader,
+        onRename,
     )
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
@@ -51,6 +54,7 @@ internal class ImportPreviewAdapter(
     internal class ViewHolder(
         private val binding: ItemImportCandidateBinding,
         private val imageLoader: ImageLoader,
+        private val onRename: (ImportCandidateRow) -> Unit,
     ) : RecyclerView.ViewHolder(binding.root) {
         private var previewRequest: Disposable? = null
 
@@ -73,6 +77,13 @@ internal class ImportPreviewAdapter(
             binding.statusIcon.contentDescription = context.getString(
                 if (row.accepted) R.string.file_ready else R.string.file_not_supported,
             )
+            binding.renameButton.isEnabled = row.renameEnabled
+            binding.renameButton.visibility = if (row.accepted) {
+                android.view.View.VISIBLE
+            } else {
+                android.view.View.GONE
+            }
+            binding.renameButton.setOnClickListener { onRename(row) }
             val fallbackIcon = iconFor(row.category)
             binding.filePreview.setImageResource(fallbackIcon)
             binding.filePreview.scaleType = if (row.category == AttachmentCategory.IMAGE) {
@@ -95,6 +106,7 @@ internal class ImportPreviewAdapter(
         fun recycle() {
             previewRequest?.dispose()
             previewRequest = null
+            binding.renameButton.setOnClickListener(null)
             binding.filePreview.setImageDrawable(null)
         }
 

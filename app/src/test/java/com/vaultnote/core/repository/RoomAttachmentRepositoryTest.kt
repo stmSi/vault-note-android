@@ -171,6 +171,63 @@ class RoomAttachmentRepositoryTest {
     }
 
     @Test
+    fun `custom import name is persisted and immediately searchable`() = runBlocking {
+        val itemId = vaultRepository.createNote().successValue()
+
+        val imported = repository.importFromUri(
+            parentItemId = itemId,
+            sourceUri = SOURCE_URI,
+            displayName = "Bangkok plans",
+        ).successValue().attachment
+
+        assertEquals("Bangkok plans.pdf", imported.displayName)
+        assertEquals(
+            "Bangkok plans.pdf",
+            database.searchDao().getDocumentForItem(itemId)?.attachmentFilenames,
+        )
+        assertEquals(1, searchMatchCount("bangkok"))
+    }
+
+    @Test
+    fun `rename updates attachment search parent revision and durable sync operations`() = runBlocking {
+        val itemId = vaultRepository.createNote().successValue()
+        val attachment = repository.importFromUri(itemId, SOURCE_URI).successValue().attachment
+
+        val renamed = repository.rename(attachment.id, "Travel receipt").successValue()
+
+        assertEquals("Travel receipt.pdf", renamed.displayName)
+        assertEquals("Travel receipt.pdf", repository.getById(attachment.id).successValue().displayName)
+        assertEquals(0, searchMatchCount("paper"))
+        assertEquals(1, searchMatchCount("travel"))
+        val parent = requireNotNull(vaultRepository.observeNote(itemId).first())
+        assertEquals(3L, parent.localRevision)
+        val attachmentUpload = requireNotNull(
+            database.syncOperationDao().getByDedupeKey("attachment:${attachment.id}"),
+        )
+        val itemUpsert = requireNotNull(
+            database.syncOperationDao().getByDedupeKey("item:$itemId"),
+        )
+        assertEquals(SyncOperationType.UPLOAD_ATTACHMENT, attachmentUpload.operationType)
+        assertEquals(3L, attachmentUpload.targetRevision)
+        assertEquals(3L, itemUpsert.targetRevision)
+    }
+
+    @Test
+    fun `rename rejects incompatible extension without mutating metadata`() = runBlocking {
+        val itemId = vaultRepository.createNote().successValue()
+        val attachment = repository.importFromUri(itemId, SOURCE_URI).successValue().attachment
+
+        val result = repository.rename(attachment.id, "receipt.exe")
+
+        assertTrue(result is RepositoryResult.Failure)
+        val error = (result as RepositoryResult.Failure).error
+        assertTrue(error is AppError.InvalidInput)
+        assertEquals("paper.pdf", repository.getById(attachment.id).successValue().displayName)
+        assertEquals(2L, requireNotNull(vaultRepository.observeNote(itemId).first()).localRevision)
+        assertEquals(1, searchMatchCount("paper"))
+    }
+
+    @Test
     fun `files view is newest first and excludes archived or trashed parents`() = runBlocking {
         val firstParent = vaultRepository.createAttachmentContainer(
             title = "first.pdf",

@@ -16,6 +16,7 @@ interface AttachmentRepository {
     suspend fun importFromUri(
         parentItemId: String,
         sourceUri: Uri,
+        displayName: String? = null,
     ): RepositoryResult<AttachmentImportResult>
 
     suspend fun getById(attachmentId: String): RepositoryResult<VaultAttachment>
@@ -25,6 +26,11 @@ interface AttachmentRepository {
     ): RepositoryResult<OpenableAttachment>
 
     suspend fun delete(attachmentId: String): RepositoryResult<AttachmentDeleteResult>
+
+    suspend fun rename(
+        attachmentId: String,
+        displayName: String,
+    ): RepositoryResult<VaultAttachment>
 
     suspend fun reconcileFileCleanup(): RepositoryResult<Unit>
 

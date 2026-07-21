@@ -11,6 +11,7 @@ import com.vaultnote.core.common.model.AttachmentImportResult
 import com.vaultnote.core.common.model.VaultItemType
 import com.vaultnote.core.files.AttachmentCategory
 import com.vaultnote.core.files.AttachmentFileManager
+import com.vaultnote.core.files.AttachmentFilenamePolicy
 import com.vaultnote.core.files.AttachmentPreview
 import com.vaultnote.core.repository.AttachmentRepository
 import com.vaultnote.core.repository.VaultRepository
@@ -120,6 +121,38 @@ internal class ImportPreviewViewModel(
         if (operation?.isActive == true) return
         val payload = resolvedIncomingImport ?: return
         operation = viewModelScope.launch { performImport(payload) }
+    }
+
+    fun renameCandidate(
+        stableId: Long,
+        requestedName: String,
+    ): RepositoryResult<String> {
+        val current = mutableState.value as? ImportPreviewUiState.Ready
+            ?: return RepositoryResult.Failure(AppError.InvalidInput("import", "not_ready"))
+        val candidate = candidates.firstOrNull { it.stableId == stableId }
+            ?: return RepositoryResult.Failure(AppError.InvalidInput("attachment", "not_found"))
+        val preview = candidate.preview
+            ?: return RepositoryResult.Failure(AppError.UnsupportedFile)
+        return when (
+            val result = AttachmentFilenamePolicy.rename(
+                requestedName = requestedName,
+                currentName = preview.originalFilename,
+                format = preview.format,
+            )
+        ) {
+            is RepositoryResult.Failure -> result
+            is RepositoryResult.Success -> {
+                candidates = candidates.map { inspected ->
+                    if (inspected.stableId == stableId) {
+                        inspected.copy(preview = preview.copy(originalFilename = result.value))
+                    } else {
+                        inspected
+                    }
+                }
+                mutableState.value = current.copy(candidates = candidates)
+                result
+            }
+        }
     }
 
     fun cancel() {
@@ -233,7 +266,13 @@ internal class ImportPreviewViewModel(
                 completedFiles = completedCandidateIds.size,
                 totalFiles = validCandidates.size,
             )
-            when (val result = attachmentRepository.importFromUri(itemId, candidate.source.uri)) {
+            when (
+                val result = attachmentRepository.importFromUri(
+                    parentItemId = itemId,
+                    sourceUri = candidate.source.uri,
+                    displayName = candidate.preview?.originalFilename,
+                )
+            ) {
                 is RepositoryResult.Failure -> {
                     showError(result.error, payload)
                     return
@@ -288,7 +327,13 @@ internal class ImportPreviewViewModel(
                     created.value
                 }
             }
-            when (val result = attachmentRepository.importFromUri(itemId, candidate.source.uri)) {
+            when (
+                val result = attachmentRepository.importFromUri(
+                    parentItemId = itemId,
+                    sourceUri = candidate.source.uri,
+                    displayName = candidate.preview?.originalFilename,
+                )
+            ) {
                 is RepositoryResult.Failure -> {
                     showError(result.error, payload)
                     return

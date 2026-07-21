@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import androidx.activity.OnBackPressedCallback
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -19,7 +20,11 @@ import com.vaultnote.R
 import com.vaultnote.app.MainNavigator
 import com.vaultnote.app.appContainer
 import com.vaultnote.core.common.DefaultDispatcherProvider
+import com.vaultnote.core.common.AppError
+import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.databinding.FragmentImportPreviewBinding
+import com.vaultnote.databinding.DialogRenameAttachmentBinding
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.launch
 
 class ImportPreviewFragment : Fragment() {
@@ -66,7 +71,10 @@ class ImportPreviewFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         val currentBinding = requireNotNull(binding)
-        val listAdapter = ImportPreviewAdapter(requireContext().appContainer().imageLoader)
+        val listAdapter = ImportPreviewAdapter(
+            requireContext().appContainer().imageLoader,
+            ::showRenameDialog,
+        )
         adapter = listAdapter
         currentBinding.filesList.adapter = listAdapter
         currentBinding.filesList.setHasFixedSize(true)
@@ -138,7 +146,8 @@ class ImportPreviewFragment : Fragment() {
             is ImportPreviewUiState.Error -> state.candidates
         }
         currentBinding.filesLabel.isVisible = showContent && candidates.isNotEmpty()
-        listAdapter.submitList(candidates.map(::toRow))
+        val renameEnabled = state is ImportPreviewUiState.Ready
+        listAdapter.submitList(candidates.map { candidate -> toRow(candidate, renameEnabled) })
 
         when (state) {
             ImportPreviewUiState.Loading -> Unit
@@ -168,7 +177,10 @@ class ImportPreviewFragment : Fragment() {
         }
     }
 
-    private fun toRow(candidate: InspectedImportCandidate): ImportCandidateRow {
+    private fun toRow(
+        candidate: InspectedImportCandidate,
+        renameEnabled: Boolean,
+    ): ImportCandidateRow {
         val preview = candidate.preview
         return ImportCandidateRow(
             stableId = candidate.stableId,
@@ -177,9 +189,51 @@ class ImportPreviewFragment : Fragment() {
             mimeType = preview?.mimeType,
             sizeBytes = preview?.declaredSize,
             accepted = preview != null,
+            renameEnabled = renameEnabled && preview != null,
             sourceUri = candidate.source.uri,
             category = preview?.format?.category,
         )
+    }
+
+    private fun showRenameDialog(row: ImportCandidateRow) {
+        if (!row.renameEnabled) return
+        val dialogBinding = DialogRenameAttachmentBinding.inflate(layoutInflater)
+        dialogBinding.attachmentName.setText(row.displayName)
+        dialogBinding.attachmentName.setSelection(
+            0,
+            row.displayName.lastIndexOf('.').takeIf { it > 0 } ?: row.displayName.length,
+        )
+        val dialog = MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.rename_attachment_title)
+            .setView(dialogBinding.root)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.rename_attachment, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                when (
+                    val result = viewModel.renameCandidate(
+                        stableId = row.stableId,
+                        requestedName = dialogBinding.attachmentName.text?.toString().orEmpty(),
+                    )
+                ) {
+                    is RepositoryResult.Success -> dialog.dismiss()
+                    is RepositoryResult.Failure -> {
+                        dialogBinding.attachmentNameLayout.error = when (val error = result.error) {
+                            is AppError.InvalidInput -> if (error.reason == "extension_mismatch") {
+                                getString(R.string.attachment_name_extension_mismatch)
+                            } else {
+                                getString(R.string.attachment_name_invalid)
+                            }
+                            else -> getString(R.string.attachment_name_invalid)
+                        }
+                    }
+                }
+            }
+            dialogBinding.attachmentName.requestFocus()
+            dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
+        }
+        dialog.show()
     }
 
     private fun errorMessage(reason: ImportFailureReason): Int = when (reason) {

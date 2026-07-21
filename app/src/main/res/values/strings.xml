@@ -68,6 +68,16 @@
     <string name="page_one">Page 1</string>
     <string name="attachments">Attachments</string>
     <string name="add_file">Add file</string>
+    <string name="rename_attachment">Rename</string>
+    <string name="rename_attachment_title">Rename attachment</string>
+    <string name="attachment_name_hint">File name</string>
+    <string name="attachment_name_invalid">Enter a valid file name without folders or unsafe characters.</string>
+    <string name="attachment_name_extension_mismatch">Keep the original file type, or leave the extension out.</string>
+    <string name="attachment_renamed">Attachment renamed</string>
+    <string name="attachment_rename_failed">The attachment could not be renamed.</string>
+    <string name="attachment_preview_pager">Attachment previews. Swipe left or right to browse.</string>
+    <string name="attachment_position">%1$d of %2$d</string>
+    <string name="attachment_renamed_sync_delayed">Attachment renamed. Background sync will retry later.</string>
     <string name="loading_files">Loading files</string>
     <string name="empty_files_title">No files yet</string>
     <string name="empty_files_message">Add an image, PDF, or document without creating a note.</string>

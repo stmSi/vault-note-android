@@ -7,6 +7,7 @@ import android.view.LayoutInflater
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
@@ -17,15 +18,17 @@ import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import coil3.ImageLoader
-import coil3.load
-import coil3.request.Disposable
+import androidx.viewpager2.widget.ViewPager2
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import com.vaultnote.R
 import com.vaultnote.app.MainNavigator
 import com.vaultnote.app.appContainer
+import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.model.OpenableAttachment
+import com.vaultnote.core.common.model.OcrState
+import com.vaultnote.core.files.AttachmentFilenamePolicy
+import com.vaultnote.databinding.DialogRenameAttachmentBinding
 import com.vaultnote.databinding.FragmentAttachmentViewerBinding
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -33,21 +36,24 @@ import kotlinx.coroutines.launch
 
 class AttachmentViewerFragment : Fragment() {
     private var binding: FragmentAttachmentViewerBinding? = null
-    private var imageRequest: Disposable? = null
-    private var loadedImageAttachmentId: String? = null
+    private var pagerAdapter: AttachmentViewerPageAdapter? = null
     private var openableAttachment: OpenableAttachment? = null
     private var externalViewerHandoffPending = false
     private var externalViewerWasPaused = false
     private var externalViewerGuardJob: Job? = null
+    private val pageCallback = object : ViewPager2.OnPageChangeCallback() {
+        override fun onPageSelected(position: Int) {
+            pagerAdapter?.currentList?.getOrNull(position)?.attachment?.id?.let(
+                viewModel::selectAttachment,
+            )
+        }
+    }
     private val saveDocument = registerForActivityResult(CreateAttachmentDocumentContract()) { uri ->
         (activity as? MainNavigator)?.endSecureExternalHandoff()
         viewModel.completeSave(uri)
     }
     private val attachmentId: String by lazy(LazyThreadSafetyMode.NONE) {
         requireNotNull(requireArguments().getString(ARG_ATTACHMENT_ID)) { "Missing attachment ID" }
-    }
-    private val imageLoader: ImageLoader by lazy(LazyThreadSafetyMode.NONE) {
-        requireContext().appContainer().imageLoader
     }
     private val viewModel: AttachmentViewerViewModel by viewModels {
         AttachmentViewerViewModel.Factory(
@@ -71,6 +77,10 @@ class AttachmentViewerFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         val currentBinding = requireNotNull(binding)
+        val adapter = AttachmentViewerPageAdapter(requireContext().appContainer().imageLoader)
+        pagerAdapter = adapter
+        currentBinding.attachmentPager.adapter = adapter
+        currentBinding.attachmentPager.registerOnPageChangeCallback(pageCallback)
         currentBinding.toolbar.setNavigationOnClickListener {
             (activity as? MainNavigator)?.navigateBack()
         }
@@ -79,7 +89,7 @@ class AttachmentViewerFragment : Fragment() {
         currentBinding.openExternalButton.setOnClickListener { openExternally() }
         currentBinding.retryOcrButton.setOnClickListener { viewModel.retryOcr() }
         applyWindowInsets(currentBinding)
-        collectState(currentBinding)
+        collectState(currentBinding, adapter)
     }
 
     override fun onResume() {
@@ -96,19 +106,21 @@ class AttachmentViewerFragment : Fragment() {
 
     override fun onDestroyView() {
         finishExternalViewerHandoff()
-        imageRequest?.dispose()
-        imageRequest = null
-        loadedImageAttachmentId = null
+        binding?.attachmentPager?.unregisterOnPageChangeCallback(pageCallback)
+        binding?.attachmentPager?.adapter = null
         openableAttachment = null
-        binding?.imagePreview?.setImageDrawable(null)
+        pagerAdapter = null
         binding = null
         super.onDestroyView()
     }
 
-    private fun collectState(currentBinding: FragmentAttachmentViewerBinding) {
+    private fun collectState(
+        currentBinding: FragmentAttachmentViewerBinding,
+        adapter: AttachmentViewerPageAdapter,
+    ) {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch { viewModel.state.collect { state -> render(currentBinding, state) } }
+                launch { viewModel.state.collect { state -> render(currentBinding, adapter, state) } }
                 launch { viewModel.events.collect(::handleEvent) }
             }
         }
@@ -116,34 +128,42 @@ class AttachmentViewerFragment : Fragment() {
 
     private fun render(
         currentBinding: FragmentAttachmentViewerBinding,
+        adapter: AttachmentViewerPageAdapter,
         state: AttachmentViewerState,
     ) {
         currentBinding.loadingIndicator.isVisible = state is AttachmentViewerState.Loading
         currentBinding.errorState.isVisible = state is AttachmentViewerState.Error
         currentBinding.content.isVisible = state is AttachmentViewerState.Content
+        val content = state as? AttachmentViewerState.Content
+        val actionsEnabled = content != null &&
+            !content.isBusy &&
+            !content.isLoadingSelection &&
+            content.openableAttachment != null
         currentBinding.toolbar.menu.findItem(R.id.action_delete_attachment).isEnabled =
-            state is AttachmentViewerState.Content && !state.isDeleting && !state.isSaving
-        currentBinding.toolbar.menu.findItem(R.id.action_save_attachment).isEnabled =
-            state is AttachmentViewerState.Content && !state.isDeleting && !state.isSaving
-        currentBinding.toolbar.menu.findItem(R.id.action_share_attachment).isEnabled =
-            state is AttachmentViewerState.Content && !state.isDeleting && !state.isSaving
+            content != null && !content.isBusy && !content.isLoadingSelection
+        currentBinding.toolbar.menu.findItem(R.id.action_save_attachment).isEnabled = actionsEnabled
+        currentBinding.toolbar.menu.findItem(R.id.action_share_attachment).isEnabled = actionsEnabled
+        currentBinding.toolbar.menu.findItem(R.id.action_rename_attachment).isEnabled =
+            content != null && !content.isBusy && !content.isLoadingSelection
 
         when (state) {
             AttachmentViewerState.Loading -> Unit
             is AttachmentViewerState.Error -> {
+                openableAttachment = null
                 currentBinding.errorMessage.setText(errorMessage(state.reason))
                 currentBinding.retryButton.isVisible = state.retryable
             }
-            is AttachmentViewerState.Content -> renderContent(currentBinding, state)
+            is AttachmentViewerState.Content -> renderContent(currentBinding, adapter, state)
         }
     }
 
     private fun renderContent(
         currentBinding: FragmentAttachmentViewerBinding,
+        adapter: AttachmentViewerPageAdapter,
         state: AttachmentViewerState.Content,
     ) {
-        val openable = state.attachment
-        val attachment = openable.attachment
+        val attachment = state.selectedAttachment ?: return
+        val openable = state.openableAttachment?.takeIf { it.attachment.id == attachment.id }
         openableAttachment = openable
         currentBinding.toolbar.title = attachment.displayName
         currentBinding.filename.text = attachment.displayName
@@ -165,46 +185,54 @@ class AttachmentViewerFragment : Fragment() {
             )
             else -> getString(R.string.document_attachment)
         }
-        currentBinding.operationIndicator.isVisible = state.isDeleting || state.isSaving
+        currentBinding.operationIndicator.isVisible = state.isBusy
         currentBinding.operationIndicator.contentDescription = getString(
-            if (state.isDeleting) R.string.deleting_attachment else R.string.saving_attachment,
-        )
-        currentBinding.openExternalButton.isEnabled = !state.isDeleting && !state.isSaving
-        currentBinding.ocrStatus.isVisible = attachment.ocrState !=
-            com.vaultnote.core.common.model.OcrState.NOT_APPLICABLE
-        currentBinding.ocrStatus.setText(
-            when (attachment.ocrState) {
-                com.vaultnote.core.common.model.OcrState.NOT_APPLICABLE -> R.string.ocr_not_applicable
-                com.vaultnote.core.common.model.OcrState.PENDING -> R.string.ocr_pending
-                com.vaultnote.core.common.model.OcrState.PROCESSING -> R.string.ocr_processing
-                com.vaultnote.core.common.model.OcrState.COMPLETE -> R.string.ocr_complete
-                com.vaultnote.core.common.model.OcrState.FAILED -> R.string.ocr_failed
+            when {
+                state.isDeleting -> R.string.deleting_attachment
+                state.isRenaming -> R.string.rename_attachment
+                else -> R.string.saving_attachment
             },
         )
-        currentBinding.retryOcrButton.isVisible = attachment.ocrState ==
-            com.vaultnote.core.common.model.OcrState.FAILED &&
-            requireContext().appContainer().ocrRepository.isRetryable(attachment.ocrFailureCode)
-        currentBinding.retryOcrButton.isEnabled = !state.isRetryingOcr
-
-        val isImage = attachment.mimeType.startsWith("image/")
-        currentBinding.imagePreview.isVisible = isImage
-        currentBinding.documentIcon.isVisible = !isImage
-        currentBinding.documentIcon.setImageResource(
-            if (attachment.mimeType == "application/pdf") R.drawable.ic_pdf else R.drawable.ic_document,
+        currentBinding.openExternalButton.isEnabled = !state.isBusy &&
+            !state.isLoadingSelection && openable != null
+        currentBinding.ocrStatus.isVisible = attachment.ocrState != OcrState.NOT_APPLICABLE
+        currentBinding.ocrStatus.setText(
+            when (attachment.ocrState) {
+                OcrState.NOT_APPLICABLE -> R.string.ocr_not_applicable
+                OcrState.PENDING -> R.string.ocr_pending
+                OcrState.PROCESSING -> R.string.ocr_processing
+                OcrState.COMPLETE -> R.string.ocr_complete
+                OcrState.FAILED -> R.string.ocr_failed
+            },
         )
-        if (isImage) {
-            if (loadedImageAttachmentId != attachment.id) {
-                imageRequest?.dispose()
-                imageRequest = currentBinding.imagePreview.load(openable.contentUri, imageLoader) {
-                    size(MAX_IMAGE_PREVIEW_PIXELS, MAX_IMAGE_PREVIEW_PIXELS)
-                }
-                loadedImageAttachmentId = attachment.id
+        currentBinding.retryOcrButton.isVisible = attachment.ocrState == OcrState.FAILED &&
+            requireContext().appContainer().ocrRepository.isRetryable(attachment.ocrFailureCode)
+        currentBinding.retryOcrButton.isEnabled = !state.isRetryingOcr && !state.isBusy
+
+        val selectedIndex = state.attachments.indexOfFirst { it.id == state.selectedAttachmentId }
+        currentBinding.attachmentPosition.isVisible = state.attachments.size > 1
+        if (selectedIndex >= 0) {
+            currentBinding.attachmentPosition.text = getString(
+                R.string.attachment_position,
+                selectedIndex + 1,
+                state.attachments.size,
+            )
+        }
+        currentBinding.attachmentPager.isUserInputEnabled = !state.isBusy
+        val pages = state.attachments.map { sibling ->
+            val selected = sibling.id == state.selectedAttachmentId
+            AttachmentViewerPage(
+                attachment = sibling,
+                previewUri = openable?.contentUri?.takeIf { selected },
+                selected = selected,
+                loading = selected && state.isLoadingSelection,
+            )
+        }
+        adapter.submitList(pages) {
+            val target = pages.indexOfFirst { it.attachment.id == state.selectedAttachmentId }
+            if (target >= 0 && currentBinding.attachmentPager.currentItem != target) {
+                currentBinding.attachmentPager.setCurrentItem(target, false)
             }
-        } else {
-            imageRequest?.dispose()
-            imageRequest = null
-            loadedImageAttachmentId = null
-            currentBinding.imagePreview.setImageDrawable(null)
         }
     }
 
@@ -217,6 +245,10 @@ class AttachmentViewerFragment : Fragment() {
             shareAttachment()
             true
         }
+        R.id.action_rename_attachment -> {
+            showRenameDialog()
+            true
+        }
         R.id.action_delete_attachment -> {
             MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.delete_attachment_title)
@@ -227,6 +259,55 @@ class AttachmentViewerFragment : Fragment() {
             true
         }
         else -> false
+    }
+
+    private fun showRenameDialog() {
+        val current = viewModel.state.value as? AttachmentViewerState.Content ?: return
+        val attachment = current.selectedAttachment ?: return
+        if (current.isBusy || current.isLoadingSelection) return
+        val dialogBinding = DialogRenameAttachmentBinding.inflate(layoutInflater)
+        dialogBinding.attachmentName.setText(attachment.displayName)
+        dialogBinding.attachmentName.setSelection(
+            0,
+            attachment.displayName.lastIndexOf('.').takeIf { it > 0 }
+                ?: attachment.displayName.length,
+        )
+        val dialog = MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.rename_attachment_title)
+            .setView(dialogBinding.root)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.rename_attachment, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val requestedName = dialogBinding.attachmentName.text?.toString().orEmpty()
+                when (
+                    val result = AttachmentFilenamePolicy.renameForMimeType(
+                        requestedName = requestedName,
+                        currentName = attachment.displayName,
+                        mimeType = attachment.mimeType,
+                    )
+                ) {
+                    is RepositoryResult.Success -> {
+                        viewModel.rename(result.value)
+                        dialog.dismiss()
+                    }
+                    is RepositoryResult.Failure -> {
+                        dialogBinding.attachmentNameLayout.error = if (
+                            (result.error as? com.vaultnote.core.common.AppError.InvalidInput)
+                                ?.reason == "extension_mismatch"
+                        ) {
+                            getString(R.string.attachment_name_extension_mismatch)
+                        } else {
+                            getString(R.string.attachment_name_invalid)
+                        }
+                    }
+                }
+            }
+            dialogBinding.attachmentName.requestFocus()
+            dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
+        }
+        dialog.show()
     }
 
     private fun openExternally() {
@@ -336,15 +417,17 @@ class AttachmentViewerFragment : Fragment() {
                 }
                 (activity as? MainNavigator)?.navigateBack()
             }
-            is AttachmentViewerEvent.ShowError -> binding?.root?.let {
-                Snackbar.make(it, errorMessage(event.reason), Snackbar.LENGTH_LONG).show()
-            }
-            AttachmentViewerEvent.SaveComplete -> binding?.root?.let {
-                Snackbar.make(it, R.string.attachment_saved_copy, Snackbar.LENGTH_LONG).show()
-            }
-            AttachmentViewerEvent.SaveFailed -> binding?.root?.let {
-                Snackbar.make(it, R.string.attachment_save_failed, Snackbar.LENGTH_LONG).show()
-            }
+            is AttachmentViewerEvent.ShowError -> showMessage(errorMessage(event.reason))
+            is AttachmentViewerEvent.RenameComplete -> showMessage(
+                if (event.syncDelayed) {
+                    R.string.attachment_renamed_sync_delayed
+                } else {
+                    R.string.attachment_renamed
+                },
+            )
+            AttachmentViewerEvent.RenameFailed -> showMessage(R.string.attachment_rename_failed)
+            AttachmentViewerEvent.SaveComplete -> showMessage(R.string.attachment_saved_copy)
+            AttachmentViewerEvent.SaveFailed -> showMessage(R.string.attachment_save_failed)
         }
     }
 
@@ -382,7 +465,6 @@ class AttachmentViewerFragment : Fragment() {
         const val RESULT_DELETE_WARNING = "attachment_delete_warning"
         const val RESULT_DELETE_WARNING_REASONS = "warning_reasons"
         private const val ARG_ATTACHMENT_ID = "attachment_id"
-        private const val MAX_IMAGE_PREVIEW_PIXELS = 1_600
         private const val EXTERNAL_LAUNCH_SETTLE_MILLIS = 1_000L
 
         fun newInstance(attachmentId: String): AttachmentViewerFragment =
