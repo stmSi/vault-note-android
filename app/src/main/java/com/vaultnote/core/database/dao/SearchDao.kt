@@ -65,4 +65,86 @@ interface SearchDao {
         snippetTokenLimit: Int,
         limit: Int,
     ): Flow<List<SearchResultRow>>
+
+    @Query(
+        """
+        SELECT
+            vault_items.id AS id,
+            vault_items.title AS title,
+            vault_items.color AS color,
+            vault_items.type AS type,
+            (
+                SELECT attachments.id FROM attachments
+                WHERE attachments.parent_item_id = vault_items.id
+                ORDER BY attachments.created_at ASC, attachments.id ASC
+                LIMIT 1
+            ) AS primary_attachment_id,
+            search_documents.title AS highlighted_title,
+            CASE
+                WHEN search_documents.title COLLATE NOCASE LIKE :subsequencePattern ESCAPE '\' THEN ''
+                WHEN search_documents.attachment_filenames COLLATE NOCASE
+                    LIKE :subsequencePattern ESCAPE '\'
+                    THEN substr(
+                        search_documents.attachment_filenames,
+                        max(
+                            1,
+                            instr(lower(search_documents.attachment_filenames), lower(:anchor)) -
+                                :snippetLeadingCharacters
+                        ),
+                        :snippetCharacterLimit
+                    )
+                WHEN search_documents.tags COLLATE NOCASE LIKE :subsequencePattern ESCAPE '\'
+                    THEN substr(
+                        search_documents.tags,
+                        max(
+                            1,
+                            instr(lower(search_documents.tags), lower(:anchor)) -
+                                :snippetLeadingCharacters
+                        ),
+                        :snippetCharacterLimit
+                    )
+                WHEN search_documents.body COLLATE NOCASE LIKE :subsequencePattern ESCAPE '\'
+                    THEN substr(
+                        search_documents.body,
+                        max(
+                            1,
+                            instr(lower(search_documents.body), lower(:anchor)) -
+                                :snippetLeadingCharacters
+                        ),
+                        :snippetCharacterLimit
+                    )
+                ELSE substr(
+                    search_documents.ocr_text,
+                    max(
+                        1,
+                        instr(lower(search_documents.ocr_text), lower(:anchor)) -
+                            :snippetLeadingCharacters
+                    ),
+                    :snippetCharacterLimit
+                )
+            END AS highlighted_snippet,
+            vault_items.is_archived AS is_archived,
+            vault_items.updated_at AS updated_at
+        FROM search_documents
+        INNER JOIN vault_items ON vault_items.id = search_documents.item_id
+        WHERE vault_items.deleted_at IS NULL
+          AND (
+            search_documents.title COLLATE NOCASE LIKE :subsequencePattern ESCAPE '\'
+            OR search_documents.body COLLATE NOCASE LIKE :subsequencePattern ESCAPE '\'
+            OR search_documents.tags COLLATE NOCASE LIKE :subsequencePattern ESCAPE '\'
+            OR search_documents.attachment_filenames COLLATE NOCASE
+                LIKE :subsequencePattern ESCAPE '\'
+            OR search_documents.ocr_text COLLATE NOCASE LIKE :subsequencePattern ESCAPE '\'
+          )
+        ORDER BY vault_items.is_pinned DESC, vault_items.updated_at DESC, vault_items.id ASC
+        LIMIT :limit
+        """,
+    )
+    fun observeSubsequenceMatches(
+        subsequencePattern: String,
+        anchor: String,
+        snippetLeadingCharacters: Int,
+        snippetCharacterLimit: Int,
+        limit: Int,
+    ): Flow<List<SearchResultRow>>
 }

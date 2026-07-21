@@ -10,6 +10,16 @@ class SearchQueryCompilerTest {
         val compiled = SearchQueryCompiler.compile("p") as SearchQueryCompilation.Valid
 
         assertEquals("p*", compiled.query.matchExpression)
+        assertEquals(null, compiled.query.subsequencePattern)
+    }
+
+    @Test
+    fun `a single term creates an ordered character fallback`() {
+        val compiled = SearchQueryCompiler.compile("bkk") as SearchQueryCompilation.Valid
+
+        assertEquals("bkk*", compiled.query.matchExpression)
+        assertEquals("%b%k%k%", compiled.query.subsequencePattern)
+        assertEquals("b", compiled.query.subsequenceAnchor)
     }
 
     @Test

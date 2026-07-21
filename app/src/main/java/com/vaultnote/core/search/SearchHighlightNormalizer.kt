@@ -40,6 +40,38 @@ internal object SearchHighlightNormalizer {
         return output.toString()
     }
 
+    fun markTypedSubsequences(source: String, terms: List<String>): String {
+        if (source.isEmpty() || terms.isEmpty()) return source
+        val candidates = terms.asSequence()
+            .map(::fold)
+            .filter(String::isNotEmpty)
+            .distinct()
+            .sortedByDescending(String::length)
+            .toList()
+        if (candidates.isEmpty()) return source
+
+        val cleanSource = source
+            .replace(RoomSearchRepository.HIGHLIGHT_START, "")
+            .replace(RoomSearchRepository.HIGHLIGHT_END, "")
+        val output = StringBuilder(cleanSource.length)
+        var cursor = 0
+        TOKEN_PATTERN.findAll(cleanSource).forEach { match ->
+            output.append(cleanSource, cursor, match.range.first)
+            val token = match.value
+            val ranges = candidates.firstNotNullOfOrNull { term ->
+                matchingSubsequenceRanges(token, term)
+            }
+            if (ranges == null) {
+                output.append(token)
+            } else {
+                appendMarkedRanges(output, token, ranges)
+            }
+            cursor = match.range.last + 1
+        }
+        output.append(cleanSource, cursor, cleanSource.length)
+        return output.toString()
+    }
+
     private fun matchingPrefixEnd(source: String, foldedTerm: String): Int? {
         var sourceEnd = 0
         var inspectedCodePoints = 0
@@ -51,6 +83,67 @@ internal object SearchHighlightNormalizer {
             return sourceEnd.takeIf { foldedPrefix.startsWith(foldedTerm) }
         }
         return null
+    }
+
+    private fun matchingSubsequenceRanges(source: String, foldedTerm: String): List<IntRange>? {
+        val target = foldedTerm.codePoints().toArray()
+        if (target.isEmpty()) return null
+        val matched = ArrayList<IntRange>(target.size)
+        var targetIndex = 0
+        var sourceStart = 0
+        var inspectedCodePoints = 0
+        while (
+            sourceStart < source.length &&
+            targetIndex < target.size &&
+            inspectedCodePoints < MAX_INSPECTED_CODE_POINTS
+        ) {
+            val sourceEnd = source.offsetByCodePoints(sourceStart, 1)
+            val foldedSourceCodePoints = fold(source.substring(sourceStart, sourceEnd))
+                .codePoints()
+                .toArray()
+            for (codePoint in foldedSourceCodePoints) {
+                if (targetIndex < target.size && codePoint == target[targetIndex]) {
+                    matched += sourceStart until sourceEnd
+                    targetIndex += 1
+                    break
+                }
+            }
+            sourceStart = sourceEnd
+            inspectedCodePoints += 1
+        }
+        return matched.takeIf { targetIndex == target.size }
+    }
+
+    private fun appendMarkedRanges(
+        output: StringBuilder,
+        source: String,
+        ranges: List<IntRange>,
+    ) {
+        var cursor = 0
+        mergeAdjacent(ranges).forEach { range ->
+            output.append(source, cursor, range.first)
+            output.append(RoomSearchRepository.HIGHLIGHT_START)
+            output.append(source, range.first, range.last + 1)
+            output.append(RoomSearchRepository.HIGHLIGHT_END)
+            cursor = range.last + 1
+        }
+        output.append(source, cursor, source.length)
+    }
+
+    private fun mergeAdjacent(ranges: List<IntRange>): List<IntRange> {
+        if (ranges.size < 2) return ranges
+        val merged = ArrayList<IntRange>(ranges.size)
+        var current = ranges.first()
+        for (next in ranges.drop(1)) {
+            if (current.last + 1 == next.first) {
+                current = current.first..next.last
+            } else {
+                merged += current
+                current = next
+            }
+        }
+        merged += current
+        return merged
     }
 
     private fun fold(value: String): String = Normalizer

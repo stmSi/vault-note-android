@@ -48,6 +48,22 @@ class SearchHighlightNormalizerTest {
         )
     }
 
+    @Test
+    fun `ordered non-adjacent characters are highlighted in their original positions`() {
+        assertEquals(
+            "${start}B${end}ang${start}k${end}o${start}k${end}",
+            SearchHighlightNormalizer.markTypedSubsequences("Bangkok", listOf("bkk")),
+        )
+    }
+
+    @Test
+    fun `subsequence highlighting remains accent insensitive`() {
+        assertEquals(
+            "${start}C${end}af${start}é${end}in${start}e${end}",
+            SearchHighlightNormalizer.markTypedSubsequences("Caféine", listOf("cee")),
+        )
+    }
+
     private companion object {
         const val start = RoomSearchRepository.HIGHLIGHT_START
         const val end = RoomSearchRepository.HIGHLIGHT_END
