@@ -106,7 +106,15 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         incomingImport: IncomingImport,
         cameraCaptureId: String?,
     ): Boolean {
-        if (!canNavigate()) return false
+        if (!appContainer().lockManager.isContentAccessAllowed()) {
+            incomingImports.deferUntilUnlock(
+                incomingImport = incomingImport,
+                parentItemId = parentItemId,
+                cameraCaptureId = cameraCaptureId,
+            )
+            return true
+        }
+        if (supportFragmentManager.isStateSaved) return false
         val token = incomingImports.offer(incomingImport)
         supportFragmentManager.commit {
             setReorderingAllowed(true)
@@ -280,7 +288,11 @@ class MainActivity : AppCompatActivity(), MainNavigator {
             }
         }
         incomingImports.takeDeferred()?.let { deferred ->
-            openImportPreview(parentItemId = null, incomingImport = deferred)
+            openImportPreview(
+                parentItemId = deferred.parentItemId,
+                incomingImport = deferred.incomingImport,
+                cameraCaptureId = deferred.cameraCaptureId,
+            )
         }
     }
 

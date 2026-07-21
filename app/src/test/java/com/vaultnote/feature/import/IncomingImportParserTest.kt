@@ -77,4 +77,27 @@ class IncomingImportParserTest {
         assertEquals(payload, coordinator.take(token))
         assertNull(coordinator.take(token))
     }
+
+    @Test
+    fun `deferred picker result preserves destination until unlock`() {
+        val coordinator = IncomingImportCoordinator()
+        val payload = IncomingImport(
+            sharedText = null,
+            sources = listOf(
+                ImportSource(Uri.parse("content://provider/document/1"), ImportSourceKind.EXTERNAL),
+            ),
+        )
+
+        coordinator.deferUntilUnlock(
+            incomingImport = payload,
+            parentItemId = "note-1",
+            cameraCaptureId = "capture-1",
+        )
+
+        val deferred = requireNotNull(coordinator.takeDeferred())
+        assertEquals(payload, deferred.incomingImport)
+        assertEquals("note-1", deferred.parentItemId)
+        assertEquals("capture-1", deferred.cameraCaptureId)
+        assertNull(coordinator.takeDeferred())
+    }
 }

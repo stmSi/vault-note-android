@@ -27,6 +27,12 @@ data class IncomingImport(
     val sources: List<ImportSource>,
 )
 
+data class DeferredImportRequest(
+    val incomingImport: IncomingImport,
+    val parentItemId: String?,
+    val cameraCaptureId: String?,
+)
+
 internal sealed interface IncomingImportParseResult {
     data object NotAnImport : IncomingImportParseResult
     data object Empty : IncomingImportParseResult
@@ -43,7 +49,7 @@ internal sealed interface IncomingImportParseResult {
 internal class IncomingImportCoordinator : ViewModel() {
     private val nextToken = AtomicLong(1L)
     private val pending = LinkedHashMap<Long, IncomingImport>()
-    private var deferred: IncomingImport? = null
+    private var deferred: DeferredImportRequest? = null
 
     @Synchronized
     fun offer(incomingImport: IncomingImport): Long {
@@ -56,18 +62,22 @@ internal class IncomingImportCoordinator : ViewModel() {
     fun take(token: Long): IncomingImport? = pending.remove(token)
 
     @Synchronized
-    fun deferUntilUnlock(incomingImport: IncomingImport) {
-        deferred = incomingImport
+    fun deferUntilUnlock(
+        incomingImport: IncomingImport,
+        parentItemId: String? = null,
+        cameraCaptureId: String? = null,
+    ) {
+        deferred = DeferredImportRequest(incomingImport, parentItemId, cameraCaptureId)
     }
 
     @Synchronized
-    fun takeDeferred(): IncomingImport? = deferred.also { deferred = null }
+    fun takeDeferred(): DeferredImportRequest? = deferred.also { deferred = null }
 
     @Synchronized
     fun discardAll(): List<IncomingImport> {
         val discarded = buildList {
             addAll(pending.values)
-            deferred?.let(::add)
+            deferred?.incomingImport?.let(::add)
         }
         pending.clear()
         deferred = null

@@ -25,6 +25,26 @@ class AttachmentContentValidatorTest {
     private val validator = AttachmentContentValidator()
 
     @Test
+    fun `accepts PDF preview with spaces and a generic provider MIME`() {
+        val sample = ContentSample(
+            "%PDF-1.7\npreview body".toByteArray(),
+            isTruncated = true,
+        )
+
+        val result = validator.validatePreview(
+            "VaultNote Development Plan.pdf",
+            "application/octet-stream",
+            sample,
+        )
+
+        assertTrue(result is RepositoryResult.Success)
+        assertEquals(
+            AttachmentFormat.PDF,
+            (result as RepositoryResult.Success).value.format,
+        )
+    }
+
+    @Test
     fun `rejects a PDF renamed and claimed as PNG`() {
         val sample = ContentSample("%PDF-1.7\n%%EOF".toByteArray(), isTruncated = false)
 
