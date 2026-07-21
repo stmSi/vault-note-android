@@ -7,12 +7,16 @@ import coil3.request.CachePolicy
 import com.vaultnote.core.common.DefaultDispatcherProvider
 import com.vaultnote.core.common.SystemClock
 import com.vaultnote.core.common.UuidIdGenerator
+import com.vaultnote.core.backup.AndroidBackupRepository
+import com.vaultnote.core.backup.BackupAttachmentReader
+import com.vaultnote.core.backup.BackupRepository
 import com.vaultnote.core.database.VaultDatabase
 import com.vaultnote.core.encryption.AesGcmEncryptionService
 import com.vaultnote.core.encryption.AndroidKeystoreKeyProvider
 import com.vaultnote.core.encryption.EncryptionService
 import com.vaultnote.core.files.AndroidAttachmentFileManager
 import com.vaultnote.core.files.AttachmentFileManager
+import com.vaultnote.core.files.RestoredAttachmentStore
 import com.vaultnote.core.repository.AttachmentRepository
 import com.vaultnote.core.repository.RoomVaultRepository
 import com.vaultnote.core.repository.RoomAttachmentRepository
@@ -47,6 +51,7 @@ interface AppContainer {
     val imageLoader: ImageLoader
     val fileViewer: FileViewer
     val attachmentExporter: AttachmentExporter
+    val backupRepository: BackupRepository
     val lockPolicyRepository: LockPolicyRepository
     val lockManager: VaultLockManager
     val secureAttachmentContentSource: SecureAttachmentContentSource
@@ -142,6 +147,33 @@ class DefaultAppContainer(context: Context) : AppContainer {
             contentSource = secureAttachmentContentSource,
             externalGrants = externalGrants,
             dispatchers = DefaultDispatcherProvider,
+        )
+    }
+
+    override val backupRepository: BackupRepository by lazy(
+        LazyThreadSafetyMode.SYNCHRONIZED,
+    ) {
+        AndroidBackupRepository(
+            context = applicationContext,
+            database = database,
+            attachmentReader = BackupAttachmentReader { attachmentId, relativePath, output ->
+                attachmentFileManager.decryptStored(
+                    attachmentId = attachmentId,
+                    purpose = com.vaultnote.core.encryption.EncryptedFilePurpose.ATTACHMENT,
+                    relativePath = relativePath,
+                    output = output,
+                )
+            },
+            restoredAttachmentStore = RestoredAttachmentStore(
+                context = applicationContext,
+                encryptionService = encryptionService,
+                dispatchers = DefaultDispatcherProvider,
+            ),
+            lockManager = lockManager,
+            syncScheduler = syncScheduler,
+            dispatchers = DefaultDispatcherProvider,
+            clock = SystemClock,
+            idGenerator = UuidIdGenerator,
         )
     }
 

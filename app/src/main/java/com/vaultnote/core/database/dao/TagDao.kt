@@ -19,6 +19,9 @@ interface TagDao {
     @Query("SELECT * FROM tags WHERE normalized_name IN (:normalizedNames)")
     suspend fun getByNormalizedNames(normalizedNames: List<String>): List<TagEntity>
 
+    @Query("SELECT * FROM tags WHERE id = :tagId LIMIT 1")
+    suspend fun getById(tagId: String): TagEntity?
+
     @Query(
         """
         SELECT tags.* FROM tags

@@ -36,6 +36,8 @@ import com.vaultnote.feature.vault.VaultFragment
 import com.vaultnote.feature.vault.VaultSection
 import com.vaultnote.feature.sync.SyncStatusFragment
 import com.vaultnote.feature.conflicts.ConflictsFragment
+import com.vaultnote.feature.backup.BackupExportFragment
+import com.vaultnote.feature.backup.BackupRestoreFragment
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.security.LockPolicy
 import com.vaultnote.core.security.VaultLockState
@@ -185,6 +187,20 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         openContextualScreen(
             fragment = ConflictsFragment.newInstance(),
             backStackName = ConflictsFragment.BACK_STACK_NAME,
+        )
+    }
+
+    override fun openBackupExport() {
+        openContextualScreen(
+            fragment = BackupExportFragment.newInstance(),
+            backStackName = BackupExportFragment.BACK_STACK_NAME,
+        )
+    }
+
+    override fun openBackupRestore() {
+        openContextualScreen(
+            fragment = BackupRestoreFragment.newInstance(),
+            backStackName = BackupRestoreFragment.BACK_STACK_NAME,
         )
     }
 

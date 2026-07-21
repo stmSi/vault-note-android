@@ -82,4 +82,4 @@ The migration is resumable after process death: if a file already has a format-1
 - Insufficient space and unavailable atomic replacement preserve the existing file and keep Room metadata unchanged.
 - Cancellation is propagated and pending output is deleted.
 - The original SHA-256 remains the content checksum; it is not a substitute for GCM authentication.
-- Keystore loss, app-data clearing, or some device/OS failures can make encrypted attachments unrecoverable. Phase 6 encrypted backup is required for independent recovery.
+- Keystore loss, app-data clearing, or some device/OS failures make the installation's envelopes unreadable. A separately stored, valid password-encrypted manual backup can recover their content on another installation; see [Backup format](backup-format.md).

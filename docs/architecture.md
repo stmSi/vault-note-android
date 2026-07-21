@@ -1,8 +1,8 @@
-# VaultNote Phase 5 architecture
+# VaultNote architecture
 
 ## Scope and quality boundary
 
-Phase 5 extends the secured local foundation with durable WorkManager synchronization, replaceable remote interfaces, revision/token conflict detection, preserve-both conflict resolution, and sync status UI. The included remote implementation is an in-memory development fake, not cloud backup. Room note/search/metadata content is still plaintext, so attachment encryption is not presented as whole-vault encryption.
+VaultNote combines a secured local foundation with encrypted attachments, offline full-text search and OCR, durable WorkManager synchronization, preserve-both conflict resolution, and password-encrypted manual backup/restore. The included remote implementation is an in-memory development fake, not cloud backup. Room note/search/metadata content is still plaintext, so attachment and backup encryption are not presented as whole-vault encryption.
 
 The current build has one `:app` module. That keeps startup, ownership, and build configuration straightforward while the product surface is small. Baseline Profile and Macrobenchmark modules remain deferred to Phase 7, after the measured journeys and release behavior are stable enough to make those profiles meaningful.
 
@@ -152,7 +152,7 @@ Before recognition, the authenticated attachment envelope is streamed into a ran
 
 Room conditionally claims `PENDING` or stale `PROCESSING` work by attachment ID and checksum. Success records the source checksum and extracted text, then recomputes the parent aggregate and updates `vault_items` plus `search_documents` in one transaction. A completed unchanged checksum is never selected again. Failures use stable non-sensitive codes; transient engine/memory failures may be explicitly retried, while corrupted, unsupported, or over-limit content is not retried indefinitely. OCR is derived local data and does not increment the user-content revision.
 
-The FTS table duplicates searchable plaintext. This remains a deliberate known Phase 5 security limitation, not encryption.
+The FTS table duplicates searchable plaintext. This remains a deliberate known security limitation, not encryption.
 
 ## Transaction and revision model
 
@@ -182,7 +182,7 @@ Deleting sets `deleted_at`, advances the local revision, and enqueues a delete/t
 
 Repository failures cross the presentation boundary as typed application failures or sealed results; views receive a non-sensitive message and no database/stack details. Cancellation is rethrown and never translated into a generic failure. A failed transaction commits none of its item, search, or queue changes. Attachment cleanup runs in a non-cancellable reconciliation section after checking Room references, while the durable journal covers process termination that no coroutine handler can observe. A post-commit scheduler failure does not roll back valid local data and cannot lose sync intent because that intent is already durable. UI warnings distinguish delayed sync, unavailable derived previews, and pending local file cleanup.
 
-The UI offers retry only where meaningful. Authentication, network, quota, conflict, encryption/decryption, OCR, and policy-storage failures are typed. Backup errors remain a Phase 6 boundary.
+The UI offers retry only where meaningful. Authentication, network, quota, conflict, encryption/decryption, OCR, policy-storage, and backup-validation failures are typed. Wrong password, unsupported version, unsafe path, duplicate/missing entry, checksum damage, invalid data, limits, permission, and storage failures do not expose internal paths or content.
 
 ## Startup and performance decisions
 
@@ -197,13 +197,13 @@ process starts
   → unlocked optional maintenance begins after display
 ```
 
-There is no splash delay and no initial network dependency. Policy loading is a single indexed settings lookup; the initial list query is bounded and returns row projections. Updates flow incrementally from Room to the adapter. File inspection, cleanup, hashing, thumbnail generation, Coil creation, OCR, legacy encryption, backup, and cloud work remain outside the cold-start path. New-file encryption runs only during an explicit import.
+There is no splash delay and no initial network dependency. Policy loading is a single indexed settings lookup; the initial list query is bounded and returns row projections. Updates flow incrementally from Room to the adapter. File inspection, cleanup, hashing, thumbnail generation, Coil creation, OCR, legacy encryption, manual backup/restore, and cloud work remain outside the cold-start path. New-file encryption runs only during an explicit import, export, or restore.
 
 The merged manifest retains only the profile installer’s AndroidX Startup entry; unused EmojiCompat and process-lifecycle initializers are explicitly removed, as is Room’s unused multi-process invalidation service. Any later library that adds a `ContentProvider` must receive the same audit. Performance claims must eventually be measured in release-like builds by the deferred baseline-profile and benchmark modules; debug timing is not an acceptance measurement.
 
-## Security boundary and known Phase 5 risks
+## Security boundary and known risks
 
-Phase 5 retains attachment confidentiality/integrity and a local access gate, but it is not the final VaultNote confidentiality model.
+VaultNote provides attachment and portable-backup confidentiality/integrity plus a local access gate, but it is not a whole-vault confidentiality model.
 
 Mitigations already enforced by the architecture include:
 
@@ -220,6 +220,7 @@ Mitigations already enforced by the architecture include:
 - optional biometric/device-credential lock gates UI and secure provider access;
 - recent-apps content is hidden and screenshot capture is blocked according to policy/platform capability;
 - external open/share requires an explicit action, bounded in-memory token, and narrow temporary URI permission; saving requires an explicit SAF destination.
+- manual backup uses a versioned password-derived AES-256-GCM archive, per-entry nonces and authenticated entry paths; restore validates into private staging before a separate confirmation and live transaction.
 
 Known residual risks include:
 
@@ -227,13 +228,13 @@ Known residual risks include:
 - an unlocked device, root access, OS compromise, debug backup/extraction, or a compromised app process can expose local data;
 - app lock defaults off, and its process-local session is not a per-read Keystore authentication requirement;
 - an explicitly chosen external viewer, share recipient, or save destination receives plaintext and may retain it;
-- key loss or app-data clearing makes attachments unrecoverable because encrypted backup is not implemented;
+- key loss or app-data clearing remains unrecoverable without a valid separately stored manual backup and its password;
 - the in-memory fake backend provides neither remote backup nor multi-device durability;
 - note/title/tag/OCR metadata is not end-to-end encrypted for a future production backend;
-- no encrypted manual backup or restore validation exists yet;
+- a forgotten backup password, weak password, deleted/corrupted only backup, or malicious rollback to an older valid backup is not recoverable or externally detectable;
 - no server revision or conflict-resolution implementation has been exercised against a real backend.
 
-Accordingly, Phase 5 should not be represented as whole-vault encryption or the sole copy of irreplaceable material. The detailed boundaries are documented in [Security model](security-model.md), [Encryption format](encryption-format.md), [Sync protocol](sync-protocol.md), and [Threat model](threat-model.md).
+Accordingly, VaultNote should not be represented as whole-vault encryption or the sole copy of irreplaceable material. The detailed boundaries are documented in [Security model](security-model.md), [Attachment encryption format](encryption-format.md), [Backup format](backup-format.md), [Sync protocol](sync-protocol.md), and [Threat model](threat-model.md).
 
 ## Testing strategy
 
@@ -258,6 +259,7 @@ JVM tests use injected clocks, IDs, dispatchers, file managers, and fakes to mak
 - legacy checksum validation and metadata update only after successful encryption;
 - fail-closed lock startup, monotonic background timeouts, and rotation-safe foreground handling;
 - one-use, attachment-bound, expiring external viewer grants.
+- backup manifest/version strictness, password-derived encryption, per-entry nonce uniqueness, authenticated path binding, corruption with zero plaintext output, path-traversal rejection, staging-before-commit, and preserve-copy item collision behavior.
 
 Room exports schema JSON to a version-controlled directory and supplies it to instrumentation tests. The migration test creates a representative version 1 fixture, executes the complete `1 → 2 → 3` chain, and verifies that original note/attachment data remains, new media metadata defaults to null, and item color defaults to `DEFAULT`. Destructive migration fallback is prohibited.
 
@@ -265,14 +267,14 @@ The standard verification commands and required SDK/JDK versions are listed in t
 
 ## Evolution seams
 
-The Phase 5 boundaries are designed for replacement rather than rewrites:
+The current boundaries are designed for replacement rather than rewrites:
 
 - the in-memory fake backend can be replaced behind `SyncApi`, `AuthProvider`, and `RemoteFileStore` while WorkManager and the durable queue remain authoritative;
 - remote API, authentication, and file storage implementations sit behind interfaces and write successful results back to Room;
 - versioned Keystore aliases and envelopes permit future key rotation without placing bytes in Room;
 - an OCR processor updates the existing aggregate asynchronously and only for a new checksum;
 - the lock manager remains an ephemeral access boundary rather than user-data storage;
-- backup/export reads a stable repository snapshot and encrypted files through Storage Access Framework;
+- backup/export reads a stable paged Room snapshot and authenticated files through Storage Access Framework; restore uses an independent SQLite staging database and a single live Room commit;
 - `:baselineprofile` and `:benchmark` modules measure cold start, scrolling, search, and note opening against a release-like build.
 
 Any future feature that bypasses the Room source of truth, places sensitive binary content in the database, performs optional initialization before first display, or marks synchronization complete without all required remote operations violates this architecture.

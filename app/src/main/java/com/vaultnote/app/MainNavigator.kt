@@ -25,5 +25,9 @@ interface MainNavigator {
 
     fun openConflicts()
 
+    fun openBackupExport()
+
+    fun openBackupRestore()
+
     fun navigateBack()
 }

@@ -69,11 +69,29 @@
             android:textAppearance="?attr/textAppearanceBodySmall" />
 
         <com.google.android.material.button.MaterialButton
-            android:id="@+id/sync_status_button"
+            android:id="@+id/backup_export_button"
             style="@style/Widget.Material3.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/space_l"
+            android:minHeight="@dimen/touch_target"
+            android:text="@string/backup_export_title" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/backup_restore_button"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_s"
+            android:minHeight="@dimen/touch_target"
+            android:text="@string/backup_restore_title" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/sync_status_button"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_s"
             android:minHeight="@dimen/touch_target"
             android:text="@string/sync_status_title" />
 

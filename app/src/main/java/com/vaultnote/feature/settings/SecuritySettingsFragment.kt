@@ -73,6 +73,12 @@ class SecuritySettingsFragment : Fragment() {
         currentBinding.conflictsButton.setOnClickListener {
             (activity as? MainNavigator)?.openConflicts()
         }
+        currentBinding.backupExportButton.setOnClickListener {
+            (activity as? MainNavigator)?.openBackupExport()
+        }
+        currentBinding.backupRestoreButton.setOnClickListener {
+            (activity as? MainNavigator)?.openBackupRestore()
+        }
         applyInsets(currentBinding)
         collectState(currentBinding)
     }
@@ -128,6 +134,10 @@ class SecuritySettingsFragment : Fragment() {
         currentBinding.screenshotSwitch.isEnabled = !state.isSaving
         currentBinding.timeoutInput.isEnabled = !state.isSaving && state.policy.isLockEnabled
         currentBinding.timeoutContainer.isEnabled = !state.isSaving && state.policy.isLockEnabled
+        currentBinding.backupExportButton.isEnabled = !state.isSaving
+        currentBinding.backupRestoreButton.isEnabled = !state.isSaving
+        currentBinding.syncStatusButton.isEnabled = !state.isSaving
+        currentBinding.conflictsButton.isEnabled = !state.isSaving
     }
 
     private fun timeoutOptions(): List<TimeoutOption> = listOf(

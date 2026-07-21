@@ -11,6 +11,9 @@ interface AttachmentFileCleanupDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entry: AttachmentFileCleanupEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(entries: List<AttachmentFileCleanupEntity>)
+
     @Query(
         "SELECT * FROM attachment_file_cleanup_journal WHERE cleanup_id = :cleanupId LIMIT 1",
     )
@@ -46,4 +49,7 @@ interface AttachmentFileCleanupDao {
 
     @Query("DELETE FROM attachment_file_cleanup_journal WHERE cleanup_id = :cleanupId")
     suspend fun deleteByCleanupId(cleanupId: String): Int
+
+    @Query("DELETE FROM attachment_file_cleanup_journal WHERE cleanup_id IN (:cleanupIds)")
+    suspend fun deleteByCleanupIds(cleanupIds: List<String>): Int
 }

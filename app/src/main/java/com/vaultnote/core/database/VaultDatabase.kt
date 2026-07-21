@@ -10,6 +10,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.vaultnote.core.database.dao.AppSettingDao
 import com.vaultnote.core.database.dao.AttachmentDao
 import com.vaultnote.core.database.dao.AttachmentFileCleanupDao
+import com.vaultnote.core.database.dao.BackupDao
 import com.vaultnote.core.database.dao.SearchDao
 import com.vaultnote.core.database.dao.SyncOperationDao
 import com.vaultnote.core.database.dao.SyncStateDao
@@ -47,6 +48,7 @@ abstract class VaultDatabase : RoomDatabase() {
     abstract fun vaultItemDao(): VaultItemDao
     abstract fun attachmentDao(): AttachmentDao
     abstract fun attachmentFileCleanupDao(): AttachmentFileCleanupDao
+    abstract fun backupDao(): BackupDao
     abstract fun tagDao(): TagDao
     abstract fun syncOperationDao(): SyncOperationDao
     abstract fun syncStateDao(): SyncStateDao

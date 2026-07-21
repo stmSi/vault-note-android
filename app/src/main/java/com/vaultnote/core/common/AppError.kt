@@ -90,5 +90,9 @@ sealed interface AppError {
         WRONG_KEY,
         UNSAFE_ARCHIVE_ENTRY,
         INSUFFICIENT_SPACE,
+        DUPLICATE_ENTRY,
+        MISSING_ENTRY,
+        LIMIT_EXCEEDED,
+        INVALID_DATA,
     }
 }
