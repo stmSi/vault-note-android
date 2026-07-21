@@ -40,4 +40,15 @@ class LockPromptSessionViewModelTest {
         session.onPromptFinished()
         assertTrue(session.beginPrompt())
     }
+
+    @Test
+    fun `manual request reclaims a stale prompt session`() {
+        val session = LockPromptSessionViewModel()
+        assertTrue(session.beginPrompt())
+
+        session.beginManualPrompt()
+        session.onPromptFinished()
+
+        assertTrue(session.beginPrompt())
+    }
 }

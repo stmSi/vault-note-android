@@ -22,6 +22,14 @@ internal class LockPromptSessionViewModel : ViewModel() {
         return true
     }
 
+    /**
+     * Reclaims a stale prompt session after an unlock-button tap. A visible system prompt consumes
+     * input, so a tap reaching the app proves that no prompt is currently covering the activity.
+     */
+    fun beginManualPrompt() {
+        promptShowing = true
+    }
+
     fun onPromptFinished() {
         promptShowing = false
     }

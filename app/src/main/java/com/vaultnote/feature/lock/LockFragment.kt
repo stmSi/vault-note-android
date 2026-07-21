@@ -37,7 +37,9 @@ class LockFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         val currentBinding = requireNotNull(binding)
-        currentBinding.unlockButton.setOnClickListener { requestAuthentication() }
+        currentBinding.unlockButton.setOnClickListener {
+            requestAuthentication(isManualRequest = true)
+        }
         applyInsets(currentBinding)
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -57,7 +59,9 @@ class LockFragment : Fragment() {
                         // reconnect the callback without launching a second system prompt.
                         getOrCreateAuthenticator()
                     }
-                    if (promptSession.claimAutomaticAttempt(state)) requestAuthentication()
+                    if (promptSession.claimAutomaticAttempt(state)) {
+                        requestAuthentication(isManualRequest = false)
+                    }
                 }
             }
         }
@@ -85,13 +89,20 @@ class LockFragment : Fragment() {
         binding?.root?.let { Snackbar.make(it, message, Snackbar.LENGTH_LONG).show() }
     }
 
-    private fun requestAuthentication() {
+    private fun requestAuthentication(isManualRequest: Boolean) {
         val prompt = getOrCreateAuthenticator()
         if (!prompt.isAvailable()) {
+            promptSession.onPromptFinished()
             showMessage(R.string.unlock_unavailable)
             return
         }
-        if (!promptSession.beginPrompt()) return
+        val promptClaimed = if (isManualRequest) {
+            promptSession.beginManualPrompt()
+            true
+        } else {
+            promptSession.beginPrompt()
+        }
+        if (!promptClaimed) return
         try {
             prompt.authenticate()
         } catch (_: IllegalStateException) {
