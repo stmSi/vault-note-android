@@ -8,6 +8,9 @@ import com.vaultnote.core.common.DefaultDispatcherProvider
 import com.vaultnote.core.common.SystemClock
 import com.vaultnote.core.common.UuidIdGenerator
 import com.vaultnote.core.database.VaultDatabase
+import com.vaultnote.core.encryption.AesGcmEncryptionService
+import com.vaultnote.core.encryption.AndroidKeystoreKeyProvider
+import com.vaultnote.core.encryption.EncryptionService
 import com.vaultnote.core.files.AndroidAttachmentFileManager
 import com.vaultnote.core.files.AttachmentFileManager
 import com.vaultnote.core.repository.AttachmentRepository
@@ -17,6 +20,13 @@ import com.vaultnote.core.repository.VaultRepository
 import com.vaultnote.core.sync.CoalescingFakeSyncScheduler
 import com.vaultnote.feature.viewer.AndroidFileViewer
 import com.vaultnote.feature.viewer.FileViewer
+import com.vaultnote.core.security.ExternalAttachmentGrantRegistry
+import com.vaultnote.core.security.LockPolicyRepository
+import com.vaultnote.core.security.RoomLockPolicyRepository
+import com.vaultnote.core.security.RoomSecureAttachmentContentSource
+import com.vaultnote.core.security.SecureAttachmentContentSource
+import com.vaultnote.core.security.SecureAttachmentUriFactory
+import com.vaultnote.core.security.VaultLockManager
 
 interface AppContainer {
     val vaultRepository: VaultRepository
@@ -24,6 +34,9 @@ interface AppContainer {
     val attachmentFileManager: AttachmentFileManager
     val imageLoader: ImageLoader
     val fileViewer: FileViewer
+    val lockPolicyRepository: LockPolicyRepository
+    val lockManager: VaultLockManager
+    val secureAttachmentContentSource: SecureAttachmentContentSource
 }
 
 class DefaultAppContainer(context: Context) : AppContainer {
@@ -34,6 +47,22 @@ class DefaultAppContainer(context: Context) : AppContainer {
     private val syncScheduler by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         CoalescingFakeSyncScheduler()
     }
+    private val encryptionService: EncryptionService by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        AesGcmEncryptionService(
+            keyProvider = AndroidKeystoreKeyProvider(),
+            dispatchers = DefaultDispatcherProvider,
+        )
+    }
+    private val secureUris by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        SecureAttachmentUriFactory(applicationContext)
+    }
+    private val externalGrants by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        ExternalAttachmentGrantRegistry()
+    }
+
+    override val lockManager: VaultLockManager by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        VaultLockManager()
+    }
 
     override val attachmentFileManager: AttachmentFileManager by lazy(
         LazyThreadSafetyMode.SYNCHRONIZED,
@@ -41,6 +70,7 @@ class DefaultAppContainer(context: Context) : AppContainer {
         AndroidAttachmentFileManager(
             context = applicationContext,
             dispatchers = DefaultDispatcherProvider,
+            encryptionService = encryptionService,
         )
     }
 
@@ -64,6 +94,7 @@ class DefaultAppContainer(context: Context) : AppContainer {
             dispatchers = DefaultDispatcherProvider,
             clock = SystemClock,
             idGenerator = UuidIdGenerator,
+            secureUris = secureUris,
         )
     }
 
@@ -80,6 +111,28 @@ class DefaultAppContainer(context: Context) : AppContainer {
     }
 
     override val fileViewer: FileViewer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        AndroidFileViewer()
+        AndroidFileViewer(secureUris, externalGrants)
+    }
+
+    override val lockPolicyRepository: LockPolicyRepository by lazy(
+        LazyThreadSafetyMode.SYNCHRONIZED,
+    ) {
+        RoomLockPolicyRepository(
+            settings = database.appSettingDao(),
+            dispatchers = DefaultDispatcherProvider,
+            clock = SystemClock,
+        )
+    }
+
+    override val secureAttachmentContentSource: SecureAttachmentContentSource by lazy(
+        LazyThreadSafetyMode.SYNCHRONIZED,
+    ) {
+        RoomSecureAttachmentContentSource(
+            database = database,
+            fileManager = attachmentFileManager,
+            lockManager = lockManager,
+            externalGrants = externalGrants,
+            dispatchers = DefaultDispatcherProvider,
+        )
     }
 }

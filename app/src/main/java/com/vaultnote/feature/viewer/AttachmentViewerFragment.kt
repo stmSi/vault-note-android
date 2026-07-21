@@ -147,7 +147,7 @@ class AttachmentViewerFragment : Fragment() {
         if (isImage) {
             if (loadedImageAttachmentId != attachment.id) {
                 imageRequest?.dispose()
-                imageRequest = currentBinding.imagePreview.load(openable.contentFile, imageLoader) {
+                imageRequest = currentBinding.imagePreview.load(openable.contentUri, imageLoader) {
                     size(MAX_IMAGE_PREVIEW_PIXELS, MAX_IMAGE_PREVIEW_PIXELS)
                 }
                 loadedImageAttachmentId = attachment.id

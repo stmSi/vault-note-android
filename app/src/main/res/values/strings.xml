@@ -126,4 +126,24 @@
     <string name="no_viewer_available">No installed app can open this file type.</string>
     <string name="viewer_access_denied">The file could not be shared securely with another app.</string>
     <string name="viewer_file_invalid">The attachment is missing or corrupted.</string>
+    <string name="vault_locked_title">Vault locked</string>
+    <string name="vault_locked_message">Use your biometric or device screen lock to continue.</string>
+    <string name="unlock_vault">Unlock</string>
+    <string name="unlock_unavailable">Set a secure device screen lock or biometric before enabling VaultNote lock.</string>
+    <string name="unlock_failed">VaultNote could not verify your identity.</string>
+    <string name="loading_security_settings">Loading security settings</string>
+    <string name="security_settings_title">Security</string>
+    <string name="attachment_security_upgrade_failed">Some older attachments could not be encrypted. VaultNote will retry safely.</string>
+    <string name="enable_app_lock">Require unlock when opening VaultNote</string>
+    <string name="app_lock_description">Unlock with a strong biometric or your device PIN, pattern, or password.</string>
+    <string name="background_lock_timeout">Lock after leaving the app</string>
+    <string name="block_screenshots">Block screenshots</string>
+    <string name="secure_recents_description">Recent-apps previews are always hidden. On Android 12L and older, hiding recents also blocks screenshots.</string>
+    <string name="saving_security_settings">Saving security settings</string>
+    <string name="security_settings_failed">Security settings could not be saved.</string>
+    <string name="security_settings_load_failed">Security settings could not be loaded.</string>
+    <string name="timeout_immediately">Immediately</string>
+    <string name="timeout_30_seconds">After 30 seconds</string>
+    <string name="timeout_1_minute">After 1 minute</string>
+    <string name="timeout_5_minutes">After 5 minutes</string>
 </resources>

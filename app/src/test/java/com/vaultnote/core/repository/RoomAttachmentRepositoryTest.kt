@@ -21,9 +21,13 @@ import com.vaultnote.core.files.AttachmentValidationLevel
 import com.vaultnote.core.files.CleanupResult
 import com.vaultnote.core.files.PreparedAttachment
 import com.vaultnote.core.files.PlannedAttachmentPaths
+import com.vaultnote.core.encryption.CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION
+import com.vaultnote.core.encryption.EncryptedFilePurpose
+import com.vaultnote.core.security.SecureAttachmentUriFactory
 import com.vaultnote.core.sync.SyncScheduleResult
 import com.vaultnote.core.sync.SyncScheduler
 import java.io.File
+import java.io.OutputStream
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -72,6 +76,7 @@ class RoomAttachmentRepositoryTest {
             dispatchers = TestDispatchers,
             clock = IncrementingClock(),
             idGenerator = ids,
+            secureUris = SecureAttachmentUriFactory(context),
         )
     }
 
@@ -94,8 +99,11 @@ class RoomAttachmentRepositoryTest {
         assertEquals("application/pdf", attachment.mimeType)
         assertEquals(9L, attachment.fileSizeBytes)
         assertEquals(2, attachment.pdfPageCount)
-        assertNotNull(attachment.thumbnailFile)
-        assertTrue(repository.getOpenableAttachment(attachment.id).successValue().contentFile.isFile)
+        assertNotNull(attachment.thumbnailUri)
+        assertEquals(
+            "content",
+            repository.getOpenableAttachment(attachment.id).successValue().contentUri.scheme,
+        )
 
         val parent = requireNotNull(vaultRepository.observeNote(itemId).first())
         assertEquals(2L, parent.localRevision)
@@ -325,6 +333,50 @@ class RoomAttachmentRepositoryTest {
         assertEquals(0, files.importCount)
     }
 
+    @Test
+    fun `legacy encryption migration verifies the expected checksum before updating metadata`() =
+        runBlocking {
+            val itemId = vaultRepository.createNote().successValue()
+            val attachmentId = repository.importFromUri(itemId, SOURCE_URI)
+                .successValue()
+                .attachment.id
+            database.openHelper.writableDatabase.execSQL(
+                "UPDATE attachments SET encryption_format_version = 0 WHERE id = ?",
+                arrayOf(attachmentId),
+            )
+
+            val migrated = repository.migrateLegacyAttachments(8).successValue()
+
+            assertEquals(1, migrated)
+            assertEquals(attachmentId, files.lastEncryptionUpgradeId)
+            assertEquals(CHECKSUM, files.lastExpectedPlaintextSha256)
+            assertEquals(
+                CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION,
+                requireNotNull(database.attachmentDao().getById(attachmentId)).encryptionFormatVersion,
+            )
+        }
+
+    @Test
+    fun `failed legacy encryption leaves metadata at the legacy version`() = runBlocking {
+        val itemId = vaultRepository.createNote().successValue()
+        val attachmentId = repository.importFromUri(itemId, SOURCE_URI)
+            .successValue()
+            .attachment.id
+        database.openHelper.writableDatabase.execSQL(
+            "UPDATE attachments SET encryption_format_version = 0 WHERE id = ?",
+            arrayOf(attachmentId),
+        )
+        files.encryptionUpgradeFailure = AppError.CorruptedFile
+
+        val result = repository.migrateLegacyAttachments(8)
+
+        assertTrue(result is RepositoryResult.Failure)
+        assertEquals(
+            0,
+            requireNotNull(database.attachmentDao().getById(attachmentId)).encryptionFormatVersion,
+        )
+    }
+
     private fun <T> RepositoryResult<T>.successValue(): T = when (this) {
         is RepositoryResult.Success -> value
         is RepositoryResult.Failure -> throw AssertionError(
@@ -384,12 +436,17 @@ class RoomAttachmentRepositoryTest {
             private set
         var lastImportedAttachmentId: String? = null
             private set
+        var lastEncryptionUpgradeId: String? = null
+            private set
+        var lastExpectedPlaintextSha256: String? = null
+            private set
         var afterImport: (() -> Unit)? = null
         var importFailure: AppError? = null
         var removeStoredFailure: AppError? = null
         var removeStoredFailuresRemaining: Int = 0
         var preparedLocalPathOverride: String? = null
         var preparedThumbnailPathOverride: String? = null
+        var encryptionUpgradeFailure: AppError? = null
 
         override fun planAttachmentPaths(
             attachmentId: String,
@@ -439,6 +496,7 @@ class RoomAttachmentRepositoryTest {
                     sha256Checksum = CHECKSUM,
                     localRelativePath = localPath,
                     thumbnailRelativePath = thumbnailPath,
+                    encryptionFormatVersion = CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION,
                     format = AttachmentFormat.PDF,
                     imageWidth = null,
                     imageHeight = null,
@@ -473,6 +531,29 @@ class RoomAttachmentRepositoryTest {
             return RepositoryResult.Success(Unit)
         }
 
+        override suspend fun upgradeStoredEncryption(
+            attachmentId: String,
+            localRelativePath: String,
+            thumbnailRelativePath: String?,
+            storedFormatVersion: Int,
+            expectedPlaintextSha256: String,
+        ): RepositoryResult<Int> {
+            lastEncryptionUpgradeId = attachmentId
+            lastExpectedPlaintextSha256 = expectedPlaintextSha256
+            encryptionUpgradeFailure?.let { return RepositoryResult.Failure(it) }
+            return RepositoryResult.Success(CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION)
+        }
+
+        override suspend fun decryptStored(
+            attachmentId: String,
+            purpose: EncryptedFilePurpose,
+            relativePath: String,
+            output: OutputStream,
+        ): RepositoryResult<Unit> {
+            resolve(relativePath).inputStream().use { it.copyTo(output) }
+            return RepositoryResult.Success(Unit)
+        }
+
         override fun resolveAttachmentPath(relativePath: String): RepositoryResult<File> =
             RepositoryResult.Success(resolve(relativePath))
 
@@ -503,12 +584,15 @@ class RoomAttachmentRepositoryTest {
             lastRedundantContentFile = null
             lastRemovedStoredContentFile = null
             lastImportedAttachmentId = null
+            lastEncryptionUpgradeId = null
+            lastExpectedPlaintextSha256 = null
             afterImport = null
             importFailure = null
             removeStoredFailure = null
             removeStoredFailuresRemaining = 0
             preparedLocalPathOverride = null
             preparedThumbnailPathOverride = null
+            encryptionUpgradeFailure = null
         }
     }
 

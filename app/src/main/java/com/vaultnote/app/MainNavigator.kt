@@ -17,5 +17,7 @@ interface MainNavigator {
 
     fun openAttachment(attachmentId: String)
 
+    fun openSecuritySettings()
+
     fun navigateBack()
 }

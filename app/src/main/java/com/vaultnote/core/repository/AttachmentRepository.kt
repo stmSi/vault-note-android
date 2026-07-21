@@ -25,4 +25,7 @@ interface AttachmentRepository {
     suspend fun delete(attachmentId: String): RepositoryResult<AttachmentDeleteResult>
 
     suspend fun reconcileFileCleanup(): RepositoryResult<Unit>
+
+    /** Encrypts a bounded number of legacy format-0 files and returns the migrated row count. */
+    suspend fun migrateLegacyAttachments(limit: Int): RepositoryResult<Int>
 }

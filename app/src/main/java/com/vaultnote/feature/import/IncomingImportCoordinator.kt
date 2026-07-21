@@ -43,6 +43,7 @@ internal sealed interface IncomingImportParseResult {
 internal class IncomingImportCoordinator : ViewModel() {
     private val nextToken = AtomicLong(1L)
     private val pending = LinkedHashMap<Long, IncomingImport>()
+    private var deferred: IncomingImport? = null
 
     @Synchronized
     fun offer(incomingImport: IncomingImport): Long {
@@ -55,9 +56,21 @@ internal class IncomingImportCoordinator : ViewModel() {
     fun take(token: Long): IncomingImport? = pending.remove(token)
 
     @Synchronized
+    fun deferUntilUnlock(incomingImport: IncomingImport) {
+        deferred = incomingImport
+    }
+
+    @Synchronized
+    fun takeDeferred(): IncomingImport? = deferred.also { deferred = null }
+
+    @Synchronized
     fun discardAll(): List<IncomingImport> {
-        val discarded = pending.values.toList()
+        val discarded = buildList {
+            addAll(pending.values)
+            deferred?.let(::add)
+        }
         pending.clear()
+        deferred = null
         return discarded
     }
 }

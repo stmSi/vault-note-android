@@ -1,10 +1,10 @@
-# VaultNote Phase 2 architecture
+# VaultNote Phase 3 architecture
 
 ## Scope and quality boundary
 
-Phase 2 extends the complete offline note foundation with defensive attachment import, app-private file storage, derived thumbnails, sharesheet entry, and attachment viewing. It does not simulate security or cloud behavior that is not implemented: the sync scheduler remains fake and non-networking, Room content is plaintext, and attachment format version `0` is not encrypted.
+Phase 3 extends the offline note and defensive import foundation with Keystore-backed attachment encryption, authenticated streaming, optional app locking, and secure-window controls. It does not simulate cloud behavior that is not implemented: the sync scheduler remains fake and non-networking. Room note/search/metadata content is still plaintext, so attachment encryption is not presented as whole-vault encryption.
 
-The current build has one `:app` module. That keeps startup, ownership, and build configuration straightforward while the product surface is small. Baseline Profile and Macrobenchmark modules remain deferred to the performance phase, after the measured journeys and release behavior are stable enough to make those profiles meaningful.
+The current build has one `:app` module. That keeps startup, ownership, and build configuration straightforward while the product surface is small. Baseline Profile and Macrobenchmark modules remain deferred to Phase 7, after the measured journeys and release behavior are stable enough to make those profiles meaningful.
 
 ## Architectural rules
 
@@ -17,8 +17,8 @@ MainActivity
               ├── VaultRepository
               └── AttachmentRepository
                     ├── AttachmentFileManager
-                    │     ├── validated atomic internal file
-                    │     └── bounded derived thumbnail
+                    │     ├── validated, versioned encrypted file
+                    │     └── encrypted bounded thumbnail
                     └── Room database transaction
                           ├── vault, attachment, and tag tables
                           ├── search aggregate and FTS index
@@ -33,22 +33,23 @@ These rules are invariants, not conventions:
 3. Related state changes are atomic. An item mutation, local revision increment, sync status, search aggregate refresh when needed, and queue coalescing share one Room transaction.
 4. Scheduling happens only after the transaction commits. Scheduling failure leaves the durable operation available for recovery.
 5. Main-thread work is limited to state reduction and view rendering. Database and future file/network operations use explicit injected dispatchers.
-6. Lists are bounded and project only what the row needs. Phase 2 does not load all notes, attachments, or binary data into memory.
+6. Lists are bounded and project only what the row needs. The app does not load all notes, attachments, or binary data into memory.
 7. The fake scheduler never consumes or completes a sync operation. It only coalesces the signal that durable work exists.
 8. External filenames, MIME claims, sizes, and URIs are untrusted. Only a fully validated, checksummed internal copy may be referenced by Room.
-9. RecyclerView binding resolves no content URI, hash, metadata, or thumbnail-generation work; rows receive already prepared display metadata and thumbnail files.
+9. RecyclerView binding performs no hash, metadata parsing, decryption, or thumbnail generation; rows receive prepared metadata and a secure thumbnail content URI.
+10. Attachment plaintext is released only after full AES-GCM authentication and only through the non-exported secure provider while unlocked or under an explicit one-use external grant.
 
 ## Application and dependency lifetime
 
 `VaultNoteApplication` owns a lightweight manual dependency container. The container creates application-scoped dependencies such as the Room database, DAOs, repository, clock/ID facilities, dispatchers, and sync scheduler without retaining an `Activity`, `Fragment`, binding, or View.
 
-Heavy or optional facilities are exposed lazily. `Application.onCreate()` performs no database cleanup, FTS rebuild, file hash, network request, authentication refresh, OCR initialization, image-loader initialization, or backup check. The attachment manager, thumbnail generator, and Coil loader are first created only when an attachment surface needs them. Room itself may open when the first repository query requires it; no migration or file work is attached to scrolling or binding a list row.
+Heavy or optional facilities are exposed lazily. `Application.onCreate()` performs no database cleanup, FTS rebuild, file hash, network request, authentication refresh, OCR initialization, image-loader initialization, encryption migration, or backup check. The attachment manager, crypto service, thumbnail generator, and Coil loader are first created only when their surfaces need them. Room itself may open when the first policy/list query requires it; no migration or file work is attached to scrolling or binding a list row.
 
 ViewModels receive their dependencies through an explicit factory. This keeps construction visible and permits deterministic fake clocks, IDs, dispatchers, and schedulers in tests without a reflection-based dependency-injection framework.
 
 ## Navigation and presentation
 
-The app is a single `MainActivity` with one fragment container and direct `FragmentManager` navigation. The vault list is the root; the note editor, import preview, and attachment viewer are shallow back-stack destinations. Fragment arguments persist only stable IDs and a non-sensitive in-memory import token. Shared text, external URIs, camera paths, and note drafts are never written into saved-state bundles. Activity- or fragment-scoped ViewModels retain pending imports across rotation; process death deliberately expires an unconfirmed external selection. Camera capture saves only an opaque, format-validated UUID in `SavedStateHandle`, allowing the app to reconstruct its own confined cache file after process recreation without persisting a path, URI, or captured bytes. `onStop` still flushes the current note draft to Room.
+The app is a single `MainActivity` with a primary fragment container plus an opaque lock-overlay container and direct `FragmentManager` navigation. The vault list is created only after policy loading permits access. The editor, import preview, attachment viewer, and security settings are shallow destinations. Fragment arguments persist only stable IDs and a non-sensitive in-memory import token. Shared text, external URIs, camera paths, and note drafts are never written into saved-state bundles. Incoming shares received while locked remain only in the activity-scoped coordinator until successful unlock; process death deliberately expires them. Camera capture saves only an opaque, format-validated UUID in `SavedStateHandle`. `onStop` still flushes the current note draft before the lock timeout is applied.
 
 View Binding is scoped to the view lifecycle. A Fragment clears its binding in `onDestroyView`, and Flow collection is tied to `viewLifecycleOwner` with a started-state lifecycle gate. This prevents detached views and activities from being retained.
 
@@ -88,18 +89,18 @@ The preview performs a bounded inspection for a sanitized display name, declared
 1. Reject non-content URIs, malformed Unicode names, path separators, unsupported extensions, incompatible MIME claims, and mismatched signatures.
 2. Enforce the 100 MiB limit during buffered streaming even when the provider omits or lies about size.
 3. Preserve a 32 MiB free-space reserve and recheck it during unknown-length copies.
-4. Calculate SHA-256 in the same pass as the copy and `fsync` the temporary file.
+4. Calculate SHA-256 in the same pass as the confined copy and `fsync` the temporary plaintext file.
 5. Fully validate the stored format. Text must be valid UTF-8; JSON must parse; images/PDFs must expose valid metadata; supported Office/OpenDocument ZIP containers have bounded safe entries and are fully decompressed to verify integrity.
 6. Generate a sampled, orientation-correct thumbnail off-main with at most two concurrent generators. Originals are never decoded at full resolution for list display.
-7. Atomically rename the completed temporary file inside the app-private vault directory.
-8. In one Room transaction, deduplicate the checksum within the parent item, insert attachment metadata, clear the matching cleanup intent, increment the item revision, refresh attachment filename search text, and enqueue both attachment-upload and item-upsert intent.
+7. Encrypt the thumbnail and original independently into version-1 AES-256-GCM envelopes with provider-generated nonces and attachment/purpose-bound AAD; `fsync` and atomically place each ciphertext before deleting its plaintext temporary.
+8. In one Room transaction, deduplicate the checksum within the parent item, insert format-1 attachment metadata, clear the matching cleanup intent, increment the item revision, refresh attachment filename search text, and enqueue both attachment-upload and item-upsert intent.
 9. Request the coalesced scheduler only after commit. Cancellation or an uncertain transaction result checks live path references before deleting anything; an uncommitted final file remains journaled for bounded retry.
 
-Attachment deletion applies the inverse protocol. The metadata transaction first records the relative paths in the cleanup journal, then deletes metadata, updates the parent/search aggregate, and writes sync intent. File deletion happens after commit. A crash or filesystem failure therefore leaves a durable, non-sensitive retry record rather than an undiscoverable plaintext orphan. Reconciliation processes at most 64 journal rows per pass, rechecks Room path references before deletion, never deletes a live attachment, and also removes aged `.pending-*` files. It runs off-main when an attachment surface is used, not during cold startup or row binding.
+Attachment deletion applies the inverse protocol. The metadata transaction first records relative ciphertext paths in the cleanup journal, then deletes metadata, updates the parent/search aggregate, and writes sync intent. File deletion happens after commit. A crash or filesystem failure therefore leaves durable, non-sensitive retry state. Reconciliation processes at most 64 journal rows per pass, rechecks Room references, never deletes a live attachment, and removes aged `.pending-*` files. It runs off-main after unlock or from an attachment surface, not during cold startup or row binding.
 
-Thumbnails are stored separately and passed to Coil as local thumbnail-sized files. The Coil loader is manually constructed and lazy; no network fetcher or startup initializer is added. Opening an attachment first resolves its relative path inside the vault root. Images can render in the attachment viewer, while an explicit external-open action uses `FileProvider`, the canonical MIME type, and a temporary read grant. Room and UI models never contain attachment bytes.
+Thumbnails are stored separately as encrypted thumbnail-sized payloads and passed to Coil through the secure content provider. The Coil loader is manually constructed and lazy; no network fetcher or startup initializer is added, and its memory cache is cleared on lock. Opening an attachment upgrades legacy storage if necessary and returns a secure content URI. An explicit external-open action issues a random attachment-bound one-use token and narrow read grant; `FileProvider` is restricted to system-camera cache capture. Room and UI models never contain attachment bytes or raw file paths.
 
-Format version `0` is an explicit transitional contract, not encryption. Phase 3 must rewrite each attachment and thumbnail into a documented authenticated AES-256-GCM format before changing the version, and must retain atomic replacement and rollback behavior.
+Format version `0` remains only as a legacy migration input. After unlock, maintenance checks the stored original SHA-256 and rewrites at most eight rows per batch. An already rewritten envelope is authenticated and resumed rather than encrypted twice. Room changes to format `1` only after the original and optional thumbnail both authenticate. The byte-level contract and failure behavior are in [Encryption format](encryption-format.md).
 
 ## Room model
 
@@ -140,7 +141,7 @@ The public item ID is a UUID-like string, while FTS external content requires an
 
 The foundation creates and maintains this storage contract but does not expose the Phase 4 search UI. Before that UI accepts arbitrary input, it must tokenize, bound, and quote user text rather than passing raw FTS operator syntax. `unicode61` also does not provide sophisticated Thai or CJK word segmentation; improving language-specific search requires a measured, compatible tokenizer strategy.
 
-The FTS table duplicates searchable plaintext. This remains a deliberate known Phase 2 security limitation, not encryption.
+The FTS table duplicates searchable plaintext. This remains a deliberate known Phase 3 security limitation, not encryption.
 
 ## Transaction and revision model
 
@@ -156,7 +157,7 @@ Repository methods expose domain models and commands rather than Room entities. 
 
 Queue coalescing must not use SQLite `REPLACE`, because replacement is implemented as delete plus insert and can invalidate ownership of in-flight work. The queue instead inserts-if-absent and updates the deduplication slot. A newer local revision replaces retry/lease ownership with a new operation identity. In later phases, completion must be conditional on the worker's claimed operation identity so an old in-flight upload cannot erase a newer edit.
 
-The Phase 2 fake implementation records scheduling demand and exposes pending state for tests. It has no API or credential, performs no network I/O, and leaves operations pending. Attachment imports queue an `UPLOAD_ATTACHMENT` operation plus the item metadata upsert. A future WorkManager implementation must enforce attachment completion before uploading or marking referenced item metadata synchronized.
+The Phase 3 fake implementation records scheduling demand and exposes pending state for tests. It has no API or credential, performs no network I/O, and leaves operations pending. Attachment imports queue an `UPLOAD_ATTACHMENT` operation plus the item metadata upsert. A future WorkManager implementation must enforce attachment completion before uploading or marking referenced item metadata synchronized.
 
 ### Soft deletion
 
@@ -166,7 +167,7 @@ Deleting sets `deleted_at`, advances the local revision, and enqueues a delete/t
 
 Repository failures cross the presentation boundary as typed application failures or sealed results; views receive a non-sensitive message and no database/stack details. Cancellation is rethrown and never translated into a generic failure. A failed transaction commits none of its item, search, or queue changes. Attachment cleanup runs in a non-cancellable reconciliation section after checking Room references, while the durable journal covers process termination that no coroutine handler can observe. A post-commit scheduler failure does not roll back valid local data and cannot lose sync intent because that intent is already durable. UI warnings distinguish delayed sync, unavailable derived previews, and pending local file cleanup.
 
-The UI offers retry only for transient local operations. Authentication, network, quota, encryption, and backup errors are modeled in later phases when those systems exist; they are not fabricated by the fake scheduler.
+The UI offers retry only where meaningful. Authentication, encryption/decryption, and policy-storage errors are typed in Phase 3; network, quota, and backup errors remain future boundaries and are not fabricated by the fake scheduler.
 
 ## Startup and performance decisions
 
@@ -175,19 +176,19 @@ The startup path is intentionally short:
 ```text
 process starts
   → lightweight application/container construction
-  → MainActivity and root Fragment inflate
-  → bounded local Room Flow begins
-  → first loading/local frame draws
-  → optional work may be considered after first display
+  → MainActivity and lock/root containers inflate
+  → local lock policy and bounded list Flow begin
+  → lock or local loading frame draws
+  → unlocked optional maintenance begins after display
 ```
 
-There is no splash delay and no initial network dependency. The initial list query is bounded, returns list-row data rather than full attachment objects, and uses indexed ordering. Updates flow incrementally from Room to the adapter. File inspection, cleanup, hashing, thumbnail generation, Coil creation, OCR, encryption, backup, and cloud work remain outside the cold-start path.
+There is no splash delay and no initial network dependency. Policy loading is a single indexed settings lookup; the initial list query is bounded and returns row projections. Updates flow incrementally from Room to the adapter. File inspection, cleanup, hashing, thumbnail generation, Coil creation, OCR, legacy encryption, backup, and cloud work remain outside the cold-start path. New-file encryption runs only during an explicit import.
 
 The merged manifest retains only the profile installer’s AndroidX Startup entry; unused EmojiCompat and process-lifecycle initializers are explicitly removed, as is Room’s unused multi-process invalidation service. Any later library that adds a `ContentProvider` must receive the same audit. Performance claims must eventually be measured in release-like builds by the deferred baseline-profile and benchmark modules; debug timing is not an acceptance measurement.
 
-## Security boundary and known Phase 2 risks
+## Security boundary and known Phase 3 risks
 
-Phase 2 provides defensive import and data integrity at the application transaction boundary, not the final VaultNote confidentiality model.
+Phase 3 adds attachment confidentiality/integrity and a local access gate, but it is not the final VaultNote confidentiality model.
 
 Mitigations already enforced by the architecture include:
 
@@ -198,19 +199,25 @@ Mitigations already enforced by the architecture include:
 - no sensitive content in expected logs;
 - local edits and deletion tombstones are durable before any future remote action;
 - untrusted imports are bounded, signature-checked, path-confined, copied atomically, and never executed by VaultNote;
-- external viewing requires an explicit action and a narrow temporary URI permission.
+- new attachments and thumbnails use versioned Keystore-backed AES-256-GCM envelopes with authenticated record/purpose context;
+- authentication is verified before any plaintext is streamed;
+- legacy plaintext is checksum-verified and upgraded atomically in bounded resumable batches;
+- optional biometric/device-credential lock gates UI and secure provider access;
+- recent-apps content is hidden and screenshot capture is blocked according to policy/platform capability;
+- external viewing requires an explicit action, one-use in-memory token, and narrow temporary URI permission.
 
 Known residual risks include:
 
 - title, body, tags, and FTS text are plaintext in Room;
 - an unlocked device, root access, OS compromise, debug backup/extraction, or a compromised app process can expose local data;
-- no biometric/device-credential gate, automatic lock, screenshot blocking, or recent-apps concealment exists yet;
-- attachment bytes and thumbnails are plaintext in app-private storage with format version `0`; no Android Keystore envelope, rotation, or authenticated decryption exists yet;
+- app lock defaults off, and its process-local session is not a per-read Keystore authentication requirement;
+- an explicitly chosen external viewer receives plaintext and may retain it;
+- key loss or app-data clearing makes attachments unrecoverable because encrypted backup is not implemented;
 - the fake scheduler provides neither remote backup nor multi-device durability;
 - no encrypted manual backup or restore validation exists yet;
 - no server revision or conflict-resolution implementation has been exercised against a real backend.
 
-Accordingly, Phase 2 should not be represented as a completed secure vault or used as the sole storage location for irreplaceable secrets. Later phases must add security-sensitive behavior with format documentation, corruption tests, key-loss handling, and a full threat model.
+Accordingly, Phase 3 should not be represented as whole-vault encryption or the sole copy of irreplaceable material. The detailed boundaries are documented in [Security model](security-model.md), [Encryption format](encryption-format.md), and [Threat model](threat-model.md).
 
 ## Testing strategy
 
@@ -231,6 +238,10 @@ JVM tests use injected clocks, IDs, dispatchers, file managers, and fakes to mak
 - same-parent attachment deduplication, parent revision updates, search filename refresh, and sync-operation creation.
 - cleanup-journal retention and retry after file deletion failure, plus proof that reconciliation preserves live referenced paths;
 - camera capture recovery from an opaque saved identifier without persisting its path or URI.
+- AES-GCM nonce uniqueness, round trip, context binding, corruption rejection with zero plaintext output, key-version rotation, and missing-key behavior;
+- legacy checksum validation and metadata update only after successful encryption;
+- fail-closed lock startup, monotonic background timeouts, and rotation-safe foreground handling;
+- one-use, attachment-bound, expiring external viewer grants.
 
 Room exports schema JSON to a version-controlled directory and supplies it to instrumentation tests. The migration test creates a representative version 1 fixture, executes `MIGRATION_1_2`, validates the complete version 2 schema, and verifies that original note/attachment data remains while new media metadata defaults to null. Destructive migration fallback is prohibited.
 
@@ -238,13 +249,13 @@ The standard verification commands and required SDK/JDK versions are listed in t
 
 ## Evolution seams
 
-The Phase 2 boundaries are designed for replacement rather than rewrites:
+The Phase 3 boundaries are designed for replacement rather than rewrites:
 
 - the fake scheduler becomes a unique WorkManager chain while the durable queue remains authoritative;
 - remote API, authentication, and file storage implementations sit behind interfaces and write successful results back to Room;
-- attachment format version `0` is atomically rewritten by a Keystore-backed encrypted file store without placing bytes in Room;
+- versioned Keystore aliases and envelopes permit future key rotation without placing bytes in Room;
 - an OCR processor updates the existing aggregate asynchronously and only for a new checksum;
-- lock policy wraps activity visibility without becoming a repository concern;
+- the lock manager remains an ephemeral access boundary rather than user-data storage;
 - backup/export reads a stable repository snapshot and encrypted files through Storage Access Framework;
 - `:baselineprofile` and `:benchmark` modules measure cold start, scrolling, search, and note opening against a release-like build.
 

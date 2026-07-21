@@ -1,71 +1,73 @@
 # VaultNote
 
-VaultNote is an offline-first native Android application for organizing private notes, documents, and media. The current repository contains the Phase 2 foundation: the local note workflow, Room source of truth, persistent synchronization queue, and a defensive app-private attachment import pipeline.
+VaultNote is an offline-first native Android application for private notes and imported files. The repository currently contains Phases 1–3: the local note foundation, defensive attachment handling, and Keystore-backed attachment security.
 
-This is deliberately an intermediate release. Note content is plaintext in Room, and imported files and thumbnails use attachment format version `0`, meaning private internal storage without encryption. Biometric locking, Android Keystore-backed attachment encryption, production synchronization, backup, and restore must be completed before VaultNote is presented as a finished secure vault.
+Phase 3 is a secure intermediate release, not a finished zero-knowledge vault. Imported attachments and thumbnails are encrypted with AES-256-GCM, but note titles, bodies, tags, attachment display names, OCR fields, and the FTS index remain plaintext in the app-private Room database. Production synchronization, encrypted backup/restore, search UI/OCR, and performance modules are later phases.
 
-## Phase 2 capabilities
+## Current capabilities
 
-- Kotlin Android application with one `:app` module, one activity, XML layouts, View Binding, and Fragments.
-- Bounded, observable Notes, Archived, and Trash windows rendered by `RecyclerView`, `ListAdapter`, stable item IDs, and `DiffUtil`, with recoverable Previous/Next navigation.
-- Plain-text note creation and editing with immediate in-memory updates.
-- Version-aware autosave after 400 milliseconds of inactivity, plus an explicit flush when leaving the editor or when its host stops.
-- Pin, favorite, archive, soft-delete, and restore operations.
-- Room entities and indexes for vault items, attachments, tags, item/tag relationships, search documents, FTS, sync operations, sync state, and application settings.
-- Transactional local mutations: an edit, revision change, search-document refresh, and sync-queue update commit together.
-- A persistent, coalescing sync queue. The current fake scheduler records/coalesces work requests but performs no network access and never falsely marks an operation synchronized.
-- Immutable screen state covering loading, empty, content, and error states.
-- Unit-test support and Room schema export/migration-test infrastructure.
-- Dependency locking, a checksum-pinned Gradle wrapper, minified/resource-shrunk release builds, and externally supplied release signing.
-- Android Photo Picker, Storage Access Framework document selection, and system-camera capture without storage or camera permissions.
-- Incoming `ACTION_SEND` and `ACTION_SEND_MULTIPLE` shares for supported files, text, and links, reviewed through an in-memory import preview.
-- Defensive filename normalization, extension/MIME/signature agreement, bounded ZIP-container validation, a 100 MiB streaming limit, low-space checks, and same-note checksum deduplication.
-- Atomic app-private file writes with SHA-256 calculated during the copy, a durable Room cleanup journal for process-death recovery, and no binary payloads in Room.
-- Bounded image/PDF metadata probes and background thumbnail generation with sampled decoding and limited parallelism.
-- Attachment metadata and thumbnail lists in the editor, plus a viewer boundary that grants another app temporary read access only when requested.
-- An explicit Room `1 → 2` migration that preserves Phase 1 data while adding image dimensions and PDF page counts.
-
-Encrypted attachment storage, app locking, search UI, OCR, WorkManager-backed remote synchronization, conflict UI, backup/restore, and performance profile modules remain outside Phase 2. See [Architecture](docs/architecture.md) for boundaries and the staged design.
+- Kotlin, one activity, XML Views, View Binding, Fragments, and lightweight manual dependency injection.
+- Bounded Notes, Archived, and Trash windows using `RecyclerView`, `ListAdapter`, stable IDs, and `DiffUtil`.
+- Plain-text note editing with immediate immutable UI state, 400 ms debounced autosave, and lifecycle/navigation flush.
+- Pin, favorite, archive, soft-delete, restore, tags schema, Room FTS schema, and transactional persistent sync intent.
+- A fake coalescing sync scheduler that performs no network access and never falsely marks data synchronized.
+- Photo Picker, Storage Access Framework, system camera, and `ACTION_SEND`/`ACTION_SEND_MULTIPLE` imports without broad storage or camera permissions.
+- Defensive filename, MIME, extension, signature, UTF-8, ZIP-container, size, space, and path validation.
+- Streaming SHA-256, bounded metadata parsing, sampled background thumbnails, cleanup journaling, and no large blobs in Room.
+- Android Keystore AES-256 keys and versioned AES-GCM envelopes for every new attachment and thumbnail.
+- Unique provider-generated nonces, authenticated header/record/purpose metadata, atomic writes, and authentication before plaintext output.
+- Resumable format-0 migration after unlock, with original checksum validation before encryption and bounded batches.
+- Optional BiometricPrompt/device-credential lock with immediate, 30-second, 1-minute, or 5-minute background timeout.
+- Hidden recent-apps previews, configurable screenshot blocking where the platform permits it, and an opaque accessible lock overlay.
+- A non-exported decrypting content provider and random, one-use, 60-second grants for explicit external viewing.
+- Unit tests for core repository behavior, autosave, import defenses, encryption corruption/rotation, locking, grants, and migration invariants.
+- Exported Room schemas and explicit `1 → 2` migration tests; security Phase 3 requires no database schema change.
+- Dependency locking, checksum-pinned Gradle wrapper, minified/resource-shrunk release builds, and external release-signing support.
 
 ## Project layout
 
 ```text
 VaultNote/
 ├── app/
-│   ├── schemas/                         # Exported Room schemas
+│   ├── schemas/
 │   └── src/
-│       ├── main/
-│       │   ├── java/com/vaultnote/
-│       │   │   ├── app/                # Application, activity, DI container
-│       │   │   ├── core/               # Database, files, repository, sync, common code
-│       │   │   └── feature/            # Vault, editor, import, and viewer screens
-│       │   └── res/                     # XML layouts, theme, strings, drawables
-│       ├── test/                        # JVM unit tests
-│       └── androidTest/                 # Room/instrumentation tests
+│       ├── main/java/com/vaultnote/
+│       │   ├── app/                  # Application, activity, manual container
+│       │   ├── core/
+│       │   │   ├── database/         # Room entities, DAOs, migrations
+│       │   │   ├── encryption/       # Envelope and Keystore implementation
+│       │   │   ├── files/            # Validation, storage, thumbnails
+│       │   │   ├── repository/       # Local-first data operations
+│       │   │   ├── security/         # Lock state and secure content provider
+│       │   │   └── sync/             # Persistent queue and fake scheduler
+│       │   └── feature/              # Vault, editor, import, viewer, lock, settings
+│       ├── test/                      # JVM/Robolectric tests
+│       └── androidTest/               # Room migration/instrumentation tests
 ├── docs/
-│   └── architecture.md
+│   ├── architecture.md
+│   ├── encryption-format.md
+│   ├── security-model.md
+│   └── threat-model.md
 ├── gradle/libs.versions.toml
 ├── build.gradle.kts
 └── settings.gradle.kts
 ```
 
-Only `:app` is present through Phase 2. The `:baselineprofile` and `:benchmark` modules are planned for the performance phase, when they can exercise stable release-like journeys instead of profiling temporary scaffolding.
+Only `:app` exists through Phase 3. `:baselineprofile` and `:benchmark` are deliberately deferred to Phase 7, when release-like user journeys are stable enough to profile.
 
 ## Toolchain
 
-The checked-in build is configured for:
-
-- Android SDK compile/target API 37 and minimum API 26
-- Java 17 bytecode/toolchain compatibility
+- Android SDK compile/target API 37, minimum API 26
+- Java 17
 - Android Gradle Plugin 9.2.1 and Gradle 9.4.1
-- AGP built-in Kotlin with KSP2 for Room code generation
-- Kotlin DSL and a Gradle version catalog
+- AGP built-in Kotlin with KSP2 for Room
+- Kotlin DSL and Gradle version catalog
 
-Install JDK 17 and Android SDK Platform 37, then point `local.properties` at the local Android SDK if Android Studio has not already done so. `local.properties`, signing material, credentials, and secrets must remain uncommitted.
+Install JDK 17 and Android SDK Platform 37 in their normal user/tool locations. `local.properties` may point to the local SDK but is ignored. SDKs, JDKs, Gradle caches, signing material, credentials, and secrets are never installed or saved inside the repository.
 
-## Build and verify
+## Build and verification
 
-Run these commands from the repository root:
+From the repository root:
 
 ```bash
 ./gradlew assembleDebug
@@ -74,55 +76,67 @@ Run these commands from the repository root:
 ./gradlew assembleRelease
 ```
 
-Run device tests, including Room schema validation, on an API 26-or-newer emulator or connected device:
+With an API 26-or-newer emulator or device:
 
 ```bash
 ./gradlew connectedDebugAndroidTest
 ```
 
-These are the commands to execute; this document does not assert that they have passed in a particular checkout or environment. Release artifacts are minified and resource-shrunk, but distributable release signing should be supplied outside the repository.
+The installable debug artifact is generated at:
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
+
+Release builds are minified and resource-shrunk. Distributable release signing must be supplied externally; local signing files and passwords must not enter source control.
 
 ## Architecture in brief
 
 ```text
-XML View / Fragment
-        ↓
-     ViewModel
-        ↓
-  VaultRepository
-        ↓
-Room transaction ─── search aggregate / FTS
-        ↓
+XML Fragment/View
+       ↓
+   ViewModel
+       ↓
+  Repository
+       ↓
+Room transaction + encrypted internal files
+       ↓
 persistent sync operation
-        ↓
-fake coalescing scheduler (through Phase 2)
+       ↓
+fake coalescing scheduler (through Phase 3)
 ```
 
-Room is always the source displayed by the UI. A future backend may update Room through synchronization, but it will never feed a screen directly. Database and file work runs off the main thread, and optional systems are not initialized before the first local screen is drawn.
+Room remains the displayed source of truth. Local edits commit before scheduling, and no initial network, OCR, thumbnail, backup, cleanup, hash, or encryption migration blocks the first frame. Optional security maintenance starts only after the vault has been unlocked and displayed.
 
-## Data and privacy warning
+## Security boundary
 
-Phase 2 does not yet implement the final security model. In particular:
+Attachment format `1` is a documented binary AES-256-GCM envelope. Each file authenticates its format/key version, nonce, length, attachment ID, and attachment-versus-thumbnail purpose. The reader verifies the whole envelope in a first streaming pass, then streams plaintext in a second pass through the same descriptor. It never creates a plaintext viewer file.
 
-- note text, tag names, and the FTS index are plaintext inside the app-private Room database;
-- attachment bytes and derived thumbnails are confined to app-private storage but remain plaintext with encryption format version `0`;
-- the fake sync implementation does not back up or upload data;
-- there is no biometric/device-credential gate or secure recent-apps treatment yet;
-- Android sandboxing does not defend against a rooted device, a compromised OS, or extraction from an unlocked device.
+The optional app lock authenticates with a strong biometric or device credential. Its in-process session gates UI and content-provider access; encryption keys are not configured for authentication on every read. This avoids deliberately tying attachment survival to biometric enrollment state, but it does not protect against code execution inside the unlocked app process.
 
-The project must not log note bodies, search text, credentials, keys, or other private payloads. Future phases add Android Keystore-protected AES-256-GCM attachment encryption, lock controls, a replaceable sync implementation, encrypted backup/restore, and their corresponding threat-model documentation.
+Important residual risks:
+
+- note/search/metadata text is plaintext in Room;
+- rooted devices, OS compromise, debug extraction, malicious accessibility, or a compromised app process are outside the sandbox guarantee;
+- an external viewer can retain plaintext after the user explicitly opens a file;
+- there is no independent encrypted backup or key recovery yet;
+- the fake scheduler provides no remote durability;
+- lock is optional and defaults off, while screenshot blocking defaults on;
+- on Android 12L and older, concealing recents requires `FLAG_SECURE`, so screenshots remain blocked even if the setting is disabled.
+
+Read [Security model](docs/security-model.md), [Encryption format](docs/encryption-format.md), and [Threat model](docs/threat-model.md) before treating the app as storage for sensitive material.
 
 ## Database evolution
 
-Room schema export is enabled and exported schema JSON is version-controlled. Production builds never enable destructive migration fallback. Version 2 adds nullable image width, image height, and PDF page-count metadata plus a non-sensitive attachment-file cleanup journal through an explicit `1 → 2` migration. Migration tests create a version 1 fixture, migrate it, validate the current schema, and verify retained item and attachment data.
+Room schema JSON is version-controlled. Production never uses destructive migration fallback. Version 2 added image/PDF metadata and the durable attachment cleanup journal through explicit `MIGRATION_1_2`. Phase 3 reuses the existing `encryption_format_version` column, so it changes file contents and row values without changing the SQL schema.
 
 ## Development principles
 
-- Preserve local-first behavior: persist locally before requesting synchronization.
-- Keep I/O and Room transactions off the main thread.
-- Do not load an unbounded vault or large binary data into memory.
-- Keep `Application.onCreate()` lightweight and defer optional initialization.
-- Pass dependencies through constructors or the small application container; do not add a reflection-based DI framework without a demonstrated need.
-- Treat cancellation distinctly from failure and avoid swallowing either.
-- Never add hardcoded credentials, broad storage permissions, `MANAGE_EXTERNAL_STORAGE`, or sensitive logging.
-- Add narrow migrations and focused tests whenever the schema or transactional invariants change.
+- Persist locally before requesting synchronization.
+- Keep Room, file, crypto, and future network work off the main thread.
+- Stream large data and keep lists/decoding bounded.
+- Keep `Application.onCreate()` lightweight and optional dependencies lazy.
+- Use explicit constructor injection and the small application container.
+- Propagate cancellation and typed failures; never mark incomplete security work successful.
+- Never add hardcoded credentials, broad storage permissions, `MANAGE_EXTERNAL_STORAGE`, sensitive logs, or plaintext keys.
+- Preserve narrow migrations and add focused tests for security and transactional invariants.

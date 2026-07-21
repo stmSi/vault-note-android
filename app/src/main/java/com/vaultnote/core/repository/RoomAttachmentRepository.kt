@@ -24,13 +24,14 @@ import com.vaultnote.core.database.entity.SearchDocumentEntity
 import com.vaultnote.core.database.entity.SyncOperationEntity
 import com.vaultnote.core.database.entity.TagEntity
 import com.vaultnote.core.database.entity.VaultItemEntity
+import com.vaultnote.core.encryption.CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION
 import com.vaultnote.core.files.AttachmentCategory
 import com.vaultnote.core.files.AttachmentFileManager
 import com.vaultnote.core.files.PreparedAttachment
 import com.vaultnote.core.files.PlannedAttachmentPaths
+import com.vaultnote.core.security.SecureAttachmentUriFactory
 import com.vaultnote.core.sync.SyncScheduleResult
 import com.vaultnote.core.sync.SyncScheduler
-import java.io.File
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -57,6 +58,7 @@ class RoomAttachmentRepository(
     private val dispatchers: DispatcherProvider,
     private val clock: Clock,
     private val idGenerator: IdGenerator,
+    private val secureUris: SecureAttachmentUriFactory,
 ) : AttachmentRepository {
     private val attachmentDao = database.attachmentDao()
     private val cleanupDao = database.attachmentFileCleanupDao()
@@ -258,9 +260,15 @@ class RoomAttachmentRepository(
 
     override suspend fun getOpenableAttachment(
         attachmentId: String,
+    ): RepositoryResult<OpenableAttachment> = cleanupMutex.withLock {
+        getOpenableAttachmentInternal(attachmentId)
+    }
+
+    private suspend fun getOpenableAttachmentInternal(
+        attachmentId: String,
     ): RepositoryResult<OpenableAttachment> = withContext(dispatchers.io) {
         if (attachmentId.isBlank()) return@withContext attachmentNotFound()
-        val attachment = try {
+        var attachment = try {
             attachmentDao.getById(attachmentId)
         } catch (cancellation: CancellationException) {
             throw cancellation
@@ -268,21 +276,16 @@ class RoomAttachmentRepository(
             return@withContext databaseFailure(OPERATION_OPEN_ATTACHMENT, failure)
         } ?: return@withContext attachmentNotFound()
 
-        when (val resolved = fileManager.resolveAttachmentPath(attachment.localEncryptedPath)) {
-            is RepositoryResult.Failure -> resolved
-            is RepositoryResult.Success -> {
-                if (!resolved.value.isFile) {
-                    RepositoryResult.Failure(AppError.CorruptedFile)
-                } else {
-                    RepositoryResult.Success(
-                        OpenableAttachment(
-                            attachment = attachment.toDomain(),
-                            contentFile = resolved.value,
-                        ),
-                    )
-                }
-            }
+        when (val upgraded = ensureEncrypted(attachment)) {
+            is RepositoryResult.Failure -> return@withContext upgraded
+            is RepositoryResult.Success -> attachment = upgraded.value
         }
+        RepositoryResult.Success(
+            OpenableAttachment(
+                attachment = attachment.toDomain(),
+                contentUri = secureUris.attachment(attachment.id),
+            ),
+        )
     }
 
     override suspend fun delete(
@@ -451,6 +454,36 @@ class RoomAttachmentRepository(
             }
         }
     }
+
+    override suspend fun migrateLegacyAttachments(limit: Int): RepositoryResult<Int> =
+        cleanupMutex.withLock {
+            withContext(dispatchers.io) {
+                if (limit !in 1..MAX_SECURITY_MIGRATION_BATCH) {
+                    return@withContext RepositoryResult.Failure(
+                        AppError.InvalidInput("migration_limit", "out_of_range"),
+                    )
+                }
+                val candidates = try {
+                    attachmentDao.getLegacyEncryptionBatch(
+                        CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION,
+                        limit,
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    return@withContext databaseFailure(OPERATION_MIGRATE_ENCRYPTION, failure)
+                }
+                var migrated = 0
+                for (attachment in candidates) {
+                    currentCoroutineContext().ensureActive()
+                    when (val result = ensureEncrypted(attachment)) {
+                        is RepositoryResult.Failure -> return@withContext result
+                        is RepositoryResult.Success -> migrated += 1
+                    }
+                }
+                RepositoryResult.Success(migrated)
+            }
+        }
 
     private suspend fun updateAttachmentSearchText(item: VaultItemEntity) {
         val filenames = attachmentDao.getSearchableFilenames(item.id).orEmpty()
@@ -758,18 +791,53 @@ class RoomAttachmentRepository(
         pdfPageCount = pdfPageCount,
         sha256Checksum = sha256Checksum,
         remotePath = remotePath,
-        thumbnailFile = resolveThumbnail(thumbnailPath),
+        thumbnailUri = thumbnailPath
+            ?.takeIf { encryptionFormatVersion == CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION }
+            ?.let { secureUris.thumbnail(id) },
         encryptionFormatVersion = encryptionFormatVersion,
         uploadStatus = uploadStatus,
         createdAtEpochMillis = createdAt,
         ocrState = ocrState,
     )
 
-    private fun resolveThumbnail(relativePath: String?): File? {
-        if (relativePath == null) return null
-        return when (val resolved = fileManager.resolveThumbnailPath(relativePath)) {
-            is RepositoryResult.Failure -> null
-            is RepositoryResult.Success -> resolved.value.takeIf(File::isFile)
+    private suspend fun ensureEncrypted(
+        attachment: AttachmentEntity,
+    ): RepositoryResult<AttachmentEntity> {
+        if (attachment.encryptionFormatVersion == CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION) {
+            return RepositoryResult.Success(attachment)
+        }
+        val newVersion = when (
+            val upgraded = fileManager.upgradeStoredEncryption(
+                attachmentId = attachment.id,
+                localRelativePath = attachment.localEncryptedPath,
+                thumbnailRelativePath = attachment.thumbnailPath,
+                storedFormatVersion = attachment.encryptionFormatVersion,
+                expectedPlaintextSha256 = attachment.sha256Checksum,
+            )
+        ) {
+            is RepositoryResult.Success -> upgraded.value
+            is RepositoryResult.Failure -> return upgraded
+        }
+        return try {
+            val updated = attachmentDao.updateEncryptionFormat(
+                attachmentId = attachment.id,
+                expectedVersion = attachment.encryptionFormatVersion,
+                newVersion = newVersion,
+            )
+            if (updated == 1) {
+                RepositoryResult.Success(attachment.copy(encryptionFormatVersion = newVersion))
+            } else {
+                val concurrent = attachmentDao.getById(attachment.id)
+                if (concurrent?.encryptionFormatVersion == newVersion) {
+                    RepositoryResult.Success(concurrent)
+                } else {
+                    RepositoryResult.Failure(AppError.DatabaseFailure(OPERATION_MIGRATE_ENCRYPTION))
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            databaseFailure(OPERATION_MIGRATE_ENCRYPTION, failure)
         }
     }
 
@@ -809,6 +877,8 @@ class RoomAttachmentRepository(
         const val OPERATION_OPEN_ATTACHMENT: String = "open_attachment"
         const val OPERATION_DELETE_ATTACHMENT: String = "delete_attachment"
         const val OPERATION_RECONCILE_FILES: String = "reconcile_attachment_files"
+        const val OPERATION_MIGRATE_ENCRYPTION: String = "migrate_attachment_encryption"
         const val CLEANUP_RECONCILE_LIMIT: Int = 64
+        const val MAX_SECURITY_MIGRATION_BATCH: Int = 32
     }
 }

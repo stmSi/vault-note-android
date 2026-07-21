@@ -63,6 +63,10 @@ class VaultFragment : Fragment() {
                 R.id.action_active_notes -> VaultSection.ACTIVE
                 R.id.action_archived_notes -> VaultSection.ARCHIVED
                 R.id.action_trash -> VaultSection.TRASH
+                R.id.action_security_settings -> {
+                    (activity as? MainNavigator)?.openSecuritySettings()
+                    return@setOnMenuItemClickListener true
+                }
                 else -> return@setOnMenuItemClickListener false
             }
             viewModel.selectSection(section)

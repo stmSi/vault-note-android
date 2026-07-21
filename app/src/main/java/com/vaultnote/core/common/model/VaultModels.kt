@@ -1,6 +1,6 @@
 package com.vaultnote.core.common.model
 
-import java.io.File
+import android.net.Uri
 
 enum class VaultItemType {
     NOTE,
@@ -66,7 +66,7 @@ data class VaultAttachment(
     val pdfPageCount: Int?,
     val sha256Checksum: String,
     val remotePath: String?,
-    val thumbnailFile: File?,
+    val thumbnailUri: Uri?,
     val encryptionFormatVersion: Int,
     val uploadStatus: AttachmentUploadStatus,
     val createdAtEpochMillis: Long,
@@ -85,7 +85,7 @@ data class AttachmentDeleteResult(
 
 data class OpenableAttachment(
     val attachment: VaultAttachment,
-    val contentFile: File,
+    val contentUri: Uri,
 )
 
 data class VaultItemSummary(

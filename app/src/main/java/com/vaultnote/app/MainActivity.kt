@@ -1,16 +1,26 @@
 package com.vaultnote.app
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import android.view.View
+import android.view.WindowManager
 import androidx.activity.viewModels
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.view.doOnPreDraw
+import androidx.core.view.isVisible
 import androidx.fragment.app.commit
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.snackbar.Snackbar
 import com.vaultnote.R
 import com.vaultnote.databinding.ActivityMainBinding
 import com.vaultnote.feature.editor.NoteEditorFragment
+import com.vaultnote.feature.lock.LockFragment
+import com.vaultnote.feature.settings.SecuritySettingsFragment
 import com.vaultnote.feature.importing.ImportPreviewFragment
 import com.vaultnote.feature.importing.IncomingImport
 import com.vaultnote.feature.importing.IncomingImportCoordinator
@@ -18,10 +28,19 @@ import com.vaultnote.feature.importing.IncomingImportParseResult
 import com.vaultnote.feature.importing.IncomingImportParser
 import com.vaultnote.feature.viewer.AttachmentViewerFragment
 import com.vaultnote.feature.vault.VaultFragment
+import com.vaultnote.core.common.RepositoryResult
+import com.vaultnote.core.security.LockPolicy
+import com.vaultnote.core.security.VaultLockState
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 
 class MainActivity : AppCompatActivity(), MainNavigator {
     private lateinit var binding: ActivityMainBinding
     private val incomingImports: IncomingImportCoordinator by viewModels()
+    private var securityMigrationJob: Job? = null
+    private var securityMaintenanceStarted = false
+    private var policyErrorShown = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -29,13 +48,17 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         enableEdgeToEdge()
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            setRecentsScreenshotEnabled(false)
+        }
 
-        if (savedInstanceState == null) {
+        if (supportFragmentManager.findFragmentById(R.id.lock_container) == null) {
             supportFragmentManager.commit {
                 setReorderingAllowed(true)
-                replace(R.id.fragment_container, VaultFragment.newInstance())
+                replace(R.id.lock_container, LockFragment.newInstance())
             }
         }
+        observeSecurityState()
         val restoredImport = savedInstanceState != null &&
             supportFragmentManager.findFragmentById(R.id.fragment_container) is ImportPreviewFragment
         if (restoredImport && intent.isIncomingShare()) {
@@ -53,11 +76,22 @@ class MainActivity : AppCompatActivity(), MainNavigator {
 
     override fun onPostResume() {
         super.onPostResume()
+        if (appContainer().lockManager.isContentAccessAllowed()) ensureVaultRootAndDeferredImport()
         binding.root.post { consumeIncomingIntent(intent) }
     }
 
+    override fun onStart() {
+        super.onStart()
+        appContainer().lockManager.onForeground()
+    }
+
+    override fun onStop() {
+        if (!isChangingConfigurations) appContainer().lockManager.onBackground()
+        super.onStop()
+    }
+
     override fun openNoteEditor(itemId: String) {
-        if (supportFragmentManager.isStateSaved) return
+        if (!canNavigate()) return
         supportFragmentManager.commit {
             setReorderingAllowed(true)
             replace(R.id.fragment_container, NoteEditorFragment.newInstance(itemId))
@@ -70,7 +104,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         incomingImport: IncomingImport,
         cameraCaptureId: String?,
     ): Boolean {
-        if (supportFragmentManager.isStateSaved) return false
+        if (!canNavigate()) return false
         val token = incomingImports.offer(incomingImport)
         supportFragmentManager.commit {
             setReorderingAllowed(true)
@@ -86,17 +120,26 @@ class MainActivity : AppCompatActivity(), MainNavigator {
     override fun takePendingImport(token: Long): IncomingImport? = incomingImports.take(token)
 
     override fun completeImport(itemId: String, createdItem: Boolean) {
-        if (supportFragmentManager.isStateSaved) return
+        if (!canNavigate()) return
         supportFragmentManager.popBackStackImmediate()
         if (createdItem) openNoteEditor(itemId)
     }
 
     override fun openAttachment(attachmentId: String) {
-        if (supportFragmentManager.isStateSaved) return
+        if (!canNavigate()) return
         supportFragmentManager.commit {
             setReorderingAllowed(true)
             replace(R.id.fragment_container, AttachmentViewerFragment.newInstance(attachmentId))
             addToBackStack(AttachmentViewerFragment.BACK_STACK_NAME)
+        }
+    }
+
+    override fun openSecuritySettings() {
+        if (!canNavigate()) return
+        supportFragmentManager.commit {
+            setReorderingAllowed(true)
+            replace(R.id.fragment_container, SecuritySettingsFragment.newInstance())
+            addToBackStack(SecuritySettingsFragment.BACK_STACK_NAME)
         }
     }
 
@@ -112,7 +155,11 @@ class MainActivity : AppCompatActivity(), MainNavigator {
             IncomingImportParseResult.NotAnImport -> return
             is IncomingImportParseResult.Accepted -> {
                 clearIncomingIntent(sourceIntent)
-                openImportPreview(parentItemId = null, incomingImport = parsed.incomingImport)
+                if (appContainer().lockManager.isContentAccessAllowed()) {
+                    openImportPreview(parentItemId = null, incomingImport = parsed.incomingImport)
+                } else {
+                    incomingImports.deferUntilUnlock(parsed.incomingImport)
+                }
             }
             IncomingImportParseResult.Empty -> {
                 clearIncomingIntent(sourceIntent)
@@ -147,4 +194,120 @@ class MainActivity : AppCompatActivity(), MainNavigator {
 
     private fun Intent.isIncomingShare(): Boolean =
         action == Intent.ACTION_SEND || action == Intent.ACTION_SEND_MULTIPLE
+
+    private fun observeSecurityState() {
+        val container = appContainer()
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    container.lockPolicyRepository.observe().collect { result ->
+                        when (result) {
+                            is RepositoryResult.Success -> {
+                                policyErrorShown = false
+                                container.lockManager.applyPolicy(result.value)
+                            }
+                            is RepositoryResult.Failure -> {
+                                container.lockManager.applyPolicy(LockPolicy.FAIL_CLOSED)
+                                if (!policyErrorShown) {
+                                    policyErrorShown = true
+                                    showImportError(R.string.operation_failed)
+                                }
+                            }
+                        }
+                    }
+                }
+                launch { container.lockManager.state.collect(::renderSecurityState) }
+            }
+        }
+    }
+
+    private fun renderSecurityState(state: VaultLockState) {
+        val locked = !state.isPolicyLoaded || state.isLocked
+        binding.lockContainer.isVisible = locked
+        binding.fragmentContainer.importantForAccessibility = if (locked) {
+            View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        } else {
+            View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+        }
+        applyWindowSecurity(state, locked)
+        if (locked) {
+            securityMigrationJob?.cancel()
+            securityMigrationJob = null
+            securityMaintenanceStarted = false
+            if (::binding.isInitialized) appContainer().imageLoader.memoryCache?.clear()
+        } else {
+            ensureVaultRootAndDeferredImport()
+            binding.root.doOnPreDraw { root ->
+                root.post {
+                    if (appContainer().lockManager.isContentAccessAllowed()) {
+                        startLegacyEncryptionMigration()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun applyWindowSecurity(state: VaultLockState, locked: Boolean) {
+        val blockScreenshots = locked || state.policy.blockScreenshots ||
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+        if (blockScreenshots) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
+    private fun ensureVaultRootAndDeferredImport() {
+        if (supportFragmentManager.isStateSaved) return
+        if (supportFragmentManager.findFragmentById(R.id.fragment_container) == null) {
+            supportFragmentManager.commit {
+                setReorderingAllowed(true)
+                replace(R.id.fragment_container, VaultFragment.newInstance())
+            }
+        }
+        incomingImports.takeDeferred()?.let { deferred ->
+            openImportPreview(parentItemId = null, incomingImport = deferred)
+        }
+    }
+
+    private fun startLegacyEncryptionMigration() {
+        if (securityMaintenanceStarted || securityMigrationJob?.isActive == true) return
+        securityMaintenanceStarted = true
+        securityMigrationJob = lifecycleScope.launch {
+            if (appContainer().attachmentRepository.reconcileFileCleanup() is RepositoryResult.Failure) {
+                Snackbar.make(
+                    binding.root,
+                    R.string.attachment_security_upgrade_failed,
+                    Snackbar.LENGTH_LONG,
+                ).show()
+            }
+            while (appContainer().lockManager.isContentAccessAllowed()) {
+                when (
+                    val result = appContainer().attachmentRepository
+                        .migrateLegacyAttachments(SECURITY_MIGRATION_BATCH)
+                ) {
+                    is RepositoryResult.Failure -> {
+                        Snackbar.make(
+                            binding.root,
+                            R.string.attachment_security_upgrade_failed,
+                            Snackbar.LENGTH_LONG,
+                        ).show()
+                        break
+                    }
+                    is RepositoryResult.Success -> {
+                        if (result.value < SECURITY_MIGRATION_BATCH) break
+                        yield()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun canNavigate(): Boolean =
+        appContainer().lockManager.isContentAccessAllowed() &&
+            !supportFragmentManager.isStateSaved
+
+    private companion object {
+        const val SECURITY_MIGRATION_BATCH = 8
+    }
 }

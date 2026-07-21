@@ -35,6 +35,9 @@ internal class ConfinedAttachmentStorage(private val vaultRoot: File) {
     fun newAttachmentTemporaryFile(): File =
         File(attachmentsDirectory, ".pending-attachment-${UUID.randomUUID()}.tmp")
 
+    fun newThumbnailPlaintextTemporaryFile(): File =
+        File(thumbnailsDirectory, ".pending-thumbnail-source-${UUID.randomUUID()}.webp")
+
     fun resolveAttachment(relativePath: String): RepositoryResult<File> =
         resolve(relativePath, ATTACHMENTS_DIRECTORY, attachmentsDirectory)
 

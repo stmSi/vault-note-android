@@ -245,7 +245,7 @@ internal class ImportPreviewViewModel(
                     val attachment = result.value.attachment
                     if (
                         !result.value.wasDuplicate &&
-                        attachment.thumbnailFile == null &&
+                        attachment.thumbnailUri == null &&
                         (attachment.mimeType.startsWith("image/") || attachment.mimeType == PDF_MIME_TYPE)
                     ) {
                         warnings += ImportWarningReason.PREVIEW_UNAVAILABLE

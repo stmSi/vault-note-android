@@ -93,7 +93,7 @@ internal class EditorAttachmentAdapter(
             binding.root.setOnClickListener { onOpen(attachment) }
             binding.thumbnail.setImageResource(iconFor(attachment.mimeType))
             binding.thumbnail.contentDescription = null
-            val thumbnail = attachment.thumbnailFile ?: return
+            val thumbnail = attachment.thumbnailUri ?: return
             val size = binding.root.resources.getDimensionPixelSize(R.dimen.editor_attachment_thumbnail)
             disposable = binding.thumbnail.load(thumbnail, imageLoader) {
                 size(size, size)

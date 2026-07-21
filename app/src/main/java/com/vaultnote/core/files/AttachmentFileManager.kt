@@ -12,13 +12,20 @@ import com.vaultnote.core.common.AppError
 import com.vaultnote.core.common.DefaultDispatcherProvider
 import com.vaultnote.core.common.DispatcherProvider
 import com.vaultnote.core.common.RepositoryResult
+import com.vaultnote.core.encryption.AesGcmEncryptionService
+import com.vaultnote.core.encryption.AndroidKeystoreKeyProvider
+import com.vaultnote.core.encryption.CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION
+import com.vaultnote.core.encryption.EncryptedFilePurpose
+import com.vaultnote.core.encryption.EncryptionContext
+import com.vaultnote.core.encryption.EncryptionService
+import com.vaultnote.core.encryption.LEGACY_PLAINTEXT_FORMAT_VERSION
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
+import java.io.OutputStream
+import java.security.MessageDigest
 import java.util.concurrent.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
@@ -36,6 +43,21 @@ interface AttachmentFileManager {
         thumbnailRelativePath: String?,
     ): RepositoryResult<Unit>
 
+    suspend fun upgradeStoredEncryption(
+        attachmentId: String,
+        localRelativePath: String,
+        thumbnailRelativePath: String?,
+        storedFormatVersion: Int,
+        expectedPlaintextSha256: String,
+    ): RepositoryResult<Int>
+
+    suspend fun decryptStored(
+        attachmentId: String,
+        purpose: EncryptedFilePurpose,
+        relativePath: String,
+        output: OutputStream,
+    ): RepositoryResult<Unit>
+
     fun resolveAttachmentPath(relativePath: String): RepositoryResult<File>
 
     fun resolveThumbnailPath(relativePath: String): RepositoryResult<File>
@@ -47,6 +69,10 @@ class AndroidAttachmentFileManager(
     context: Context,
     private val dispatchers: DispatcherProvider = DefaultDispatcherProvider,
     private val thumbnailGenerator: ThumbnailGenerator = AndroidThumbnailGenerator(dispatchers),
+    private val encryptionService: EncryptionService = AesGcmEncryptionService(
+        keyProvider = AndroidKeystoreKeyProvider(),
+        dispatchers = dispatchers,
+    ),
     private val nowMillis: () -> Long = System::currentTimeMillis,
 ) : AttachmentFileManager {
     private val contentResolver: ContentResolver = context.applicationContext.contentResolver
@@ -112,6 +138,7 @@ class AndroidAttachmentFileManager(
         }
 
         val temporary = storage.newAttachmentTemporaryFile()
+        val thumbnailPlaintext = storage.newThumbnailPlaintextTemporaryFile()
         var attachmentCommitted = false
         var thumbnailCreated = false
         try {
@@ -147,11 +174,10 @@ class AndroidAttachmentFileManager(
                 val result = thumbnailGenerator.generate(
                     source = temporary,
                     mimeType = validated.format.canonicalMimeType,
-                    destination = thumbnailDestination,
+                    destination = thumbnailPlaintext,
                 )
             ) {
                 is RepositoryResult.Success -> {
-                    thumbnailCreated = result.value != null
                     result.value
                 }
                 is RepositoryResult.Failure -> {
@@ -160,7 +186,31 @@ class AndroidAttachmentFileManager(
                 }
             }
             coroutineContext.ensureActive()
-            moveAtomically(temporary, destination)
+            if (generatedThumbnail != null) {
+                when (
+                    val encryptedThumbnail = encryptionService.encryptFileAtomically(
+                        plaintext = thumbnailPlaintext,
+                        destination = thumbnailDestination,
+                        context = EncryptionContext(attachmentId, EncryptedFilePurpose.THUMBNAIL),
+                        replaceExisting = false,
+                    )
+                ) {
+                    is RepositoryResult.Success -> thumbnailCreated = true
+                    is RepositoryResult.Failure -> thumbnailWarning = encryptedThumbnail.error
+                }
+            }
+            coroutineContext.ensureActive()
+            when (
+                val encryptedAttachment = encryptionService.encryptFileAtomically(
+                    plaintext = temporary,
+                    destination = destination,
+                    context = EncryptionContext(attachmentId, EncryptedFilePurpose.ATTACHMENT),
+                    replaceExisting = false,
+                )
+            ) {
+                is RepositoryResult.Success -> Unit
+                is RepositoryResult.Failure -> return@withContext encryptedAttachment
+            }
             attachmentCommitted = true
 
             RepositoryResult.Success(
@@ -171,8 +221,8 @@ class AndroidAttachmentFileManager(
                     fileSize = copy.byteCount,
                     sha256Checksum = copy.sha256,
                     localRelativePath = relativePath,
-                    thumbnailRelativePath = if (generatedThumbnail != null) thumbnailRelativePath else null,
-                    encryptionFormatVersion = ATTACHMENT_ENCRYPTION_FORMAT_NONE,
+                    thumbnailRelativePath = if (thumbnailCreated) thumbnailRelativePath else null,
+                    encryptionFormatVersion = CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION,
                     format = validated.format,
                     imageWidth = storedMetadata.imageWidth,
                     imageHeight = storedMetadata.imageHeight,
@@ -194,6 +244,7 @@ class AndroidAttachmentFileManager(
             RepositoryResult.Failure(AppError.CorruptedFile)
         } finally {
             temporary.delete()
+            thumbnailPlaintext.delete()
             if (!attachmentCommitted) destination.delete()
             if (!attachmentCommitted && thumbnailCreated) thumbnailDestination.delete()
         }
@@ -227,6 +278,73 @@ class AndroidAttachmentFileManager(
             RepositoryResult.Success(Unit)
         } catch (_: SecurityException) {
             RepositoryResult.Failure(AppError.PermissionDenied)
+        }
+    }
+
+    override suspend fun upgradeStoredEncryption(
+        attachmentId: String,
+        localRelativePath: String,
+        thumbnailRelativePath: String?,
+        storedFormatVersion: Int,
+        expectedPlaintextSha256: String,
+    ): RepositoryResult<Int> = withContext(dispatchers.io) {
+        if (
+            storedFormatVersion != LEGACY_PLAINTEXT_FORMAT_VERSION &&
+            storedFormatVersion != CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION
+        ) {
+            return@withContext RepositoryResult.Failure(AppError.DecryptionFailure())
+        }
+        val attachment = when (val resolved = storage.resolveAttachment(localRelativePath)) {
+            is RepositoryResult.Success -> resolved.value
+            is RepositoryResult.Failure -> return@withContext resolved
+        }
+        val attachmentUpgrade = ensureEncrypted(
+            attachment,
+            EncryptionContext(attachmentId, EncryptedFilePurpose.ATTACHMENT),
+            storedFormatVersion,
+            expectedPlaintextSha256,
+        )
+        if (attachmentUpgrade is RepositoryResult.Failure) return@withContext attachmentUpgrade
+
+        if (thumbnailRelativePath != null) {
+            val thumbnail = when (val resolved = storage.resolveThumbnail(thumbnailRelativePath)) {
+                is RepositoryResult.Success -> resolved.value
+                is RepositoryResult.Failure -> return@withContext resolved
+            }
+            val thumbnailUpgrade = ensureEncrypted(
+                thumbnail,
+                EncryptionContext(attachmentId, EncryptedFilePurpose.THUMBNAIL),
+                storedFormatVersion,
+                expectedPlaintextSha256 = null,
+            )
+            if (thumbnailUpgrade is RepositoryResult.Failure) return@withContext thumbnailUpgrade
+        }
+        RepositoryResult.Success(CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION)
+    }
+
+    override suspend fun decryptStored(
+        attachmentId: String,
+        purpose: EncryptedFilePurpose,
+        relativePath: String,
+        output: OutputStream,
+    ): RepositoryResult<Unit> = withContext(dispatchers.io) {
+        val file = when (purpose) {
+            EncryptedFilePurpose.ATTACHMENT -> storage.resolveAttachment(relativePath)
+            EncryptedFilePurpose.THUMBNAIL -> storage.resolveThumbnail(relativePath)
+        }
+        val resolved = when (file) {
+            is RepositoryResult.Success -> file.value
+            is RepositoryResult.Failure -> return@withContext file
+        }
+        when (
+            val decrypted = encryptionService.decryptVerifiedTo(
+                encryptedFile = resolved,
+                context = EncryptionContext(attachmentId, purpose),
+                output = output,
+            )
+        ) {
+            is RepositoryResult.Success -> RepositoryResult.Success(Unit)
+            is RepositoryResult.Failure -> decrypted
         }
     }
 
@@ -412,14 +530,61 @@ class AndroidAttachmentFileManager(
     private fun readPdfPageCount(descriptor: ParcelFileDescriptor): Int? =
         PdfRenderer(descriptor).use { renderer -> renderer.pageCount.takeIf { it > 0 } }
 
-    private fun moveAtomically(source: File, destination: File) {
-        try {
-            Files.move(source.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE)
-        } catch (_: AtomicMoveNotSupportedException) {
-            if (destination.exists() || !source.renameTo(destination)) {
-                throw IOException("Atomic rename failed")
+    private suspend fun ensureEncrypted(
+        file: File,
+        context: EncryptionContext,
+        storedFormatVersion: Int,
+        expectedPlaintextSha256: String?,
+    ): RepositoryResult<Unit> {
+        if (!file.isFile) return RepositoryResult.Failure(AppError.CorruptedFile)
+        val hasEnvelope = when (val inspected = encryptionService.hasEnvelope(file)) {
+            is RepositoryResult.Success -> inspected.value
+            is RepositoryResult.Failure -> return inspected
+        }
+        if (hasEnvelope) {
+            return when (val verified = encryptionService.inspectAndVerify(file, context)) {
+                is RepositoryResult.Success -> RepositoryResult.Success(Unit)
+                is RepositoryResult.Failure -> verified
             }
         }
+        if (storedFormatVersion != LEGACY_PLAINTEXT_FORMAT_VERSION) {
+            return RepositoryResult.Failure(AppError.DecryptionFailure())
+        }
+        if (
+            expectedPlaintextSha256 != null &&
+            !plaintextChecksumMatches(file, expectedPlaintextSha256)
+        ) {
+            return RepositoryResult.Failure(AppError.CorruptedFile)
+        }
+        return when (
+            val encrypted = encryptionService.encryptFileAtomically(
+                plaintext = file,
+                destination = file,
+                context = context,
+                replaceExisting = true,
+            )
+        ) {
+            is RepositoryResult.Success -> RepositoryResult.Success(Unit)
+            is RepositoryResult.Failure -> encrypted
+        }
+    }
+
+    private suspend fun plaintextChecksumMatches(file: File, expected: String): Boolean {
+        if (!SHA256_PATTERN.matches(expected)) return false
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered(CHECKSUM_BUFFER_BYTES).use { input ->
+            val buffer = ByteArray(CHECKSUM_BUFFER_BYTES)
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count > 0) digest.update(buffer, 0, count)
+            }
+        }
+        val actual = digest.digest().joinToString(separator = "") { byte ->
+            "%02x".format(byte.toInt() and 0xff)
+        }
+        return actual.equals(expected, ignoreCase = true)
     }
 
     private data class ExternalMetadata(
@@ -438,5 +603,7 @@ class AndroidAttachmentFileManager(
         private const val VAULT_DIRECTORY = "vault"
         private const val PENDING_FILE_PREFIX = ".pending-"
         private const val ABANDONED_FILE_AGE_MILLIS = 24L * 60L * 60L * 1000L
+        private const val CHECKSUM_BUFFER_BYTES = 64 * 1024
+        private val SHA256_PATTERN = Regex("[0-9a-fA-F]{64}")
     }
 }

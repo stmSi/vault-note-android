@@ -29,6 +29,9 @@ interface AppSettingDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(setting: AppSettingEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(setting: AppSettingEntity)
+
     @Update(onConflict = OnConflictStrategy.ABORT)
     suspend fun update(setting: AppSettingEntity): Int
 

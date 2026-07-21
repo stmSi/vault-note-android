@@ -19,4 +19,9 @@
             android:title="@string/trash_title"
             app:showAsAction="never" />
     </group>
+    <item
+        android:id="@+id/action_security_settings"
+        android:icon="@drawable/ic_settings"
+        android:title="@string/security_settings_title"
+        app:showAsAction="ifRoom" />
 </menu>

@@ -46,6 +46,12 @@
         </provider>
 
         <provider
+            android:name=".core.security.SecureAttachmentProvider"
+            android:authorities="${applicationId}.secure-attachments"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
+        <provider
             android:name="androidx.startup.InitializationProvider"
             android:exported="false"
             tools:node="merge">

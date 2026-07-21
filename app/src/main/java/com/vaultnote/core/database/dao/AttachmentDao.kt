@@ -22,6 +22,28 @@ interface AttachmentDao {
     @Query(
         """
         SELECT * FROM attachments
+        WHERE encryption_format_version < :targetVersion
+        ORDER BY created_at ASC, id ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getLegacyEncryptionBatch(targetVersion: Int, limit: Int): List<AttachmentEntity>
+
+    @Query(
+        """
+        UPDATE attachments SET encryption_format_version = :newVersion
+        WHERE id = :attachmentId AND encryption_format_version = :expectedVersion
+        """,
+    )
+    suspend fun updateEncryptionFormat(
+        attachmentId: String,
+        expectedVersion: Int,
+        newVersion: Int,
+    ): Int
+
+    @Query(
+        """
+        SELECT * FROM attachments
         WHERE parent_item_id = :itemId AND sha256_checksum = :checksum
         ORDER BY created_at ASC, id ASC
         LIMIT 1
