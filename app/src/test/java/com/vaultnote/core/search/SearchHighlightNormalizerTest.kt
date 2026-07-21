@@ -8,7 +8,7 @@ class SearchHighlightNormalizerTest {
     fun `prefix query highlights only characters entered by the user`() {
         assertEquals(
             "${start}Pa${end}per receipt",
-            SearchHighlightNormalizer.retainTypedPrefixes(
+            SearchHighlightNormalizer.markTypedPrefixes(
                 "${start}Paper${end} receipt",
                 listOf("pa"),
             ),
@@ -19,7 +19,7 @@ class SearchHighlightNormalizerTest {
     fun `each marked filename token uses its matching query prefix`() {
         assertEquals(
             "${start}Sam${end}sung_scan_${start}202${end}6.pdf",
-            SearchHighlightNormalizer.retainTypedPrefixes(
+            SearchHighlightNormalizer.markTypedPrefixes(
                 "${start}Samsung${end}_scan_${start}2026${end}.pdf",
                 listOf("sam", "202"),
             ),
@@ -30,9 +30,20 @@ class SearchHighlightNormalizerTest {
     fun `accent insensitive match retains the original displayed characters`() {
         assertEquals(
             "${start}Café${end}ine",
-            SearchHighlightNormalizer.retainTypedPrefixes(
+            SearchHighlightNormalizer.markTypedPrefixes(
                 "${start}Caféine${end}",
                 listOf("cafe"),
+            ),
+        )
+    }
+
+    @Test
+    fun `missing FTS markers do not suppress visible prefix highlighting`() {
+        assertEquals(
+            "Receipt for ${start}Pa${end}per.pdf",
+            SearchHighlightNormalizer.markTypedPrefixes(
+                "Receipt for Paper.pdf",
+                listOf("pa"),
             ),
         )
     }

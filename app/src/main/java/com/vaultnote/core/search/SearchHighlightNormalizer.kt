@@ -3,9 +3,9 @@ package com.vaultnote.core.search
 import java.text.Normalizer
 import java.util.Locale
 
-/** Restricts FTS4 whole-token markers to the prefix characters entered by the user. */
+/** Rebuilds deterministic typed-prefix markers without relying on FTS4 marker placement. */
 internal object SearchHighlightNormalizer {
-    fun retainTypedPrefixes(source: String, terms: List<String>): String {
+    fun markTypedPrefixes(source: String, terms: List<String>): String {
         if (source.isEmpty() || terms.isEmpty()) return source
         val candidates = terms.asSequence()
             .map(::fold)
@@ -15,40 +15,28 @@ internal object SearchHighlightNormalizer {
             .toList()
         if (candidates.isEmpty()) return source
 
-        val output = StringBuilder(source.length)
+        val cleanSource = source
+            .replace(RoomSearchRepository.HIGHLIGHT_START, "")
+            .replace(RoomSearchRepository.HIGHLIGHT_END, "")
+        val output = StringBuilder(cleanSource.length)
         var cursor = 0
-        while (cursor < source.length) {
-            val markerStart = source.indexOf(RoomSearchRepository.HIGHLIGHT_START, cursor)
-            if (markerStart < 0) {
-                output.append(source, cursor, source.length)
-                break
-            }
-            output.append(source, cursor, markerStart)
-            val contentStart = markerStart + RoomSearchRepository.HIGHLIGHT_START.length
-            val markerEnd = source.indexOf(RoomSearchRepository.HIGHLIGHT_END, contentStart)
-            if (markerEnd < 0) {
-                output.append(source, markerStart, source.length)
-                break
-            }
-
-            val matchedToken = source.substring(contentStart, markerEnd)
+        TOKEN_PATTERN.findAll(cleanSource).forEach { match ->
+            output.append(cleanSource, cursor, match.range.first)
+            val matchedToken = match.value
             val prefixEnd = candidates.firstNotNullOfOrNull { foldedTerm ->
                 matchingPrefixEnd(matchedToken, foldedTerm)
             }
             if (prefixEnd == null) {
-                output.append(
-                    source,
-                    markerStart,
-                    markerEnd + RoomSearchRepository.HIGHLIGHT_END.length,
-                )
+                output.append(matchedToken)
             } else {
                 output.append(RoomSearchRepository.HIGHLIGHT_START)
                 output.append(matchedToken, 0, prefixEnd)
                 output.append(RoomSearchRepository.HIGHLIGHT_END)
                 output.append(matchedToken, prefixEnd, matchedToken.length)
             }
-            cursor = markerEnd + RoomSearchRepository.HIGHLIGHT_END.length
+            cursor = match.range.last + 1
         }
+        output.append(cleanSource, cursor, cleanSource.length)
         return output.toString()
     }
 
@@ -79,4 +67,5 @@ internal object SearchHighlightNormalizer {
         .lowercase(Locale.ROOT)
 
     private const val MAX_INSPECTED_CODE_POINTS = SearchQueryCompiler.MAX_TERM_CODE_POINTS * 2
+    private val TOKEN_PATTERN = Regex("[\\p{L}\\p{N}]+")
 }

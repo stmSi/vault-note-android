@@ -50,11 +50,11 @@ class RoomSearchRepository(
             itemId = id,
             title = title,
             color = color,
-            highlightedTitle = SearchHighlightNormalizer.retainTypedPrefixes(
+            highlightedTitle = SearchHighlightNormalizer.markTypedPrefixes(
                 highlightedTitle,
                 displayTerms,
             ),
-            highlightedSnippet = SearchHighlightNormalizer.retainTypedPrefixes(
+            highlightedSnippet = SearchHighlightNormalizer.markTypedPrefixes(
                 highlightedSnippet,
                 displayTerms,
             ),
