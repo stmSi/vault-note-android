@@ -431,7 +431,9 @@ class NoteEditorFragment : Fragment() {
             isRendering = false
         }
 
-        currentBinding.toolbar.title = ""
+        currentBinding.toolbar.title = state.draft.title.ifBlank {
+            getString(R.string.untitled_note)
+        }
         val colorStyle = state.draft.color.toStyle()
         val surfaceColor = ContextCompat.getColor(requireContext(), colorStyle.surfaceColor)
         val titleColor = ContextCompat.getColor(requireContext(), colorStyle.titleColor)
