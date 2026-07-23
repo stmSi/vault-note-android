@@ -1,12 +1,15 @@
 package com.vaultnote.feature.editor
 
+import android.graphics.Rect
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.core.view.doOnNextLayout
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.textfield.TextInputEditText
 import com.vaultnote.core.common.model.NoteBlock
 import com.vaultnote.core.common.model.NoteBlockType
 import com.vaultnote.core.common.model.NoteBodyDocument
@@ -148,12 +151,16 @@ internal class NoteBlockAdapter(
                     } else {
                         boundId?.let { id -> updateText(id, value) }
                     }
+                    text.requestCursorVisibility()
                 }
             }.also(text::addTextChangedListener)
             checkBox.setOnCheckedChangeListener { _, checked ->
                 if (!rendering) boundId?.let { id -> updateChecked(id, checked) }
             }
-            text.setOnFocusChangeListener { _, focused -> onBodyFocusChanged(focused) }
+            text.setOnFocusChangeListener { _, focused ->
+                onBodyFocusChanged(focused)
+                if (focused) text.requestCursorVisibility()
+            }
             text.setOnKeyListener { _, keyCode, event ->
                 keyCode == KeyEvent.KEYCODE_DEL &&
                     event.action == KeyEvent.ACTION_DOWN &&
@@ -171,4 +178,30 @@ internal class NoteBlockAdapter(
             boundId = null
         }
     }
+}
+
+internal fun TextInputEditText.requestCursorVisibility() {
+    post {
+        if (!isFocused) return@post
+        if (isLayoutRequested || layout == null) {
+            doOnNextLayout { revealCursorImmediately() }
+        } else {
+            revealCursorImmediately()
+        }
+    }
+}
+
+private fun TextInputEditText.revealCursorImmediately() {
+    if (!isFocused) return
+    val textLayout = layout ?: return
+    val cursorOffset = selectionStart.coerceIn(0, text?.length ?: 0)
+    val cursorLine = textLayout.getLineForOffset(cursorOffset)
+    val breathingRoom = resources.getDimensionPixelSize(com.vaultnote.R.dimen.space_s)
+    val cursorBounds = Rect(
+        0,
+        (totalPaddingTop + textLayout.getLineTop(cursorLine) - breathingRoom).coerceAtLeast(0),
+        width,
+        totalPaddingTop + textLayout.getLineBottom(cursorLine) + breathingRoom,
+    )
+    requestRectangleOnScreen(cursorBounds, true)
 }

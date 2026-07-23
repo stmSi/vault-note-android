@@ -79,6 +79,7 @@ class NoteEditorFragment : Fragment() {
     private var attachmentAdapter: EditorAttachmentAdapter? = null
     private var bodyEditorHasFocus = false
     private var keyboardIsVisible = false
+    private var metadataPanelSelection = MetadataPanelSelection.ATTACHMENTS
     private lateinit var noteBlockAdapter: NoteBlockAdapter
     private val cameraCaptureManager: CameraCaptureManager by lazy(LazyThreadSafetyMode.NONE) {
         CameraCaptureManager(requireContext())
@@ -302,11 +303,9 @@ class NoteEditorFragment : Fragment() {
             noteBlockAdapter.addBlock(NoteBlockType.CHECKLIST_ITEM)
         }
         currentBinding.tagsButton.setOnClickListener {
-            leaveBodyTypingMode(currentBinding)
             toggleMetadataPanel(currentBinding, showTags = true)
         }
         currentBinding.attachmentsButton.setOnClickListener {
-            leaveBodyTypingMode(currentBinding)
             toggleMetadataPanel(currentBinding, showTags = false)
         }
         currentBinding.datesButton.setOnClickListener {
@@ -335,12 +334,22 @@ class NoteEditorFragment : Fragment() {
         currentBinding: FragmentNoteEditorBinding,
         showTags: Boolean,
     ) {
+        val requestedPanel = if (showTags) {
+            MetadataPanelSelection.TAGS
+        } else {
+            MetadataPanelSelection.ATTACHMENTS
+        }
         val samePanelVisible = currentBinding.metadataPanel.isVisible &&
-            currentBinding.tagsContainer.isVisible == showTags
-        currentBinding.metadataPanel.isVisible = !samePanelVisible
-        currentBinding.tagsContainer.isVisible = !samePanelVisible && showTags
-        currentBinding.attachmentsSection.isVisible = !samePanelVisible && !showTags
-        if (!samePanelVisible && showTags) currentBinding.tagsInput.requestFocus()
+            metadataPanelSelection == requestedPanel
+        metadataPanelSelection = if (samePanelVisible) {
+            MetadataPanelSelection.NONE
+        } else {
+            requestedPanel
+        }
+        leaveBodyTypingMode(currentBinding)
+        if (metadataPanelSelection == MetadataPanelSelection.TAGS) {
+            currentBinding.tagsInput.requestFocus()
+        }
     }
 
     private fun leaveBodyTypingMode(currentBinding: FragmentNoteEditorBinding) {
@@ -353,7 +362,14 @@ class NoteEditorFragment : Fragment() {
 
     private fun updateEditorChrome(currentBinding: FragmentNoteEditorBinding) {
         val isTypingBody = bodyEditorHasFocus && keyboardIsVisible
-        if (isTypingBody) currentBinding.metadataPanel.isVisible = false
+        val showMetadata = currentBinding.bodyBlocks.isVisible &&
+            !bodyEditorHasFocus &&
+            metadataPanelSelection != MetadataPanelSelection.NONE
+        currentBinding.metadataPanel.isVisible = showMetadata
+        currentBinding.attachmentsSection.isVisible =
+            showMetadata && metadataPanelSelection == MetadataPanelSelection.ATTACHMENTS
+        currentBinding.tagsContainer.isVisible =
+            showMetadata && metadataPanelSelection == MetadataPanelSelection.TAGS
         currentBinding.toolbar.isVisible = !isTypingBody
     }
 
@@ -938,6 +954,7 @@ class NoteEditorFragment : Fragment() {
             val safeInsets = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
             )
+            val keyboardInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
             val isRtl = currentBinding.root.layoutDirection == View.LAYOUT_DIRECTION_RTL
             val startInset = if (isRtl) safeInsets.right else safeInsets.left
             val endInset = if (isRtl) safeInsets.left else safeInsets.right
@@ -947,8 +964,12 @@ class NoteEditorFragment : Fragment() {
             )
             currentBinding.toolbar.updatePadding(top = toolbarTopPadding + safeInsets.top)
             currentBinding.editorActionBar.updatePadding(
-                bottom = actionBarBottomPadding + safeInsets.bottom,
+                bottom = actionBarBottomPadding + maxOf(safeInsets.bottom, keyboardInsets.bottom),
             )
+            if (keyboardIsVisible) {
+                (currentBinding.bodyBlocks.findFocus() as? TextInputEditText)
+                    ?.requestCursorVisibility()
+            }
             insets
         }
         ViewCompat.requestApplyInsets(currentBinding.root)
@@ -965,5 +986,11 @@ class NoteEditorFragment : Fragment() {
         fun newInstance(itemId: String): NoteEditorFragment = NoteEditorFragment().apply {
             arguments = Bundle().apply { putString(ARG_ITEM_ID, itemId) }
         }
+    }
+
+    private enum class MetadataPanelSelection {
+        NONE,
+        ATTACHMENTS,
+        TAGS,
     }
 }
