@@ -21,9 +21,10 @@ import android.view.ViewGroup
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.view.ViewCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.get
 import androidx.core.view.isVisible
 import androidx.core.view.size
@@ -76,6 +77,8 @@ class NoteEditorFragment : Fragment() {
     private var lastTitleInputValue: String? = null
     private var lastTagsInputValue: String? = null
     private var attachmentAdapter: EditorAttachmentAdapter? = null
+    private var bodyEditorHasFocus = false
+    private var keyboardIsVisible = false
     private lateinit var noteBlockAdapter: NoteBlockAdapter
     private val cameraCaptureManager: CameraCaptureManager by lazy(LazyThreadSafetyMode.NONE) {
         CameraCaptureManager(requireContext())
@@ -146,6 +149,7 @@ class NoteEditorFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         val currentBinding = requireNotNull(binding)
+        currentBinding.root.requestFocus()
         configureToolbar(currentBinding)
         configureBlockEditor(currentBinding)
         configureInputs(currentBinding)
@@ -180,6 +184,8 @@ class NoteEditorFragment : Fragment() {
         binding?.attachmentsList?.adapter = null
         binding?.bodyBlocks?.adapter = null
         attachmentAdapter = null
+        bodyEditorHasFocus = false
+        keyboardIsVisible = false
         binding = null
         lastTitleInputValue = null
         lastTagsInputValue = null
@@ -296,18 +302,29 @@ class NoteEditorFragment : Fragment() {
             noteBlockAdapter.addBlock(NoteBlockType.CHECKLIST_ITEM)
         }
         currentBinding.tagsButton.setOnClickListener {
+            leaveBodyTypingMode(currentBinding)
             toggleMetadataPanel(currentBinding, showTags = true)
         }
         currentBinding.attachmentsButton.setOnClickListener {
+            leaveBodyTypingMode(currentBinding)
             toggleMetadataPanel(currentBinding, showTags = false)
         }
-        currentBinding.datesButton.setOnClickListener { showDatesDialog() }
+        currentBinding.datesButton.setOnClickListener {
+            leaveBodyTypingMode(currentBinding)
+            showDatesDialog()
+        }
     }
 
     private fun configureBlockEditor(currentBinding: FragmentNoteEditorBinding) {
         noteBlockAdapter = NoteBlockAdapter(
             onDocumentChanged = viewModel::onBodyDocumentChanged,
-            onBodyFocusChanged = { focused -> setFocusMode(currentBinding, focused) },
+            onBodyFocusChanged = {
+                currentBinding.bodyBlocks.post {
+                    if (binding !== currentBinding) return@post
+                    bodyEditorHasFocus = currentBinding.bodyBlocks.hasFocus()
+                    updateEditorChrome(currentBinding)
+                }
+            },
         )
         currentBinding.bodyBlocks.layoutManager = LinearLayoutManager(requireContext())
         currentBinding.bodyBlocks.adapter = noteBlockAdapter
@@ -326,10 +343,18 @@ class NoteEditorFragment : Fragment() {
         if (!samePanelVisible && showTags) currentBinding.tagsInput.requestFocus()
     }
 
-    private fun setFocusMode(currentBinding: FragmentNoteEditorBinding, focused: Boolean) {
-        if (focused) currentBinding.metadataPanel.isVisible = false
-        currentBinding.toolbar.isVisible = !focused
-        currentBinding.titleContainer.isVisible = !focused
+    private fun leaveBodyTypingMode(currentBinding: FragmentNoteEditorBinding) {
+        currentBinding.root.requestFocus()
+        WindowInsetsControllerCompat(requireActivity().window, currentBinding.root)
+            .hide(WindowInsetsCompat.Type.ime())
+        bodyEditorHasFocus = false
+        updateEditorChrome(currentBinding)
+    }
+
+    private fun updateEditorChrome(currentBinding: FragmentNoteEditorBinding) {
+        val isTypingBody = bodyEditorHasFocus && keyboardIsVisible
+        if (isTypingBody) currentBinding.metadataPanel.isVisible = false
+        currentBinding.toolbar.isVisible = !isTypingBody
     }
 
     private fun configureBackHandling() {
@@ -365,6 +390,7 @@ class NoteEditorFragment : Fragment() {
         currentBinding.titleContainer.isVisible = isContent
         currentBinding.bodyBlocks.isVisible = isContent
         currentBinding.editorActionBar.isVisible = isContent
+        updateEditorChrome(currentBinding)
 
         when (state) {
             EditorUiState.Loading -> setEditorActionsEnabled(currentBinding, false)
@@ -905,6 +931,8 @@ class NoteEditorFragment : Fragment() {
         val toolbarTopPadding = currentBinding.toolbar.paddingTop
         val actionBarBottomPadding = currentBinding.editorActionBar.paddingBottom
         ViewCompat.setOnApplyWindowInsetsListener(currentBinding.root) { _, insets ->
+            keyboardIsVisible = insets.isVisible(WindowInsetsCompat.Type.ime())
+            updateEditorChrome(currentBinding)
             val safeInsets = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
             )
