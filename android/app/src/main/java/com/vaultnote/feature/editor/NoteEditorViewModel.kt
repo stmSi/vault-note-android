@@ -6,11 +6,18 @@ import androidx.lifecycle.viewModelScope
 import com.vaultnote.core.common.AppError
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.VaultConstraints
+import com.vaultnote.core.common.NoteBodyCodec
+import com.vaultnote.core.common.model.DatedEntryDraft
+import com.vaultnote.core.common.model.DatedEntry
+import com.vaultnote.core.common.model.NoteBlock
+import com.vaultnote.core.common.model.NoteBlockType
+import com.vaultnote.core.common.model.NoteBodyDocument
 import com.vaultnote.core.common.isRetryableLocalDatabaseFailure
 import com.vaultnote.core.common.model.VaultNote
 import com.vaultnote.core.common.model.VaultItemColor
 import com.vaultnote.core.repository.VaultRepository
 import java.util.concurrent.CancellationException
+import java.util.UUID
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
@@ -24,11 +31,13 @@ import kotlinx.coroutines.launch
 internal data class EditorDraft(
     val title: String,
     val body: String,
+    val bodyDocument: NoteBodyDocument,
     val tagsText: String,
     val color: VaultItemColor,
     val isPinned: Boolean,
     val isFavorite: Boolean,
     val isArchived: Boolean,
+    val datedEntries: List<DatedEntry>,
 )
 
 internal enum class EditorSaveStatus {
@@ -58,6 +67,8 @@ internal sealed interface EditorUiState {
 internal sealed interface EditorEvent {
     data object NavigateBack : EditorEvent
     data class ShowError(val error: AppError) : EditorEvent
+    data object DatedEntrySaved : EditorEvent
+    data object DatedEntryDeleted : EditorEvent
 }
 
 internal class NoteEditorViewModel(
@@ -67,6 +78,7 @@ internal class NoteEditorViewModel(
     private data class PersistedDraft(
         val title: String,
         val body: String,
+        val bodyDocument: NoteBodyDocument,
         val tagNames: List<String>,
     )
 
@@ -101,7 +113,42 @@ internal class NoteEditorViewModel(
 
     fun onBodyChanged(body: String) {
         updateDraft {
-            it.copy(body = body.takeCodePoints(VaultConstraints.MAX_NOTE_BODY_CHARACTERS))
+            val limited = body.takeCodePoints(VaultConstraints.MAX_NOTE_BODY_CHARACTERS)
+            val firstId = it.bodyDocument.blocks.firstOrNull()?.id ?: UUID.randomUUID().toString()
+            val document = NoteBodyDocument(
+                blocks = listOf(NoteBlock(firstId, NoteBlockType.PARAGRAPH, limited)),
+            )
+            it.copy(body = limited, bodyDocument = document)
+        }
+    }
+
+    fun onBodyDocumentChanged(document: NoteBodyDocument) {
+        val body = runCatching { NoteBodyCodec.derivePlainText(document) }.getOrNull() ?: return
+        if (body.codePointCount(0, body.length) > VaultConstraints.MAX_NOTE_BODY_CHARACTERS) return
+        updateDraft { it.copy(body = body, bodyDocument = document) }
+    }
+
+    fun saveDatedEntry(draft: DatedEntryDraft) {
+        viewModelScope.launch {
+            when (val result = repository.saveDatedEntry(itemId, draft)) {
+                is RepositoryResult.Success -> {
+                    result.warning?.let { mutableEvents.send(EditorEvent.ShowError(it)) }
+                    mutableEvents.send(EditorEvent.DatedEntrySaved)
+                }
+                is RepositoryResult.Failure -> mutableEvents.send(EditorEvent.ShowError(result.error))
+            }
+        }
+    }
+
+    fun deleteDatedEntry(entryId: String) {
+        viewModelScope.launch {
+            when (val result = repository.deleteDatedEntry(entryId)) {
+                is RepositoryResult.Success -> {
+                    result.warning?.let { mutableEvents.send(EditorEvent.ShowError(it)) }
+                    mutableEvents.send(EditorEvent.DatedEntryDeleted)
+                }
+                is RepositoryResult.Failure -> mutableEvents.send(EditorEvent.ShowError(result.error))
+            }
         }
     }
 
@@ -214,6 +261,7 @@ internal class NoteEditorViewModel(
                 isFavorite = note.isFavorite,
                 isArchived = note.isArchived,
                 color = note.color,
+                datedEntries = note.datedEntries,
             )
         }
         mutableUiState.value = current.copy(draft = updatedDraft)
@@ -313,10 +361,10 @@ internal class NoteEditorViewModel(
 
     private suspend fun persistDraft(draft: PersistedDraft): Boolean =
         when (
-            val result = repository.saveNote(
+            val result = repository.saveStructuredNote(
                 id = itemId,
                 title = draft.title,
-                body = draft.body,
+                bodyDocument = draft.bodyDocument,
                 tagNames = draft.tagNames,
             )
         ) {
@@ -367,17 +415,22 @@ internal class NoteEditorViewModel(
     private fun EditorDraft.toPersistedDraft(): PersistedDraft = PersistedDraft(
         title = title,
         body = body,
+        bodyDocument = bodyDocument,
         tagNames = tagsText.split(',').map(String::trim),
     )
 
     private fun VaultNote.toEditorDraft(): EditorDraft = EditorDraft(
         title = title,
         body = body,
+        bodyDocument = bodyDocument ?: NoteBodyCodec.fromPlainText(body) {
+            UUID.randomUUID().toString()
+        },
         tagsText = tags.joinToString(separator = ", ") { it.name },
         color = color,
         isPinned = isPinned,
         isFavorite = isFavorite,
         isArchived = isArchived,
+        datedEntries = datedEntries,
     )
 
     private fun String.takeCodePoints(maximumCodePoints: Int): String {

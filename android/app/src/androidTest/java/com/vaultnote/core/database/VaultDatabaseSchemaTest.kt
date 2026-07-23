@@ -189,6 +189,51 @@ class VaultDatabaseSchemaTest {
         }
     }
 
+    @Test
+    fun versionFiveMigrationAddsStructuredBodiesDatesAndAlerts() {
+        migrationHelper.createDatabase(TEST_DATABASE_NAME, 5).use { db ->
+            db.execSQL(
+                """
+                INSERT INTO vault_items (
+                    id, type, color, title, body, ocr_text, is_pinned, is_favorite,
+                    is_archived, sort_position, created_at, updated_at, local_revision,
+                    remote_revision, last_synced_revision, server_version_token, sync_status,
+                    deleted_at, conflict_origin_id
+                ) VALUES (
+                    'item-5', 'NOTE', 'DEFAULT', 'Legacy note', 'Legacy body', '',
+                    0, 0, 0, 0, 1, 2, 1, NULL, NULL, NULL, 'PENDING', NULL, NULL
+                )
+                """.trimIndent(),
+            )
+        }
+
+        migrationHelper.runMigrationsAndValidate(
+            TEST_DATABASE_NAME,
+            VaultDatabase.SCHEMA_VERSION,
+            true,
+            VaultDatabase.MIGRATION_5_6,
+        ).use { db ->
+            db.query(
+                """
+                SELECT body, body_document_json FROM vault_items WHERE id = 'item-5'
+                """.trimIndent(),
+            ).use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals("Legacy body", cursor.getString(0))
+                assertEquals(true, cursor.isNull(1))
+            }
+            db.query(
+                """
+                SELECT COUNT(*) FROM sqlite_master
+                WHERE type = 'table' AND name IN ('dated_entries', 'dated_entry_alerts')
+                """.trimIndent(),
+            ).use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals(2, cursor.getInt(0))
+            }
+        }
+    }
+
     private fun insertVersionFourItem(
         db: androidx.sqlite.db.SupportSQLiteDatabase,
         id: String,

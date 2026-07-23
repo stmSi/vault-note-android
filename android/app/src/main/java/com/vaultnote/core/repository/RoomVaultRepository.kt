@@ -7,6 +7,15 @@ import com.vaultnote.core.common.DispatcherProvider
 import com.vaultnote.core.common.IdGenerator
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.VaultConstraints
+import com.vaultnote.core.common.NoteBodyCodec
+import com.vaultnote.core.common.model.AgendaEntry
+import com.vaultnote.core.common.model.DatedEntry
+import com.vaultnote.core.common.model.DatedEntryAlert
+import com.vaultnote.core.common.model.DatedEntryDraft
+import com.vaultnote.core.common.model.DatedEntryType
+import com.vaultnote.core.common.model.NoteBodyDocument
+import com.vaultnote.core.common.model.RecurrenceRule
+import com.vaultnote.core.common.model.RecurrenceUnit
 import com.vaultnote.core.common.model.ItemSyncStatus
 import com.vaultnote.core.common.model.SyncOperationState
 import com.vaultnote.core.common.model.SyncOperationType
@@ -21,11 +30,20 @@ import com.vaultnote.core.database.entity.SearchDocumentEntity
 import com.vaultnote.core.database.entity.SyncOperationEntity
 import com.vaultnote.core.database.entity.TagEntity
 import com.vaultnote.core.database.entity.VaultItemEntity
+import com.vaultnote.core.database.entity.DatedEntryAlertEntity
+import com.vaultnote.core.database.entity.DatedEntryEntity
+import com.vaultnote.core.database.model.AgendaEntryRow
+import com.vaultnote.core.database.model.DatedEntryWithAlerts
 import com.vaultnote.core.database.model.VaultItemSummaryWithTags
 import com.vaultnote.core.database.model.VaultItemWithTags
 import com.vaultnote.core.sync.SyncScheduleResult
 import com.vaultnote.core.sync.SyncScheduler
+import com.vaultnote.core.reminder.NoOpReminderScheduler
+import com.vaultnote.core.reminder.ReminderScheduler
 import java.text.Normalizer
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.util.Locale
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -40,11 +58,13 @@ class RoomVaultRepository(
     private val dispatchers: DispatcherProvider,
     private val clock: Clock,
     private val idGenerator: IdGenerator,
+    private val reminderScheduler: ReminderScheduler = NoOpReminderScheduler,
 ) : VaultRepository {
     private val itemDao = database.vaultItemDao()
     private val tagDao = database.tagDao()
     private val syncOperationDao = database.syncOperationDao()
     private val searchDao = database.searchDao()
+    private val datedEntryDao = database.datedEntryDao()
 
     override fun observeActiveItems(limit: Int, offset: Int): Flow<List<VaultItemSummary>> {
         val boundedLimit = boundedListLimit(limit)
@@ -52,6 +72,7 @@ class RoomVaultRepository(
             boundedLimit,
             offset.coerceAtLeast(0),
             BODY_PREVIEW_CHARACTER_LIMIT,
+            clock.nowEpochMillis(),
         )
             .map { rows -> rows.map { row -> row.toDomain() } }
             .flowOn(dispatchers.io)
@@ -63,6 +84,7 @@ class RoomVaultRepository(
             boundedLimit,
             offset.coerceAtLeast(0),
             BODY_PREVIEW_CHARACTER_LIMIT,
+            clock.nowEpochMillis(),
         )
             .map { rows -> rows.map { row -> row.toDomain() } }
             .flowOn(dispatchers.io)
@@ -74,6 +96,7 @@ class RoomVaultRepository(
             boundedLimit,
             offset.coerceAtLeast(0),
             BODY_PREVIEW_CHARACTER_LIMIT,
+            clock.nowEpochMillis(),
         )
             .map { rows -> rows.map { row -> row.toDomain() } }
             .flowOn(dispatchers.io)
@@ -89,6 +112,20 @@ class RoomVaultRepository(
     override fun observeTags(): Flow<List<VaultTag>> =
         tagDao.observeAllTags()
             .map { tags -> tags.map { tag -> tag.toDomain() } }
+            .flowOn(dispatchers.io)
+
+    override fun observeDatedEntries(itemId: String): Flow<List<DatedEntry>> {
+        if (itemId.isBlank()) return flowOf(emptyList())
+        return datedEntryDao.observeForItem(itemId)
+            .map { rows -> rows.map { row -> row.toDomain() } }
+            .flowOn(dispatchers.io)
+    }
+
+    override fun observeAgenda(includeCompleted: Boolean): Flow<List<AgendaEntry>> =
+        datedEntryDao.observeAgenda(
+            includeCompleted = includeCompleted,
+            limit = MAX_AGENDA_ENTRIES,
+        ).map { rows -> rows.map { row -> row.toDomain() } }
             .flowOn(dispatchers.io)
 
     override suspend fun createNote(title: String, body: String): RepositoryResult<String> =
@@ -166,6 +203,224 @@ class RoomVaultRepository(
             body = body,
             requestedTags = (normalizedResult as RepositoryResult.Success).value,
         )
+    }
+
+    override suspend fun saveStructuredNote(
+        id: String,
+        title: String,
+        bodyDocument: NoteBodyDocument,
+        tagNames: Collection<String>,
+    ): RepositoryResult<Unit> {
+        val encoded = try {
+            NoteBodyCodec.encode(bodyDocument)
+        } catch (_: IllegalArgumentException) {
+            return RepositoryResult.Failure(
+                AppError.InvalidInput("body", "invalid_structured_body"),
+            )
+        }
+        val body = NoteBodyCodec.derivePlainText(bodyDocument)
+        validateNoteContentOffMain(title, body)?.let { return RepositoryResult.Failure(it) }
+        val normalizedResult = normalizeTagsOffMain(tagNames)
+        if (normalizedResult is RepositoryResult.Failure) return normalizedResult
+        val requestedTags = (normalizedResult as RepositoryResult.Success).value
+
+        return runMutation(OPERATION_SAVE_NOTE) {
+            val current = requireEditableItem(id)
+            if (current.type != VaultItemType.NOTE) {
+                abort(AppError.InvalidItemState(id, "not_a_note"))
+            }
+            val existingTags = tagDao.getTagsForItem(id)
+            val tagsChanged =
+                existingTags.map(TagEntity::normalizedName).sorted() !=
+                    requestedTags.map(TagInput::normalizedName).sorted()
+            val contentChanged =
+                current.title != title ||
+                    current.body != body ||
+                    current.bodyDocumentJson != encoded
+            if (!contentChanged && !tagsChanged) {
+                return@runMutation MutationOutcome(Unit, changed = false)
+            }
+            val now = clock.nowEpochMillis()
+            val updated = current.withLocalChange(now).copy(
+                title = title,
+                body = body,
+                bodyDocumentJson = encoded,
+            )
+            val resultingTags = if (tagsChanged) {
+                replaceTagRelations(id, requestedTags, now)
+            } else {
+                existingTags
+            }
+            updateItemExactlyOnce(updated)
+            updateSearchDocument(updated, resultingTags)
+            enqueueItemOperation(updated, SyncOperationType.UPSERT_ITEM, now)
+            MutationOutcome(Unit, changed = true)
+        }
+    }
+
+    override suspend fun saveDatedEntry(
+        itemId: String,
+        draft: DatedEntryDraft,
+    ): RepositoryResult<String> {
+        validateDatedEntryDraft(draft)?.let { return RepositoryResult.Failure(it) }
+        draft.id?.let { reminderScheduler.cancelEntry(it) }
+        val result = runMutation(OPERATION_SAVE_DATED_ENTRY) {
+            val item = requireEditableItem(itemId)
+            if (item.type != VaultItemType.NOTE) {
+                abort(AppError.InvalidItemState(itemId, "not_a_note"))
+            }
+            val now = clock.nowEpochMillis()
+            val existing = draft.id?.let { datedEntryDao.getEntry(it) }
+            if (draft.id != null && (existing == null || existing.itemId != itemId)) {
+                abort(AppError.ItemNotFound(draft.id))
+            }
+            val entryId = existing?.id ?: idGenerator.newId()
+            val entry = DatedEntryEntity(
+                id = entryId,
+                itemId = itemId,
+                type = draft.type,
+                label = draft.label.trim(),
+                occurrenceAt = draft.occurrenceAtEpochMillis,
+                isAllDay = draft.isAllDay,
+                timeZoneId = draft.timeZoneId,
+                recurrenceUnit = draft.recurrence?.unit,
+                recurrenceInterval = draft.recurrence?.interval,
+                completedAt = null,
+                createdAt = existing?.createdAt ?: now,
+                updatedAt = now,
+            )
+            if (existing == null) {
+                datedEntryDao.insertEntry(entry)
+            } else if (datedEntryDao.updateEntry(entry) != 1) {
+                error("Dated entry update did not affect exactly one row")
+            }
+            datedEntryDao.deleteAlertsForEntry(entryId)
+            val alerts = draft.alertLeadTimesMinutes.distinct().sorted().map { leadMinutes ->
+                DatedEntryAlertEntity(
+                    id = idGenerator.newId(),
+                    entryId = entryId,
+                    leadTimeMinutes = leadMinutes,
+                    snoozedUntil = null,
+                    lastDeliveredOccurrence = null,
+                    createdAt = now,
+                )
+            }
+            if (alerts.isNotEmpty()) datedEntryDao.insertAlerts(alerts)
+            val updatedItem = item.withLocalChange(now)
+            updateItemExactlyOnce(updatedItem)
+            enqueueItemOperation(updatedItem, SyncOperationType.UPSERT_ITEM, now)
+            MutationOutcome(entryId, changed = true)
+        }
+        if (result is RepositoryResult.Success) {
+            reminderScheduler.reconcileEntry(result.value)
+        } else {
+            draft.id?.let { reminderScheduler.reconcileEntry(it) }
+        }
+        return result
+    }
+
+    override suspend fun deleteDatedEntry(entryId: String): RepositoryResult<Unit> {
+        reminderScheduler.cancelEntry(entryId)
+        val result = runMutation(OPERATION_DELETE_DATED_ENTRY) {
+            val existing = datedEntryDao.getEntry(entryId)
+                ?: abort(AppError.ItemNotFound(entryId))
+            val item = requireEditableItem(existing.itemId)
+            if (datedEntryDao.deleteEntry(entryId) != 1) {
+                error("Dated entry delete did not affect exactly one row")
+            }
+            val now = clock.nowEpochMillis()
+            val updatedItem = item.withLocalChange(now)
+            updateItemExactlyOnce(updatedItem)
+            enqueueItemOperation(updatedItem, SyncOperationType.UPSERT_ITEM, now)
+            MutationOutcome(Unit, changed = true)
+        }
+        if (result is RepositoryResult.Failure) reminderScheduler.reconcileEntry(entryId)
+        return result
+    }
+
+    override suspend fun completeDatedEntry(entryId: String): RepositoryResult<Unit> {
+        val result = runMutation(OPERATION_COMPLETE_DATED_ENTRY) {
+            val existing = datedEntryDao.getEntry(entryId)
+                ?: abort(AppError.ItemNotFound(entryId))
+            val item = requireEditableItem(existing.itemId)
+            val now = clock.nowEpochMillis()
+            val recurrence = existing.recurrence()
+            val updatedEntry = when {
+                recurrence != null -> existing.copy(
+                    occurrenceAt = nextOccurrenceAfter(
+                        existing.occurrenceAt,
+                        existing.timeZoneId,
+                        recurrence,
+                        now,
+                    ),
+                    completedAt = null,
+                    updatedAt = now,
+                )
+                existing.type == DatedEntryType.IMPORTANT_DATE ->
+                    return@runMutation MutationOutcome(Unit, changed = false)
+                existing.completedAt != null ->
+                    return@runMutation MutationOutcome(Unit, changed = false)
+                else -> existing.copy(completedAt = now, updatedAt = now)
+            }
+            if (datedEntryDao.updateEntry(updatedEntry) != 1) {
+                error("Dated entry completion did not affect exactly one row")
+            }
+            datedEntryDao.getEntryWithAlerts(entryId)?.alerts?.forEach { alert ->
+                datedEntryDao.updateAlert(
+                    alert.copy(
+                        snoozedUntil = null,
+                        lastDeliveredOccurrence = null,
+                    ),
+                )
+            }
+            val updatedItem = item.withLocalChange(now)
+            updateItemExactlyOnce(updatedItem)
+            enqueueItemOperation(updatedItem, SyncOperationType.UPSERT_ITEM, now)
+            MutationOutcome(Unit, changed = true)
+        }
+        if (result is RepositoryResult.Success) reminderScheduler.reconcileEntry(entryId)
+        return result
+    }
+
+    override suspend fun snoozeDatedEntryAlert(
+        alertId: String,
+        untilEpochMillis: Long,
+    ): RepositoryResult<Unit> {
+        if (untilEpochMillis <= clock.nowEpochMillis()) {
+            return RepositoryResult.Failure(AppError.InvalidInput("snooze", "must_be_future"))
+        }
+        val entryId = withContext(dispatchers.io) { datedEntryDao.getAlert(alertId)?.entryId }
+            ?: return RepositoryResult.Failure(AppError.ItemNotFound(alertId))
+        return try {
+            withContext(dispatchers.io) {
+                if (datedEntryDao.setSnoozedUntil(alertId, untilEpochMillis) != 1) {
+                    return@withContext RepositoryResult.Failure(AppError.ItemNotFound(alertId))
+                }
+                reminderScheduler.reconcileEntry(entryId)
+                RepositoryResult.Success(Unit)
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            RepositoryResult.Failure(AppError.DatabaseFailure(OPERATION_SNOOZE_ALERT, failure))
+        }
+    }
+
+    override suspend fun markDatedEntryAlertDelivered(
+        alertId: String,
+        occurrenceAtEpochMillis: Long,
+    ): RepositoryResult<Unit> = try {
+        withContext(dispatchers.io) {
+            if (datedEntryDao.markDelivered(alertId, occurrenceAtEpochMillis) == 1) {
+                RepositoryResult.Success(Unit)
+            } else {
+                RepositoryResult.Failure(AppError.ItemNotFound(alertId))
+            }
+        }
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (failure: Exception) {
+        RepositoryResult.Failure(AppError.DatabaseFailure(OPERATION_DELIVER_ALERT, failure))
     }
 
     private suspend fun saveNoteInternal(
@@ -287,8 +542,8 @@ class RoomVaultRepository(
             transform = { item -> item.copy(isArchived = isArchived) },
         )
 
-    override suspend fun moveToTrash(id: String): RepositoryResult<Unit> =
-        runMutation(OPERATION_MOVE_TO_TRASH) {
+    override suspend fun moveToTrash(id: String): RepositoryResult<Unit> {
+        val result = runMutation(OPERATION_MOVE_TO_TRASH) {
             val current = requireItem(id)
             if (current.deletedAt != null) {
                 return@runMutation MutationOutcome(Unit, changed = false)
@@ -299,9 +554,12 @@ class RoomVaultRepository(
             enqueueItemOperation(updated, SyncOperationType.DELETE_ITEM, now)
             MutationOutcome(Unit, changed = true)
         }
+        if (result is RepositoryResult.Success) reminderScheduler.reconcileAll()
+        return result
+    }
 
-    override suspend fun restore(id: String): RepositoryResult<Unit> =
-        runMutation(OPERATION_RESTORE) {
+    override suspend fun restore(id: String): RepositoryResult<Unit> {
+        val result = runMutation(OPERATION_RESTORE) {
             val current = requireItem(id)
             if (current.deletedAt == null) {
                 return@runMutation MutationOutcome(Unit, changed = false)
@@ -312,6 +570,9 @@ class RoomVaultRepository(
             enqueueItemOperation(updated, SyncOperationType.UPSERT_ITEM, now)
             MutationOutcome(Unit, changed = true)
         }
+        if (result is RepositoryResult.Success) reminderScheduler.reconcileAll()
+        return result
+    }
 
     override suspend fun setTags(
         id: String,
@@ -721,6 +982,55 @@ class RoomVaultRepository(
         )
     }
 
+    private fun validateDatedEntryDraft(draft: DatedEntryDraft): AppError.InvalidInput? {
+        if (draft.occurrenceAtEpochMillis < 0L) {
+            return AppError.InvalidInput("date", "invalid_occurrence")
+        }
+        if (draft.label.codePointCount(0, draft.label.length) > MAX_DATED_ENTRY_LABEL_CHARACTERS) {
+            return AppError.InvalidInput("date_label", "too_long")
+        }
+        if (draft.label.any(Char::isISOControl)) {
+            return AppError.InvalidInput("date_label", "contains_control_character")
+        }
+        if (runCatching { ZoneId.of(draft.timeZoneId) }.isFailure) {
+            return AppError.InvalidInput("time_zone", "invalid")
+        }
+        val recurrence = draft.recurrence
+        if (recurrence != null && recurrence.interval !in 1..MAX_RECURRENCE_INTERVAL) {
+            return AppError.InvalidInput("recurrence", "interval_out_of_range")
+        }
+        if (
+            draft.alertLeadTimesMinutes.size > MAX_ALERTS_PER_ENTRY ||
+            draft.alertLeadTimesMinutes.any { it !in 0L..MAX_ALERT_LEAD_MINUTES }
+        ) {
+            return AppError.InvalidInput("alerts", "invalid_lead_time")
+        }
+        return null
+    }
+
+    private fun nextOccurrenceAfter(
+        occurrenceAt: Long,
+        timeZoneId: String,
+        recurrence: RecurrenceRule,
+        afterEpochMillis: Long,
+    ): Long {
+        var candidate = ZonedDateTime.ofInstant(
+            Instant.ofEpochMilli(occurrenceAt),
+            ZoneId.of(timeZoneId),
+        )
+        repeat(MAX_RECURRENCE_ADVANCES) {
+            candidate = when (recurrence.unit) {
+                RecurrenceUnit.DAY -> candidate.plusDays(recurrence.interval.toLong())
+                RecurrenceUnit.WEEK -> candidate.plusWeeks(recurrence.interval.toLong())
+                RecurrenceUnit.MONTH -> candidate.plusMonths(recurrence.interval.toLong())
+                RecurrenceUnit.YEAR -> candidate.plusYears(recurrence.interval.toLong())
+            }
+            val next = candidate.toInstant().toEpochMilli()
+            if (next > afterEpochMillis) return next
+        }
+        abort(AppError.InvalidItemState("recurrence", "advance_limit_exceeded"))
+    }
+
     private fun validateTextField(
         field: String,
         value: String,
@@ -798,6 +1108,8 @@ class RoomVaultRepository(
         syncStatus = item.syncStatus,
         conflictOriginId = item.conflictOriginId,
         tags = tags.sortedBy(TagEntity::normalizedName).map { tag -> tag.toDomain() },
+        nextDatedEntryAtEpochMillis = item.nextDatedEntryAt,
+        hasOverdueEntry = item.hasOverdueEntry,
     )
 
     private fun VaultItemWithTags.toDomainNote(): VaultNote = VaultNote(
@@ -819,7 +1131,50 @@ class RoomVaultRepository(
         deletedAtEpochMillis = item.deletedAt,
         conflictOriginId = item.conflictOriginId,
         tags = tags.sortedBy(TagEntity::normalizedName).map { tag -> tag.toDomain() },
+        bodyDocument = NoteBodyCodec.decodeOrNull(item.bodyDocumentJson),
+        datedEntries = datedEntries
+            .sortedWith(
+                compareBy<DatedEntryWithAlerts> { it.entry.completedAt != null }
+                    .thenBy { it.entry.occurrenceAt }
+                    .thenBy { it.entry.id },
+            )
+            .map { row -> row.toDomain() },
     )
+
+    private fun DatedEntryWithAlerts.toDomain(): DatedEntry = DatedEntry(
+        id = entry.id,
+        itemId = entry.itemId,
+        type = entry.type,
+        label = entry.label,
+        occurrenceAtEpochMillis = entry.occurrenceAt,
+        isAllDay = entry.isAllDay,
+        timeZoneId = entry.timeZoneId,
+        recurrence = entry.recurrence(),
+        completedAtEpochMillis = entry.completedAt,
+        createdAtEpochMillis = entry.createdAt,
+        updatedAtEpochMillis = entry.updatedAt,
+        alerts = alerts.sortedBy(DatedEntryAlertEntity::leadTimeMinutes).map { alert ->
+            DatedEntryAlert(
+                id = alert.id,
+                leadTimeMinutes = alert.leadTimeMinutes,
+                snoozedUntilEpochMillis = alert.snoozedUntil,
+                lastDeliveredOccurrenceEpochMillis = alert.lastDeliveredOccurrence,
+            )
+        },
+    )
+
+    private fun AgendaEntryRow.toDomain(): AgendaEntry = AgendaEntry(
+        entry = DatedEntryWithAlerts(entry, alerts).toDomain(),
+        noteTitle = noteTitle,
+        noteColor = noteColor,
+        isArchived = noteIsArchived,
+    )
+
+    private fun DatedEntryEntity.recurrence(): RecurrenceRule? {
+        val unit = recurrenceUnit ?: return null
+        val interval = recurrenceInterval ?: return null
+        return RecurrenceRule(interval = interval, unit = unit)
+    }
 
     private fun TagEntity.toDomain(): VaultTag = VaultTag(id = id, name = name)
 
@@ -855,6 +1210,17 @@ class RoomVaultRepository(
         const val OPERATION_MOVE_TO_TRASH: String = "move_to_trash"
         const val OPERATION_RESTORE: String = "restore"
         const val OPERATION_SET_TAGS: String = "set_tags"
+        const val OPERATION_SAVE_DATED_ENTRY: String = "save_dated_entry"
+        const val OPERATION_DELETE_DATED_ENTRY: String = "delete_dated_entry"
+        const val OPERATION_COMPLETE_DATED_ENTRY: String = "complete_dated_entry"
+        const val OPERATION_SNOOZE_ALERT: String = "snooze_dated_entry_alert"
+        const val OPERATION_DELIVER_ALERT: String = "deliver_dated_entry_alert"
+        const val MAX_AGENDA_ENTRIES: Int = 500
+        const val MAX_DATED_ENTRY_LABEL_CHARACTERS: Int = 200
+        const val MAX_ALERTS_PER_ENTRY: Int = 8
+        const val MAX_ALERT_LEAD_MINUTES: Long = 10L * 365L * 24L * 60L
+        const val MAX_RECURRENCE_INTERVAL: Int = 999
+        const val MAX_RECURRENCE_ADVANCES: Int = 10_000
         const val SORT_POSITION_GAP: Long = 1_000_000_000_000L
         const val MAX_REBALANCE_ITEM_COUNT: Long = 100_000L
 

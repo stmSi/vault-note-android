@@ -10,6 +10,18 @@ import com.vaultnote.core.common.model.VaultItemColor
 import com.vaultnote.core.database.entity.ItemTagCrossRef
 import com.vaultnote.core.database.entity.TagEntity
 import com.vaultnote.core.database.entity.VaultItemEntity
+import com.vaultnote.core.database.entity.DatedEntryAlertEntity
+import com.vaultnote.core.database.entity.DatedEntryEntity
+
+data class DatedEntryWithAlerts(
+    @Embedded
+    val entry: DatedEntryEntity,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "entry_id",
+    )
+    val alerts: List<DatedEntryAlertEntity>,
+)
 
 data class VaultItemWithTags(
     @Embedded
@@ -24,6 +36,12 @@ data class VaultItemWithTags(
         ),
     )
     val tags: List<TagEntity>,
+    @Relation(
+        entity = DatedEntryEntity::class,
+        parentColumn = "id",
+        entityColumn = "item_id",
+    )
+    val datedEntries: List<DatedEntryWithAlerts>,
 )
 
 /** A deliberately narrow row used by the initial vault list. */
@@ -54,6 +72,10 @@ data class VaultItemSummaryRow(
     val syncStatus: ItemSyncStatus,
     @ColumnInfo(name = "conflict_origin_id")
     val conflictOriginId: String?,
+    @ColumnInfo(name = "next_dated_entry_at")
+    val nextDatedEntryAt: Long?,
+    @ColumnInfo(name = "has_overdue_entry")
+    val hasOverdueEntry: Boolean,
 )
 
 data class VaultItemSummaryWithTags(
@@ -101,4 +123,20 @@ data class SearchResultRow(
     val isArchived: Boolean,
     @ColumnInfo(name = "updated_at")
     val updatedAt: Long,
+)
+
+data class AgendaEntryRow(
+    @Embedded
+    val entry: DatedEntryEntity,
+    @ColumnInfo(name = "note_title")
+    val noteTitle: String,
+    @ColumnInfo(name = "note_color")
+    val noteColor: VaultItemColor,
+    @ColumnInfo(name = "note_is_archived")
+    val noteIsArchived: Boolean,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "entry_id",
+    )
+    val alerts: List<DatedEntryAlertEntity>,
 )

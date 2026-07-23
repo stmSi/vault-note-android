@@ -6,6 +6,8 @@ import com.vaultnote.core.database.entity.AttachmentEntity
 import com.vaultnote.core.database.entity.ItemTagCrossRef
 import com.vaultnote.core.database.entity.TagEntity
 import com.vaultnote.core.database.entity.VaultItemEntity
+import com.vaultnote.core.database.entity.DatedEntryAlertEntity
+import com.vaultnote.core.database.entity.DatedEntryEntity
 
 /** Keyset-paged reads used to create a bounded-memory, transactionally consistent backup. */
 @Dao
@@ -54,6 +56,29 @@ interface BackupDao {
         """,
     )
     suspend fun getAttachmentsPage(afterId: String, limit: Int): List<AttachmentEntity>
+
+    @Query(
+        """
+        SELECT * FROM dated_entries
+        WHERE id > :afterId
+        ORDER BY id ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getDatedEntriesPage(afterId: String, limit: Int): List<DatedEntryEntity>
+
+    @Query(
+        """
+        SELECT * FROM dated_entry_alerts
+        WHERE id > :afterId
+        ORDER BY id ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getDatedEntryAlertsPage(
+        afterId: String,
+        limit: Int,
+    ): List<DatedEntryAlertEntity>
 
     @Query("SELECT COUNT(*) FROM vault_items")
     suspend fun countItems(): Long

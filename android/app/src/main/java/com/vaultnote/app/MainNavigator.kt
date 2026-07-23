@@ -22,6 +22,8 @@ interface MainNavigator {
 
     fun openSearch()
 
+    fun openAgenda()
+
     fun openSyncStatus()
 
     fun openConflicts()

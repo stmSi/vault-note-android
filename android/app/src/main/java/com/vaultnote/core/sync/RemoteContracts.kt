@@ -2,6 +2,8 @@ package com.vaultnote.core.sync
 
 import com.vaultnote.core.common.model.VaultItemColor
 import com.vaultnote.core.common.model.VaultItemType
+import com.vaultnote.core.common.model.DatedEntryType
+import com.vaultnote.core.common.model.RecurrenceUnit
 import java.io.File
 
 enum class AuthenticationState {
@@ -38,6 +40,23 @@ data class RemoteItemMetadata(
     val clientRevision: Long,
     val tags: List<String>,
     val attachments: List<RemoteAttachmentReference>,
+    val bodyDocumentJson: String? = null,
+    val datedEntries: List<RemoteDatedEntry> = emptyList(),
+)
+
+data class RemoteDatedEntry(
+    val id: String,
+    val type: DatedEntryType,
+    val label: String,
+    val occurrenceAtEpochMillis: Long,
+    val isAllDay: Boolean,
+    val timeZoneId: String,
+    val recurrenceUnit: RecurrenceUnit?,
+    val recurrenceInterval: Int?,
+    val completedAtEpochMillis: Long?,
+    val createdAtEpochMillis: Long,
+    val updatedAtEpochMillis: Long,
+    val alertLeadTimesMinutes: List<Long>,
 )
 
 data class RemoteItemVersion(

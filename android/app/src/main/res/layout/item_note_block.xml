@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="top"
+    android:orientation="horizontal">
+
+    <androidx.appcompat.widget.AppCompatCheckBox
+        android:id="@+id/check_box"
+        android:layout_width="@dimen/touch_target"
+        android:layout_height="@dimen/touch_target"
+        android:contentDescription="@string/toggle_checklist_item"
+        android:gravity="center"
+        android:visibility="gone" />
+
+    <com.google.android.material.textfield.TextInputEditText
+        android:id="@+id/text"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:background="@null"
+        android:gravity="top|start"
+        android:hint="@string/note_body_hint"
+        android:imeOptions="flagNoExtractUi|flagNoPersonalizedLearning"
+        android:inputType="textCapSentences|textMultiLine"
+        android:minHeight="@dimen/touch_target"
+        android:paddingVertical="10dp"
+        android:saveEnabled="false"
+        android:textAppearance="?attr/textAppearanceBodyLarge" />
+
+</LinearLayout>

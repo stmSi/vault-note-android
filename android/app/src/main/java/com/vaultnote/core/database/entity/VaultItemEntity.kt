@@ -71,4 +71,6 @@ data class VaultItemEntity(
     val deletedAt: Long?,
     @ColumnInfo(name = "conflict_origin_id")
     val conflictOriginId: String?,
+    @ColumnInfo(name = "body_document_json")
+    val bodyDocumentJson: String? = null,
 )

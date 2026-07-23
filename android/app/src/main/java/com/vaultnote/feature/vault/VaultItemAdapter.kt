@@ -88,6 +88,19 @@ internal class VaultItemAdapter(
             title.text = item.title.ifBlank { context.getString(R.string.untitled_note) }
             bodyPreview.text = item.bodyPreview
             bodyPreview.visibility = if (item.bodyPreview.isBlank()) View.GONE else View.VISIBLE
+            dateStatus.isVisible =
+                item.hasOverdueEntry || item.nextDatedEntryAtEpochMillis != null
+            dateStatus.text = when {
+                item.hasOverdueEntry -> context.getString(R.string.overdue_date)
+                item.nextDatedEntryAtEpochMillis != null -> {
+                    val date = Instant.ofEpochMilli(item.nextDatedEntryAtEpochMillis)
+                        .atZone(zoneId)
+                        .toLocalDate()
+                        .format(dateFormatter)
+                    context.getString(R.string.next_date, date)
+                }
+                else -> ""
+            }
 
             val tagText = item.tags.joinToString(separator = "  ") { "#${it.name}" }
             tags.text = tagText

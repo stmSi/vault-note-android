@@ -9,15 +9,13 @@
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar"
         android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:minHeight="?attr/actionBarSize"
+        android:layout_height="@dimen/touch_target"
         android:navigationContentDescription="@string/navigate_up"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"
         app:menu="@menu/menu_note_editor"
-        app:navigationIcon="@drawable/ic_back"
-        app:title="@string/untitled_note" />
+        app:navigationIcon="@drawable/ic_back" />
 
     <LinearLayout
         android:id="@+id/save_status_row"
@@ -25,8 +23,8 @@
         android:layout_height="wrap_content"
         android:gravity="center_vertical|end"
         android:orientation="horizontal"
-        android:paddingStart="@dimen/space_m"
-        android:paddingEnd="@dimen/space_m"
+        android:paddingHorizontal="@dimen/space_m"
+        android:visibility="gone"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/toolbar">
@@ -38,7 +36,7 @@
             android:layout_weight="1"
             android:accessibilityLiveRegion="polite"
             android:gravity="end"
-            android:text="@string/saved"
+            android:text="@string/save_failed"
             android:textAppearance="?attr/textAppearanceLabelSmall"
             android:textColor="@color/vault_on_surface_variant" />
 
@@ -46,10 +44,8 @@
             android:id="@+id/save_retry_button"
             style="@style/Widget.Material3.Button.TextButton"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target"
-            android:text="@string/save_failed_action"
-            android:visibility="gone" />
+            android:layout_height="@dimen/touch_target"
+            android:text="@string/save_failed_action" />
     </LinearLayout>
 
     <com.google.android.material.textfield.TextInputLayout
@@ -57,9 +53,7 @@
         style="@style/Widget.Material3.TextInputLayout.FilledBox"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginStart="@dimen/space_m"
-        android:layout_marginTop="@dimen/space_s"
-        android:layout_marginEnd="@dimen/space_m"
+        android:layout_marginHorizontal="@dimen/space_m"
         android:hint="@string/note_title_hint"
         app:boxBackgroundMode="none"
         app:layout_constraintEnd_toEndOf="parent"
@@ -77,114 +71,159 @@
             android:textAppearance="?attr/textAppearanceHeadlineSmall" />
     </com.google.android.material.textfield.TextInputLayout>
 
-    <com.google.android.material.textfield.TextInputLayout
-        android:id="@+id/body_container"
-        style="@style/Widget.Material3.TextInputLayout.FilledBox"
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/body_blocks"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginStart="@dimen/space_m"
-        android:layout_marginEnd="@dimen/space_m"
-        android:hint="@string/note_body_hint"
-        app:boxBackgroundMode="none"
-        app:layout_constraintBottom_toTopOf="@id/attachments_section"
+        android:clipToPadding="false"
+        android:contentDescription="@string/note_body_hint"
+        android:paddingHorizontal="@dimen/space_m"
+        android:paddingBottom="@dimen/space_m"
+        android:scrollbars="vertical"
+        app:layout_constraintBottom_toTopOf="@id/metadata_panel"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/title_container">
-
-        <com.google.android.material.textfield.TextInputEditText
-            android:id="@+id/body_input"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:gravity="top|start"
-            android:imeOptions="flagNoExtractUi|flagNoPersonalizedLearning"
-            android:inputType="textCapSentences|textMultiLine"
-            android:saveEnabled="false"
-            android:scrollbars="vertical" />
-    </com.google.android.material.textfield.TextInputLayout>
+        app:layout_constraintTop_toBottomOf="@id/title_container" />
 
     <LinearLayout
-        android:id="@+id/attachments_section"
+        android:id="@+id/metadata_panel"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:visibility="gone"
-        app:layout_constraintBottom_toTopOf="@id/tags_container"
+        app:layout_constraintBottom_toTopOf="@id/editor_action_bar"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
 
         <LinearLayout
+            android:id="@+id/attachments_section"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="@dimen/space_m"
-            android:paddingEnd="@dimen/space_m">
+            android:orientation="vertical"
+            android:visibility="gone">
 
-            <TextView
-                android:layout_width="0dp"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/attachments"
-                android:textAppearance="?attr/textAppearanceTitleSmall" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="@dimen/space_m">
 
-            <ProgressBar
-                android:id="@+id/attachments_loading"
-                style="?android:attr/progressBarStyleSmall"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:contentDescription="@string/loading_attachments" />
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/attachments"
+                    android:textAppearance="?attr/textAppearanceTitleSmall" />
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/attachments_retry"
-                style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="wrap_content"
-                android:layout_height="@dimen/touch_target"
-                android:text="@string/retry"
-                android:visibility="gone" />
+                <ProgressBar
+                    android:id="@+id/attachments_loading"
+                    style="?android:attr/progressBarStyleSmall"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:contentDescription="@string/loading_attachments" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/attachments_retry"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="@dimen/touch_target"
+                    android:text="@string/retry"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/attachments_list"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/editor_attachment_list_height"
+                android:clipToPadding="false"
+                android:contentDescription="@string/attachments"
+                android:orientation="horizontal"
+                android:overScrollMode="ifContentScrolls"
+                android:paddingHorizontal="@dimen/space_m"
+                app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager" />
         </LinearLayout>
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/attachments_list"
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/tags_container"
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
             android:layout_width="match_parent"
-            android:layout_height="@dimen/editor_attachment_list_height"
-            android:clipToPadding="false"
-            android:contentDescription="@string/attachments"
-            android:orientation="horizontal"
-            android:overScrollMode="ifContentScrolls"
-            android:paddingStart="@dimen/space_m"
-            android:paddingTop="@dimen/space_s"
-            android:paddingEnd="@dimen/space_s"
-            android:paddingBottom="@dimen/space_s"
-            app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager" />
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="@dimen/space_m"
+            android:hint="@string/note_tags_hint"
+            android:visibility="gone"
+            app:helperText="@string/note_tags_helper">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/tags_input"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:imeOptions="actionDone|flagNoPersonalizedLearning"
+                android:inputType="textCapWords"
+                android:maxLines="1"
+                android:saveEnabled="false" />
+        </com.google.android.material.textfield.TextInputLayout>
     </LinearLayout>
 
-    <com.google.android.material.textfield.TextInputLayout
-        android:id="@+id/tags_container"
-        style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+    <HorizontalScrollView
+        android:id="@+id/editor_action_bar"
         android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_margin="@dimen/space_m"
-        android:hint="@string/note_tags_hint"
-        app:helperText="@string/note_tags_helper"
+        android:layout_height="@dimen/touch_target"
+        android:fillViewport="true"
+        android:scrollbars="none"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
 
-        <com.google.android.material.textfield.TextInputEditText
-            android:id="@+id/tags_input"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:imeOptions="actionDone|flagNoPersonalizedLearning"
-            android:inputType="textCapWords"
-            android:maxLines="1"
-            android:saveEnabled="false" />
-    </com.google.android.material.textfield.TextInputLayout>
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="@dimen/space_s">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/add_paragraph_button"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/touch_target"
+                android:text="@string/add_text_block" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/add_checklist_button"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/touch_target"
+                android:text="@string/add_checklist_item" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/dates_button"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/touch_target"
+                android:text="@string/dates" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/tags_button"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/touch_target"
+                android:text="@string/tags" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/attachments_button"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/touch_target"
+                android:text="@string/attachments" />
+        </LinearLayout>
+    </HorizontalScrollView>
 
     <com.google.android.material.progressindicator.CircularProgressIndicator
         android:id="@+id/loading_indicator"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/editor_action_bar"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/toolbar" />
@@ -198,7 +237,7 @@
         android:gravity="center"
         android:orientation="vertical"
         android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/editor_action_bar"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/toolbar">
@@ -223,9 +262,8 @@
             android:id="@+id/retry_button"
             style="@style/Widget.Material3.Button.TextButton"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_height="@dimen/touch_target"
             android:layout_marginTop="@dimen/space_s"
-            android:minHeight="@dimen/touch_target"
             android:text="@string/retry"
             android:visibility="gone" />
     </LinearLayout>

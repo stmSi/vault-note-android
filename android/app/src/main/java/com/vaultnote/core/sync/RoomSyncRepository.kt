@@ -18,6 +18,9 @@ import com.vaultnote.core.database.entity.SyncOperationEntity
 import com.vaultnote.core.database.entity.SyncStateEntity
 import com.vaultnote.core.database.entity.TagEntity
 import com.vaultnote.core.database.entity.VaultItemEntity
+import com.vaultnote.core.database.entity.DatedEntryAlertEntity
+import com.vaultnote.core.database.entity.DatedEntryEntity
+import com.vaultnote.core.database.model.DatedEntryWithAlerts
 import com.vaultnote.core.database.model.VaultItemSummaryWithTags
 import com.vaultnote.core.files.AttachmentFileManager
 import java.text.Normalizer
@@ -47,11 +50,16 @@ class RoomSyncRepository(
     private val operationDao = database.syncOperationDao()
     private val stateDao = database.syncStateDao()
     private val searchDao = database.searchDao()
+    private val datedEntryDao = database.datedEntryDao()
 
     override fun observeOverview(): Flow<SyncOverview> = combine(
         operationDao.observeQueueStatus(),
         stateDao.observe(DEFAULT_SYNC_SCOPE),
-        itemDao.observeConflictSummaries(MAX_CONFLICTS, BODY_PREVIEW_CHARACTER_LIMIT),
+        itemDao.observeConflictSummaries(
+            MAX_CONFLICTS,
+            BODY_PREVIEW_CHARACTER_LIMIT,
+            clock.nowEpochMillis(),
+        ),
     ) { queue, state, conflicts ->
         SyncOverview(
             pendingCount = queue.pendingCount,
@@ -68,6 +76,7 @@ class RoomSyncRepository(
         itemDao.observeConflictSummaries(
             limit.coerceIn(1, MAX_CONFLICTS),
             BODY_PREVIEW_CHARACTER_LIMIT,
+            clock.nowEpochMillis(),
         ).map { rows -> rows.map { row -> row.toDomain() } }
             .flowOn(dispatchers.io)
 
@@ -133,6 +142,7 @@ class RoomSyncRepository(
                     type = selected.type,
                     title = selected.title,
                     body = selected.body,
+                    bodyDocumentJson = selected.bodyDocumentJson,
                     ocrText = selected.ocrText,
                     color = selected.color,
                     isPinned = selected.isPinned,
@@ -148,6 +158,7 @@ class RoomSyncRepository(
                 )
                 if (itemDao.update(resolved) != 1) error("Conflict origin update failed")
                 replaceTags(originId, selectedTags, now)
+                replaceDatedEntriesFromLocal(originId, selected.id, now)
                 updateSearchDocument(resolved)
                 itemDao.getConflictGroup(originId)
                     .asSequence()
@@ -215,6 +226,7 @@ class RoomSyncRepository(
             attachment = attachment,
             attachments = item?.let { attachmentDao.getForItem(it.id) }.orEmpty(),
             tags = item?.let { tagDao.getTagsForItem(it.id) }.orEmpty(),
+            datedEntries = item?.let { datedEntryDao.getForItem(it.id) }.orEmpty(),
         )
     }
 
@@ -309,6 +321,8 @@ class RoomSyncRepository(
             clientRevision = claimed.operation.targetRevision,
             tags = claimed.tags.map(TagEntity::name),
             attachments = attachmentReferences,
+            bodyDocumentJson = item.bodyDocumentJson,
+            datedEntries = claimed.datedEntries.map { row -> row.toRemote() },
         )
         return handleMutationResult(
             claimed,
@@ -487,6 +501,7 @@ class RoomSyncRepository(
             color = metadata.color,
             title = metadata.title,
             body = metadata.body,
+            bodyDocumentJson = metadata.bodyDocumentJson,
             ocrText = metadata.ocrText,
             isPinned = metadata.isPinned,
             isFavorite = metadata.isFavorite,
@@ -504,6 +519,7 @@ class RoomSyncRepository(
         )
         itemDao.insert(copy)
         replaceTags(copy.id, metadata.tags, now)
+        replaceRemoteDatedEntries(copy.id, metadata.datedEntries, preserveIds = false)
         updateSearchDocument(copy)
     }
 
@@ -552,6 +568,7 @@ class RoomSyncRepository(
                 color = metadata.color,
                 title = metadata.title,
                 body = metadata.body,
+                bodyDocumentJson = metadata.bodyDocumentJson,
                 ocrText = metadata.ocrText,
                 isPinned = metadata.isPinned,
                 isFavorite = metadata.isFavorite,
@@ -569,6 +586,7 @@ class RoomSyncRepository(
             )
             itemDao.insert(imported)
             replaceTags(imported.id, metadata.tags, clock.nowEpochMillis())
+            replaceRemoteDatedEntries(imported.id, metadata.datedEntries, preserveIds = true)
             updateSearchDocument(imported)
             return
         }
@@ -585,6 +603,7 @@ class RoomSyncRepository(
             color = metadata.color,
             title = metadata.title,
             body = metadata.body,
+            bodyDocumentJson = metadata.bodyDocumentJson,
             ocrText = metadata.ocrText,
             isPinned = metadata.isPinned,
             isFavorite = metadata.isFavorite,
@@ -599,6 +618,7 @@ class RoomSyncRepository(
         )
         itemDao.update(updated)
         replaceTags(updated.id, metadata.tags, clock.nowEpochMillis())
+        replaceRemoteDatedEntries(updated.id, metadata.datedEntries, preserveIds = true)
         updateSearchDocument(updated)
     }
 
@@ -658,6 +678,87 @@ class RoomSyncRepository(
         }
         tagDao.deleteUnusedTags()
     }
+
+    private suspend fun replaceDatedEntriesFromLocal(
+        targetItemId: String,
+        sourceItemId: String,
+        now: Long,
+    ) {
+        val source = datedEntryDao.getForItem(sourceItemId)
+        datedEntryDao.deleteEntriesForItem(targetItemId)
+        source.forEach { row ->
+            val entryId = idGenerator.newId()
+            datedEntryDao.insertEntry(
+                row.entry.copy(
+                    id = entryId,
+                    itemId = targetItemId,
+                    updatedAt = now,
+                ),
+            )
+            val alerts = row.alerts.map { alert ->
+                alert.copy(
+                    id = idGenerator.newId(),
+                    entryId = entryId,
+                    snoozedUntil = null,
+                    lastDeliveredOccurrence = null,
+                )
+            }
+            if (alerts.isNotEmpty()) datedEntryDao.insertAlerts(alerts)
+        }
+    }
+
+    private suspend fun replaceRemoteDatedEntries(
+        itemId: String,
+        entries: List<RemoteDatedEntry>,
+        preserveIds: Boolean,
+    ) {
+        datedEntryDao.deleteEntriesForItem(itemId)
+        entries.forEach { remote ->
+            val entryId = if (preserveIds) remote.id else idGenerator.newId()
+            datedEntryDao.insertEntry(
+                DatedEntryEntity(
+                    id = entryId,
+                    itemId = itemId,
+                    type = remote.type,
+                    label = remote.label,
+                    occurrenceAt = remote.occurrenceAtEpochMillis,
+                    isAllDay = remote.isAllDay,
+                    timeZoneId = remote.timeZoneId,
+                    recurrenceUnit = remote.recurrenceUnit,
+                    recurrenceInterval = remote.recurrenceInterval,
+                    completedAt = remote.completedAtEpochMillis,
+                    createdAt = remote.createdAtEpochMillis,
+                    updatedAt = remote.updatedAtEpochMillis,
+                ),
+            )
+            val alerts = remote.alertLeadTimesMinutes.distinct().map { lead ->
+                DatedEntryAlertEntity(
+                    id = idGenerator.newId(),
+                    entryId = entryId,
+                    leadTimeMinutes = lead,
+                    snoozedUntil = null,
+                    lastDeliveredOccurrence = null,
+                    createdAt = remote.createdAtEpochMillis,
+                )
+            }
+            if (alerts.isNotEmpty()) datedEntryDao.insertAlerts(alerts)
+        }
+    }
+
+    private fun DatedEntryWithAlerts.toRemote(): RemoteDatedEntry = RemoteDatedEntry(
+        id = entry.id,
+        type = entry.type,
+        label = entry.label,
+        occurrenceAtEpochMillis = entry.occurrenceAt,
+        isAllDay = entry.isAllDay,
+        timeZoneId = entry.timeZoneId,
+        recurrenceUnit = entry.recurrenceUnit,
+        recurrenceInterval = entry.recurrenceInterval,
+        completedAtEpochMillis = entry.completedAt,
+        createdAtEpochMillis = entry.createdAt,
+        updatedAtEpochMillis = entry.updatedAt,
+        alertLeadTimesMinutes = alerts.map(DatedEntryAlertEntity::leadTimeMinutes).sorted(),
+    )
 
     private suspend fun updateSearchDocument(item: VaultItemEntity) {
         val existing = searchDao.getDocumentForItem(item.id)
@@ -748,6 +849,8 @@ class RoomSyncRepository(
         tags = tags.sortedBy(TagEntity::normalizedName).map { tag ->
             com.vaultnote.core.common.model.VaultTag(tag.id, tag.name)
         },
+        nextDatedEntryAtEpochMillis = item.nextDatedEntryAt,
+        hasOverdueEntry = item.hasOverdueEntry,
     )
 
     private fun String.takeCodePoints(maximum: Int): String =
@@ -765,6 +868,7 @@ class RoomSyncRepository(
         val attachment: com.vaultnote.core.database.entity.AttachmentEntity?,
         val attachments: List<com.vaultnote.core.database.entity.AttachmentEntity>,
         val tags: List<TagEntity>,
+        val datedEntries: List<DatedEntryWithAlerts>,
     ) {
         companion object {
             fun synthetic(item: VaultItemEntity): ClaimedOperation = ClaimedOperation(
@@ -788,6 +892,7 @@ class RoomSyncRepository(
                 attachment = null,
                 attachments = emptyList(),
                 tags = emptyList(),
+                datedEntries = emptyList(),
             )
         }
     }

@@ -4,6 +4,36 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
+    <LinearLayout
+        android:id="@+id/notes_header"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="@dimen/space_m"
+        android:paddingEnd="@dimen/space_s"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/notes_title"
+            android:textAppearance="?attr/textAppearanceHeadlineSmall" />
+
+        <ImageButton
+            android:id="@+id/open_calendar_button"
+            style="?attr/borderlessButtonStyle"
+            android:layout_width="@dimen/touch_target"
+            android:layout_height="@dimen/touch_target"
+            android:contentDescription="@string/open_calendar"
+            android:padding="12dp"
+            android:src="@drawable/ic_calendar"
+            app:tint="@color/vault_on_surface" />
+    </LinearLayout>
+
     <com.google.android.material.button.MaterialButtonToggleGroup
         android:id="@+id/archive_trash_toggle"
         android:layout_width="wrap_content"
@@ -15,7 +45,7 @@
         app:singleSelection="true"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
+        app:layout_constraintTop_toBottomOf="@id/notes_header">
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/show_archived_button"

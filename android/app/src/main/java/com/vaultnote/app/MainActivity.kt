@@ -38,6 +38,7 @@ import com.vaultnote.feature.vault.VaultFragment
 import com.vaultnote.feature.vault.VaultSection
 import com.vaultnote.feature.sync.SyncStatusFragment
 import com.vaultnote.feature.conflicts.ConflictsFragment
+import com.vaultnote.feature.agenda.AgendaFragment
 import com.vaultnote.feature.backup.BackupExportFragment
 import com.vaultnote.feature.backup.BackupRestoreFragment
 import com.vaultnote.core.common.RepositoryResult
@@ -60,6 +61,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
     private var secureExternalHandoffDepth = 0
     private var secureExternalHandoffBackgroundedAt: Long? = null
     private var secureExternalHandoffLockJob: Job? = null
+    private var pendingReminderItemId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -81,6 +83,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
             }
         }
         observeSecurityState()
+        consumeReminderIntent(intent)
         val restoredImport = savedInstanceState != null &&
             supportFragmentManager.findFragmentById(R.id.fragment_container) is ImportPreviewFragment
         if (restoredImport && intent.isIncomingShare()) {
@@ -93,6 +96,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        consumeReminderIntent(intent)
         binding.root.post { consumeIncomingIntent(intent) }
     }
 
@@ -203,6 +207,13 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         showPrimaryDestination(
             fragment = SearchFragment.newInstance(),
             navigationItemId = R.id.navigation_search,
+        )
+    }
+
+    override fun openAgenda() {
+        openContextualScreen(
+            fragment = AgendaFragment.newInstance(),
+            backStackName = AgendaFragment.BACK_STACK_NAME,
         )
     }
 
@@ -385,6 +396,24 @@ class MainActivity : AppCompatActivity(), MainNavigator {
                 cameraCaptureId = deferred.cameraCaptureId,
                 standaloneFiles = deferred.standaloneFiles,
             )
+        }
+        pendingReminderItemId?.let { itemId ->
+            pendingReminderItemId = null
+            openNoteEditor(itemId)
+        }
+    }
+
+    private fun consumeReminderIntent(sourceIntent: Intent) {
+        if (sourceIntent.action != ACTION_OPEN_REMINDER) return
+        val itemId = sourceIntent.getStringExtra(EXTRA_REMINDER_ITEM_ID)
+        sourceIntent.action = Intent.ACTION_MAIN
+        sourceIntent.removeExtra(EXTRA_REMINDER_ITEM_ID)
+        sourceIntent.removeExtra(EXTRA_REMINDER_ENTRY_ID)
+        if (itemId.isNullOrBlank()) return
+        if (appContainer().lockManager.isContentAccessAllowed()) {
+            binding.root.post { openNoteEditor(itemId) }
+        } else {
+            pendingReminderItemId = itemId
         }
     }
 
@@ -615,7 +644,10 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         }
     }
 
-    private companion object {
+    companion object {
+        const val ACTION_OPEN_REMINDER = "com.vaultnote.action.OPEN_REMINDER"
+        const val EXTRA_REMINDER_ITEM_ID = "reminder_item_id"
+        const val EXTRA_REMINDER_ENTRY_ID = "reminder_entry_id"
         const val SECURITY_MIGRATION_BATCH = 8
         const val OCR_BATCH = 2
         const val MIN_EXTERNAL_HANDOFF_GRACE_MILLIS = 120_000L

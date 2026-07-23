@@ -9,9 +9,17 @@ import com.vaultnote.core.common.IdGenerator
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.model.SyncOperationType
 import com.vaultnote.core.common.model.SyncOperationState
+import com.vaultnote.core.common.model.DatedEntryDraft
+import com.vaultnote.core.common.model.DatedEntryType
+import com.vaultnote.core.common.model.NoteBlock
+import com.vaultnote.core.common.model.NoteBlockType
+import com.vaultnote.core.common.model.NoteBodyDocument
+import com.vaultnote.core.common.model.RecurrenceRule
+import com.vaultnote.core.common.model.RecurrenceUnit
 import com.vaultnote.core.common.model.VaultItemColor
 import com.vaultnote.core.common.model.VaultItemType
 import com.vaultnote.core.database.VaultDatabase
+import com.vaultnote.core.reminder.ReminderScheduler
 import com.vaultnote.core.sync.CoalescingFakeSyncScheduler
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineDispatcher
@@ -36,6 +44,7 @@ import org.robolectric.annotation.Config
 class RoomVaultRepositoryTest {
     private lateinit var database: VaultDatabase
     private lateinit var scheduler: CoalescingFakeSyncScheduler
+    private lateinit var reminderScheduler: RecordingReminderScheduler
     private lateinit var repository: VaultRepository
 
     @Before
@@ -43,12 +52,14 @@ class RoomVaultRepositoryTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         database = Room.inMemoryDatabaseBuilder(context, VaultDatabase::class.java).build()
         scheduler = CoalescingFakeSyncScheduler()
+        reminderScheduler = RecordingReminderScheduler()
         repository = RoomVaultRepository(
             database = database,
             syncScheduler = scheduler,
             dispatchers = TestDispatchers,
             clock = IncrementingClock(),
             idGenerator = SequenceIdGenerator(),
+            reminderScheduler = reminderScheduler,
         )
     }
 
@@ -324,6 +335,80 @@ class RoomVaultRepositoryTest {
         )
     }
 
+    @Test
+    fun `structured checklist is persisted and plain text remains searchable`() = runBlocking {
+        val itemId = repository.createNote().successValue()
+        val document = NoteBodyDocument(
+            blocks = listOf(
+                NoteBlock("intro", NoteBlockType.PARAGRAPH, "Trip preparation"),
+                NoteBlock("passport", NoteBlockType.CHECKLIST_ITEM, "Renew passport"),
+                NoteBlock(
+                    "tickets",
+                    NoteBlockType.CHECKLIST_ITEM,
+                    "Book tickets",
+                    isChecked = true,
+                ),
+            ),
+        )
+
+        repository.saveStructuredNote(
+            id = itemId,
+            title = "Travel",
+            bodyDocument = document,
+            tagNames = listOf("Personal"),
+        ).requireSuccess()
+
+        val note = requireNotNull(repository.observeNote(itemId).first())
+        val searchDocument = requireNotNull(database.searchDao().getDocumentForItem(itemId))
+        assertEquals(document, note.bodyDocument)
+        assertEquals(
+            "Trip preparation\n[ ] Renew passport\n[x] Book tickets",
+            note.body,
+        )
+        assertEquals(note.body, searchDocument.body)
+    }
+
+    @Test
+    fun `renewal supports multiple alerts and advances when completed`() = runBlocking {
+        val itemId = repository.createNote("Domain", "").successValue()
+        val occurrence = 86_400_000L
+        val entryId = repository.saveDatedEntry(
+            itemId = itemId,
+            draft = DatedEntryDraft(
+                type = DatedEntryType.RENEWAL,
+                label = "Renew domain",
+                occurrenceAtEpochMillis = occurrence,
+                isAllDay = true,
+                timeZoneId = "UTC",
+                recurrence = RecurrenceRule(1, RecurrenceUnit.YEAR),
+                alertLeadTimesMinutes = listOf(0L, 60L, 1_440L),
+            ),
+        ).successValue()
+
+        val saved = requireNotNull(repository.observeNote(itemId).first())
+            .datedEntries.single()
+        assertEquals(listOf(0L, 60L, 1_440L), saved.alerts.map { it.leadTimeMinutes })
+        assertEquals(listOf(entryId), reminderScheduler.reconciledEntries)
+
+        repository.completeDatedEntry(entryId).requireSuccess()
+
+        val advanced = requireNotNull(repository.observeNote(itemId).first())
+            .datedEntries.single()
+        assertTrue(advanced.occurrenceAtEpochMillis > occurrence)
+        assertNull(advanced.completedAtEpochMillis)
+        assertEquals(listOf(entryId, entryId), reminderScheduler.reconciledEntries)
+    }
+
+    @Test
+    fun `trash and restore reconcile device reminders`() = runBlocking {
+        val itemId = repository.createNote("Reminder", "").successValue()
+
+        repository.moveToTrash(itemId).requireSuccess()
+        repository.restore(itemId).requireSuccess()
+
+        assertEquals(2, reminderScheduler.reconcileAllCount)
+    }
+
     private fun <T> RepositoryResult<T>.successValue(): T = when (this) {
         is RepositoryResult.Success -> value
         is RepositoryResult.Failure -> throw AssertionError("Expected success, got ${error::class.simpleName}")
@@ -349,5 +434,23 @@ class RoomVaultRepositoryTest {
         private val next = AtomicInteger(1)
 
         override fun newId(): String = "00000000-0000-0000-0000-${next.getAndIncrement().toString().padStart(12, '0')}"
+    }
+
+    private class RecordingReminderScheduler : ReminderScheduler {
+        val reconciledEntries = mutableListOf<String>()
+        val cancelledEntries = mutableListOf<String>()
+        var reconcileAllCount: Int = 0
+
+        override suspend fun reconcileEntry(entryId: String) {
+            reconciledEntries += entryId
+        }
+
+        override suspend fun cancelEntry(entryId: String) {
+            cancelledEntries += entryId
+        }
+
+        override suspend fun reconcileAll() {
+            reconcileAllCount++
+        }
     }
 }

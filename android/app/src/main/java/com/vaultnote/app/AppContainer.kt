@@ -43,8 +43,11 @@ import com.vaultnote.core.ocr.AndroidOcrPlaintextStore
 import com.vaultnote.core.ocr.MlKitOcrProcessor
 import com.vaultnote.core.ocr.OcrRepository
 import com.vaultnote.core.ocr.RoomOcrRepository
+import com.vaultnote.core.reminder.AndroidReminderScheduler
+import com.vaultnote.core.reminder.ReminderScheduler
 
 interface AppContainer {
+    val databaseForReminders: VaultDatabase
     val vaultRepository: VaultRepository
     val attachmentRepository: AttachmentRepository
     val attachmentFileManager: AttachmentFileManager
@@ -59,12 +62,18 @@ interface AppContainer {
     val ocrRepository: OcrRepository
     val syncRepository: SyncRepository
     val syncScheduler: SyncScheduler
+    val reminderScheduler: ReminderScheduler
 }
 
 class DefaultAppContainer(context: Context) : AppContainer {
     private val applicationContext = context.applicationContext
     private val database: VaultDatabase by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         VaultDatabase.create(applicationContext)
+    }
+    override val databaseForReminders: VaultDatabase
+        get() = database
+    override val reminderScheduler: ReminderScheduler by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        AndroidReminderScheduler(applicationContext, database)
     }
     override val syncScheduler: SyncScheduler by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         WorkManagerSyncScheduler(applicationContext)
@@ -106,6 +115,7 @@ class DefaultAppContainer(context: Context) : AppContainer {
             dispatchers = DefaultDispatcherProvider,
             clock = SystemClock,
             idGenerator = UuidIdGenerator,
+            reminderScheduler = reminderScheduler,
         )
     }
 
@@ -174,6 +184,7 @@ class DefaultAppContainer(context: Context) : AppContainer {
             dispatchers = DefaultDispatcherProvider,
             clock = SystemClock,
             idGenerator = UuidIdGenerator,
+            reminderScheduler = reminderScheduler,
         )
     }
 

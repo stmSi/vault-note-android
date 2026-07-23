@@ -1,7 +1,17 @@
 package com.vaultnote.feature.editor
 
+import android.Manifest
+import android.app.AlarmManager
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.LayoutInflater
@@ -25,6 +35,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.textfield.TextInputEditText
@@ -34,6 +45,12 @@ import com.vaultnote.app.appContainer
 import com.vaultnote.core.common.AppError
 import com.vaultnote.core.common.VaultConstraints
 import com.vaultnote.core.common.model.VaultItemColor
+import com.vaultnote.core.common.model.NoteBlockType
+import com.vaultnote.core.common.model.DatedEntry
+import com.vaultnote.core.common.model.DatedEntryDraft
+import com.vaultnote.core.common.model.DatedEntryType
+import com.vaultnote.core.common.model.RecurrenceRule
+import com.vaultnote.core.common.model.RecurrenceUnit
 import com.vaultnote.core.common.toStyle
 import com.vaultnote.core.files.MAX_ATTACHMENTS_PER_IMPORT
 import com.vaultnote.databinding.FragmentNoteEditorBinding
@@ -47,14 +64,19 @@ import com.vaultnote.feature.importing.PendingCameraCapture
 import com.vaultnote.feature.viewer.AttachmentDeleteWarningReason
 import com.vaultnote.feature.viewer.AttachmentViewerFragment
 import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 
 class NoteEditorFragment : Fragment() {
     private var binding: FragmentNoteEditorBinding? = null
     private var isRendering = false
     private var lastTitleInputValue: String? = null
-    private var lastBodyInputValue: String? = null
     private var lastTagsInputValue: String? = null
     private var attachmentAdapter: EditorAttachmentAdapter? = null
+    private lateinit var noteBlockAdapter: NoteBlockAdapter
     private val cameraCaptureManager: CameraCaptureManager by lazy(LazyThreadSafetyMode.NONE) {
         CameraCaptureManager(requireContext())
     }
@@ -82,6 +104,12 @@ class NoteEditorFragment : Fragment() {
     private val documentPicker = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris -> openSelectedUris(uris) }
+
+    private val notificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) showMessage(R.string.notification_permission_needed)
+    }
 
     private val cameraCapture = registerForActivityResult(
         ActivityResultContracts.TakePicture(),
@@ -119,6 +147,7 @@ class NoteEditorFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         val currentBinding = requireNotNull(binding)
         configureToolbar(currentBinding)
+        configureBlockEditor(currentBinding)
         configureInputs(currentBinding)
         configureAttachments(currentBinding)
         configureAttachmentWarningResults(currentBinding)
@@ -149,10 +178,10 @@ class NoteEditorFragment : Fragment() {
 
     override fun onDestroyView() {
         binding?.attachmentsList?.adapter = null
+        binding?.bodyBlocks?.adapter = null
         attachmentAdapter = null
         binding = null
         lastTitleInputValue = null
-        lastBodyInputValue = null
         lastTagsInputValue = null
         super.onDestroyView()
     }
@@ -253,18 +282,54 @@ class NoteEditorFragment : Fragment() {
             lastTitleInputValue = value
             viewModel.onTitleChanged(value)
         }
-        currentBinding.bodyInput.addSafeTextChangedListener { value ->
-            lastBodyInputValue = value
-            viewModel.onBodyChanged(value)
-        }
         currentBinding.tagsInput.addSafeTextChangedListener { value ->
             lastTagsInputValue = value
             viewModel.onTagsChanged(value)
         }
         currentBinding.titleInput.addCodePointLimit(VaultConstraints.MAX_NOTE_TITLE_CHARACTERS)
-        currentBinding.bodyInput.addCodePointLimit(VaultConstraints.MAX_NOTE_BODY_CHARACTERS)
         currentBinding.tagsInput.addCodePointLimit(VaultConstraints.MAX_NOTE_TAG_TEXT_CHARACTERS)
         currentBinding.saveRetryButton.setOnClickListener { viewModel.retrySave() }
+        currentBinding.addParagraphButton.setOnClickListener {
+            noteBlockAdapter.addBlock(NoteBlockType.PARAGRAPH)
+        }
+        currentBinding.addChecklistButton.setOnClickListener {
+            noteBlockAdapter.addBlock(NoteBlockType.CHECKLIST_ITEM)
+        }
+        currentBinding.tagsButton.setOnClickListener {
+            toggleMetadataPanel(currentBinding, showTags = true)
+        }
+        currentBinding.attachmentsButton.setOnClickListener {
+            toggleMetadataPanel(currentBinding, showTags = false)
+        }
+        currentBinding.datesButton.setOnClickListener { showDatesDialog() }
+    }
+
+    private fun configureBlockEditor(currentBinding: FragmentNoteEditorBinding) {
+        noteBlockAdapter = NoteBlockAdapter(
+            onDocumentChanged = viewModel::onBodyDocumentChanged,
+            onBodyFocusChanged = { focused -> setFocusMode(currentBinding, focused) },
+        )
+        currentBinding.bodyBlocks.layoutManager = LinearLayoutManager(requireContext())
+        currentBinding.bodyBlocks.adapter = noteBlockAdapter
+        currentBinding.bodyBlocks.itemAnimator = null
+    }
+
+    private fun toggleMetadataPanel(
+        currentBinding: FragmentNoteEditorBinding,
+        showTags: Boolean,
+    ) {
+        val samePanelVisible = currentBinding.metadataPanel.isVisible &&
+            currentBinding.tagsContainer.isVisible == showTags
+        currentBinding.metadataPanel.isVisible = !samePanelVisible
+        currentBinding.tagsContainer.isVisible = !samePanelVisible && showTags
+        currentBinding.attachmentsSection.isVisible = !samePanelVisible && !showTags
+        if (!samePanelVisible && showTags) currentBinding.tagsInput.requestFocus()
+    }
+
+    private fun setFocusMode(currentBinding: FragmentNoteEditorBinding, focused: Boolean) {
+        if (focused) currentBinding.metadataPanel.isVisible = false
+        currentBinding.toolbar.isVisible = !focused
+        currentBinding.titleContainer.isVisible = !focused
     }
 
     private fun configureBackHandling() {
@@ -295,12 +360,11 @@ class NoteEditorFragment : Fragment() {
         val isContent = state is EditorUiState.Content
         currentBinding.loadingIndicator.isVisible = state is EditorUiState.Loading
         currentBinding.errorState.isVisible = state is EditorUiState.Error
-        currentBinding.saveStatusRow.isVisible = isContent
+        currentBinding.saveStatusRow.isVisible = false
         currentBinding.saveRetryButton.isVisible = false
         currentBinding.titleContainer.isVisible = isContent
-        currentBinding.bodyContainer.isVisible = isContent
-        currentBinding.tagsContainer.isVisible = isContent
-        currentBinding.attachmentsSection.isVisible = isContent
+        currentBinding.bodyBlocks.isVisible = isContent
+        currentBinding.editorActionBar.isVisible = isContent
 
         when (state) {
             EditorUiState.Loading -> setEditorActionsEnabled(currentBinding, false)
@@ -332,10 +396,7 @@ class NoteEditorFragment : Fragment() {
                 currentBinding.titleInput.replaceTextIfDifferent(state.draft.title)
                 lastTitleInputValue = state.draft.title
             }
-            if (lastBodyInputValue !== state.draft.body) {
-                currentBinding.bodyInput.replaceTextIfDifferent(state.draft.body)
-                lastBodyInputValue = state.draft.body
-            }
+            noteBlockAdapter.submitDocument(state.draft.bodyDocument)
             if (lastTagsInputValue !== state.draft.tagsText) {
                 currentBinding.tagsInput.replaceTextIfDifferent(state.draft.tagsText)
                 lastTagsInputValue = state.draft.tagsText
@@ -344,9 +405,7 @@ class NoteEditorFragment : Fragment() {
             isRendering = false
         }
 
-        currentBinding.toolbar.title = state.draft.title.ifBlank {
-            getString(R.string.untitled_note)
-        }
+        currentBinding.toolbar.title = ""
         val colorStyle = state.draft.color.toStyle()
         val surfaceColor = ContextCompat.getColor(requireContext(), colorStyle.surfaceColor)
         val titleColor = ContextCompat.getColor(requireContext(), colorStyle.titleColor)
@@ -365,10 +424,13 @@ class NoteEditorFragment : Fragment() {
             state.saveStatus == EditorSaveStatus.FAILED &&
                 state.saveRetryable &&
                 !state.isClosing
+        currentBinding.saveStatusRow.isVisible =
+            state.saveStatus == EditorSaveStatus.FAILED
         val editorEnabled = !state.isClosing
         currentBinding.titleInput.isEnabled = editorEnabled
-        currentBinding.bodyInput.isEnabled = editorEnabled
         currentBinding.tagsInput.isEnabled = editorEnabled
+        currentBinding.bodyBlocks.isEnabled = editorEnabled
+        currentBinding.editorActionBar.isEnabled = editorEnabled
         setEditorActionsEnabled(
             currentBinding,
             enabled = !state.isClosing && !state.isMetadataSaving,
@@ -423,11 +485,6 @@ class NoteEditorFragment : Fragment() {
 
             R.id.action_archive -> {
                 viewModel.archiveAndClose()
-                true
-            }
-
-            R.id.action_add_attachment -> {
-                showAttachmentSourceChooser()
                 true
             }
 
@@ -569,10 +626,226 @@ class NoteEditorFragment : Fragment() {
         binding?.root?.let { root -> Snackbar.make(root, message, Snackbar.LENGTH_LONG).show() }
     }
 
+    private fun showDatesDialog() {
+        val state = viewModel.uiState.value as? EditorUiState.Content ?: return
+        val entries = state.draft.datedEntries
+        val labels = buildList {
+            add(getString(R.string.add_date))
+            entries.forEach { entry ->
+                val date = Instant.ofEpochMilli(entry.occurrenceAtEpochMillis)
+                    .atZone(ZoneId.of(entry.timeZoneId))
+                val formatted = if (entry.isAllDay) {
+                    date.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))
+                } else {
+                    date.format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT))
+                }
+                add("${entry.label.ifBlank { dateTypeLabel(entry.type) }} — $formatted")
+            }
+        }
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.manage_dates)
+            .setItems(labels.toTypedArray()) { _, index ->
+                if (index == 0) showDateEditor(null) else showDateEditor(entries[index - 1])
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun showDateEditor(existing: DatedEntry?) {
+        val context = requireContext()
+        val padding = resources.getDimensionPixelSize(R.dimen.space_m)
+        val container = android.widget.LinearLayout(context).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(padding, 0, padding, 0)
+        }
+        val types = DatedEntryType.entries
+        val typeSpinner = android.widget.Spinner(context).apply {
+            adapter = android.widget.ArrayAdapter(
+                context,
+                android.R.layout.simple_spinner_dropdown_item,
+                types.map(::dateTypeLabel),
+            )
+            setSelection(existing?.type?.let(types::indexOf) ?: 0)
+        }
+        val labelInput = android.widget.EditText(context).apply {
+            hint = getString(R.string.date_label_hint)
+            setText(existing?.label.orEmpty())
+            maxLines = 1
+        }
+        val zone = existing?.timeZoneId?.let(ZoneId::of) ?: ZoneId.systemDefault()
+        var selected = existing?.occurrenceAtEpochMillis
+            ?.let { Instant.ofEpochMilli(it).atZone(zone) }
+            ?: ZonedDateTime.now(zone).plusHours(1).withSecond(0).withNano(0)
+        val dateButton = com.google.android.material.button.MaterialButton(context).apply {
+            text = selected.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))
+            setOnClickListener {
+                DatePickerDialog(
+                    context,
+                    { _, year, month, day ->
+                        selected = selected.withYear(year).withMonth(month + 1).withDayOfMonth(day)
+                        text = selected.format(
+                            DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM),
+                        )
+                    },
+                    selected.year,
+                    selected.monthValue - 1,
+                    selected.dayOfMonth,
+                ).show()
+            }
+        }
+        val timeButton = com.google.android.material.button.MaterialButton(context).apply {
+            text = selected.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
+            setOnClickListener {
+                TimePickerDialog(
+                    context,
+                    { _, hour, minute ->
+                        selected = selected.withHour(hour).withMinute(minute)
+                        text = selected.format(
+                            DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT),
+                        )
+                    },
+                    selected.hour,
+                    selected.minute,
+                    android.text.format.DateFormat.is24HourFormat(context),
+                ).show()
+            }
+        }
+        val allDay = com.google.android.material.checkbox.MaterialCheckBox(context).apply {
+            text = getString(R.string.all_day)
+            isChecked = existing?.isAllDay == true
+            timeButton.isVisible = !isChecked
+            setOnCheckedChangeListener { _, checked -> timeButton.isVisible = !checked }
+        }
+        val recurrenceOptions = listOf(
+            getString(R.string.repeat_none),
+            getString(R.string.repeat_daily),
+            getString(R.string.repeat_weekly),
+            getString(R.string.repeat_monthly),
+            getString(R.string.repeat_yearly),
+        )
+        val recurrenceSpinner = android.widget.Spinner(context).apply {
+            adapter = android.widget.ArrayAdapter(
+                context,
+                android.R.layout.simple_spinner_dropdown_item,
+                recurrenceOptions,
+            )
+            setSelection(
+                when (existing?.recurrence?.unit) {
+                    null -> 0
+                    RecurrenceUnit.DAY -> 1
+                    RecurrenceUnit.WEEK -> 2
+                    RecurrenceUnit.MONTH -> 3
+                    RecurrenceUnit.YEAR -> 4
+                },
+            )
+        }
+        val alertLeadTimes = listOf(0L, 10L, 60L, 1_440L, 10_080L)
+        val alertSpinner = android.widget.Spinner(context).apply {
+            adapter = android.widget.ArrayAdapter(
+                context,
+                android.R.layout.simple_spinner_dropdown_item,
+                listOf(
+                    getString(R.string.alert_at_time),
+                    getString(R.string.alert_ten_minutes),
+                    getString(R.string.alert_one_hour),
+                    getString(R.string.alert_one_day),
+                    getString(R.string.alert_one_week),
+                ),
+            )
+            val existingLead = existing?.alerts?.firstOrNull()?.leadTimeMinutes ?: 0L
+            setSelection(alertLeadTimes.indexOf(existingLead).coerceAtLeast(0))
+        }
+        container.addView(typeSpinner)
+        container.addView(labelInput)
+        container.addView(dateButton)
+        container.addView(allDay)
+        container.addView(timeButton)
+        container.addView(recurrenceSpinner)
+        container.addView(alertSpinner)
+
+        val dialog = MaterialAlertDialogBuilder(context)
+            .setTitle(if (existing == null) R.string.add_date else R.string.edit_date)
+            .setView(container)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val occurrence = if (allDay.isChecked) {
+                    selected.withHour(9).withMinute(0).withSecond(0).withNano(0)
+                } else {
+                    selected.withSecond(0).withNano(0)
+                }
+                val recurrence = when (recurrenceSpinner.selectedItemPosition) {
+                    1 -> RecurrenceRule(1, RecurrenceUnit.DAY)
+                    2 -> RecurrenceRule(1, RecurrenceUnit.WEEK)
+                    3 -> RecurrenceRule(1, RecurrenceUnit.MONTH)
+                    4 -> RecurrenceRule(1, RecurrenceUnit.YEAR)
+                    else -> null
+                }
+                viewModel.saveDatedEntry(
+                    DatedEntryDraft(
+                        id = existing?.id,
+                        type = types[typeSpinner.selectedItemPosition],
+                        label = labelInput.text?.toString().orEmpty(),
+                        occurrenceAtEpochMillis = occurrence.toInstant().toEpochMilli(),
+                        isAllDay = allDay.isChecked,
+                        timeZoneId = zone.id,
+                        recurrence = recurrence,
+                        alertLeadTimesMinutes = listOf(
+                            alertLeadTimes[alertSpinner.selectedItemPosition],
+                        ),
+                    ),
+                )
+            }
+        if (existing != null) {
+            dialog.setNeutralButton(R.string.delete_note) { _, _ ->
+                viewModel.deleteDatedEntry(existing.id)
+            }
+        }
+        dialog.show()
+    }
+
+    private fun dateTypeLabel(type: DatedEntryType): String = getString(
+        when (type) {
+            DatedEntryType.REMINDER -> R.string.date_type_reminder
+            DatedEntryType.DEADLINE -> R.string.date_type_deadline
+            DatedEntryType.IMPORTANT_DATE -> R.string.date_type_important
+            DatedEntryType.RENEWAL -> R.string.date_type_renewal
+        },
+    )
+
+    private fun ensureReminderPermissions() {
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                requireContext(),
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val alarmManager =
+                requireContext().getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            if (!alarmManager.canScheduleExactAlarms()) {
+                showMessage(R.string.exact_alarm_reduced)
+                runCatching {
+                    startActivity(
+                        Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                            .setData(Uri.parse("package:${requireContext().packageName}")),
+                    )
+                }
+            }
+        }
+    }
+
     private fun handleEvent(event: EditorEvent) {
         when (event) {
             EditorEvent.NavigateBack -> (activity as? MainNavigator)?.navigateBack()
             is EditorEvent.ShowError -> showError(event.error)
+            EditorEvent.DatedEntrySaved -> {
+                showMessage(R.string.date_saved)
+                ensureReminderPermissions()
+            }
+            EditorEvent.DatedEntryDeleted -> showMessage(R.string.date_deleted)
         }
     }
 
@@ -630,13 +903,11 @@ class NoteEditorFragment : Fragment() {
         val rootStartPadding = currentBinding.root.paddingStart
         val rootEndPadding = currentBinding.root.paddingEnd
         val toolbarTopPadding = currentBinding.toolbar.paddingTop
-        val tagsParams = currentBinding.tagsContainer.layoutParams as ViewGroup.MarginLayoutParams
-        val tagsBottomMargin = tagsParams.bottomMargin
+        val actionBarBottomPadding = currentBinding.editorActionBar.paddingBottom
         ViewCompat.setOnApplyWindowInsetsListener(currentBinding.root) { _, insets ->
             val safeInsets = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
             )
-            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             val isRtl = currentBinding.root.layoutDirection == View.LAYOUT_DIRECTION_RTL
             val startInset = if (isRtl) safeInsets.right else safeInsets.left
             val endInset = if (isRtl) safeInsets.left else safeInsets.right
@@ -645,10 +916,9 @@ class NoteEditorFragment : Fragment() {
                 end = rootEndPadding + endInset,
             )
             currentBinding.toolbar.updatePadding(top = toolbarTopPadding + safeInsets.top)
-            val updatedTagsParams =
-                currentBinding.tagsContainer.layoutParams as ViewGroup.MarginLayoutParams
-            updatedTagsParams.bottomMargin = tagsBottomMargin + maxOf(safeInsets.bottom, ime.bottom)
-            currentBinding.tagsContainer.layoutParams = updatedTagsParams
+            currentBinding.editorActionBar.updatePadding(
+                bottom = actionBarBottomPadding + safeInsets.bottom,
+            )
             insets
         }
         ViewCompat.requestApplyInsets(currentBinding.root)

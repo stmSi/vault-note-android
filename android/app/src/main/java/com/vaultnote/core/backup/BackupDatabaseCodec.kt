@@ -8,6 +8,8 @@ import com.vaultnote.core.database.entity.AttachmentEntity
 import com.vaultnote.core.database.entity.ItemTagCrossRef
 import com.vaultnote.core.database.entity.TagEntity
 import com.vaultnote.core.database.entity.VaultItemEntity
+import com.vaultnote.core.database.entity.DatedEntryAlertEntity
+import com.vaultnote.core.database.entity.DatedEntryEntity
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.OutputStream
@@ -36,6 +38,8 @@ internal interface BackupDatabaseSink {
     fun acceptTag(tag: TagEntity)
     fun acceptItemTag(reference: ItemTagCrossRef)
     fun acceptAttachment(attachment: AttachmentEntity, entryPath: String)
+    fun acceptDatedEntry(entry: DatedEntryEntity) = Unit
+    fun acceptDatedEntryAlert(alert: DatedEntryAlertEntity) = Unit
     fun finish()
 }
 
@@ -62,6 +66,8 @@ internal class BackupDatabaseCodec(
         writeItems(json)
         writeTags(json)
         writeItemTags(json)
+        writeDatedEntries(json)
+        writeDatedEntryAlerts(json)
         writeAttachments(json, sources)
         json.endObject()
         json.flush()
@@ -89,6 +95,10 @@ internal class BackupDatabaseCodec(
             readItems(json, sink, schemaVersion)
             readTags(json, sink)
             readItemTags(json, sink)
+            if (schemaVersion >= 3) {
+                readDatedEntries(json, sink)
+                readDatedEntryAlerts(json, sink)
+            }
             readAttachments(json, sink)
             require(!json.hasNext())
             json.endObject()
@@ -188,6 +198,7 @@ internal class BackupDatabaseCodec(
         json.name("color").value(item.color.name)
         json.name("title").value(item.title)
         json.name("body").value(item.body)
+        writeNullableString(json, "bodyDocument", item.bodyDocumentJson)
         json.name("ocrText").value(item.ocrText)
         json.name("pinned").value(item.isPinned)
         json.name("favorite").value(item.isFavorite)
@@ -245,6 +256,12 @@ internal class BackupDatabaseCodec(
             val title = json.nextString()
             requireName(json, "body")
             val body = json.nextString()
+            val bodyDocument = if (schemaVersion >= 3) {
+                requireName(json, "bodyDocument")
+                nextNullableString(json)
+            } else {
+                null
+            }
             requireName(json, "ocrText")
             val ocrText = json.nextString()
             requireName(json, "pinned")
@@ -292,6 +309,7 @@ internal class BackupDatabaseCodec(
                     syncStatus = com.vaultnote.core.common.model.ItemSyncStatus.PENDING,
                     deletedAt = deletedAt,
                     conflictOriginId = conflictOriginId,
+                    bodyDocumentJson = bodyDocument,
                 ),
             )
         }
@@ -333,6 +351,134 @@ internal class BackupDatabaseCodec(
             require(!json.hasNext())
             json.endObject()
             sink.acceptItemTag(ItemTagCrossRef(itemId, tagId))
+        }
+        json.endArray()
+    }
+
+    private suspend fun writeDatedEntries(json: JsonWriter) {
+        json.name("datedEntries").beginArray()
+        var after = ""
+        while (true) {
+            val page = backupDao.getDatedEntriesPage(after, BackupFormat.PAGE_SIZE)
+            page.forEach { entry ->
+                json.beginObject()
+                json.name("id").value(entry.id)
+                json.name("itemId").value(entry.itemId)
+                json.name("type").value(entry.type.name)
+                json.name("label").value(entry.label)
+                json.name("occurrenceAt").value(entry.occurrenceAt)
+                json.name("allDay").value(entry.isAllDay)
+                json.name("timeZoneId").value(entry.timeZoneId)
+                writeNullableString(json, "recurrenceUnit", entry.recurrenceUnit?.name)
+                writeNullableLong(json, "recurrenceInterval", entry.recurrenceInterval?.toLong())
+                writeNullableLong(json, "completedAt", entry.completedAt)
+                json.name("createdAt").value(entry.createdAt)
+                json.name("updatedAt").value(entry.updatedAt)
+                json.endObject()
+            }
+            if (page.size < BackupFormat.PAGE_SIZE) break
+            after = page.last().id
+        }
+        json.endArray()
+    }
+
+    private suspend fun writeDatedEntryAlerts(json: JsonWriter) {
+        json.name("datedEntryAlerts").beginArray()
+        var after = ""
+        while (true) {
+            val page = backupDao.getDatedEntryAlertsPage(after, BackupFormat.PAGE_SIZE)
+            page.forEach { alert ->
+                json.beginObject()
+                json.name("id").value(alert.id)
+                json.name("entryId").value(alert.entryId)
+                json.name("leadTimeMinutes").value(alert.leadTimeMinutes)
+                json.name("createdAt").value(alert.createdAt)
+                json.endObject()
+            }
+            if (page.size < BackupFormat.PAGE_SIZE) break
+            after = page.last().id
+        }
+        json.endArray()
+    }
+
+    private fun readDatedEntries(json: JsonReader, sink: BackupDatabaseSink) {
+        requireName(json, "datedEntries")
+        json.beginArray()
+        while (json.hasNext()) {
+            json.beginObject()
+            requireName(json, "id")
+            val id = json.nextString()
+            requireName(json, "itemId")
+            val itemId = json.nextString()
+            requireName(json, "type")
+            val type = enumValueOf<com.vaultnote.core.common.model.DatedEntryType>(json.nextString())
+            requireName(json, "label")
+            val label = json.nextString()
+            requireName(json, "occurrenceAt")
+            val occurrenceAt = json.nextLong()
+            requireName(json, "allDay")
+            val allDay = json.nextBoolean()
+            requireName(json, "timeZoneId")
+            val timeZoneId = json.nextString()
+            requireName(json, "recurrenceUnit")
+            val recurrenceUnit = nextNullableString(json)?.let {
+                enumValueOf<com.vaultnote.core.common.model.RecurrenceUnit>(it)
+            }
+            requireName(json, "recurrenceInterval")
+            val recurrenceInterval = nextNullableLong(json)?.toInt()
+            requireName(json, "completedAt")
+            val completedAt = nextNullableLong(json)
+            requireName(json, "createdAt")
+            val createdAt = json.nextLong()
+            requireName(json, "updatedAt")
+            val updatedAt = json.nextLong()
+            require(!json.hasNext())
+            json.endObject()
+            sink.acceptDatedEntry(
+                DatedEntryEntity(
+                    id,
+                    itemId,
+                    type,
+                    label,
+                    occurrenceAt,
+                    allDay,
+                    timeZoneId,
+                    recurrenceUnit,
+                    recurrenceInterval,
+                    completedAt,
+                    createdAt,
+                    updatedAt,
+                ),
+            )
+        }
+        json.endArray()
+    }
+
+    private fun readDatedEntryAlerts(json: JsonReader, sink: BackupDatabaseSink) {
+        requireName(json, "datedEntryAlerts")
+        json.beginArray()
+        while (json.hasNext()) {
+            json.beginObject()
+            requireName(json, "id")
+            val id = json.nextString()
+            requireName(json, "entryId")
+            val entryId = json.nextString()
+            requireName(json, "leadTimeMinutes")
+            val leadTime = json.nextLong()
+            requireName(json, "createdAt")
+            val createdAt = json.nextLong()
+            require(!json.hasNext())
+            json.endObject()
+            sink.acceptDatedEntryAlert(
+                DatedEntryAlertEntity(
+                    id = id,
+                    entryId = entryId,
+                    leadTimeMinutes = leadTime,
+                    snoozedUntil = null,
+                    lastDeliveredOccurrence = null,
+                    createdAt = createdAt,
+                ),
+            )
         }
         json.endArray()
     }

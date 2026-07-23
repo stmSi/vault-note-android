@@ -125,7 +125,19 @@ interface VaultItemDao {
             created_at,
             updated_at,
             sync_status,
-            conflict_origin_id
+            conflict_origin_id,
+            (
+                SELECT MIN(d.occurrence_at) FROM dated_entries d
+                WHERE d.item_id = vault_items.id
+                  AND d.completed_at IS NULL
+                  AND d.occurrence_at >= :now
+            ) AS next_dated_entry_at,
+            EXISTS(
+                SELECT 1 FROM dated_entries d
+                WHERE d.item_id = vault_items.id
+                  AND d.completed_at IS NULL
+                  AND d.occurrence_at < :now
+            ) AS has_overdue_entry
         FROM vault_items
         WHERE deleted_at IS NULL AND is_archived = 0 AND type = 'NOTE'
         ORDER BY is_pinned DESC, sort_position ASC, updated_at DESC, id ASC
@@ -137,6 +149,7 @@ interface VaultItemDao {
         limit: Int,
         offset: Int,
         previewCharacterLimit: Int,
+        now: Long,
     ): Flow<List<VaultItemSummaryWithTags>>
 
     @Transaction
@@ -155,7 +168,19 @@ interface VaultItemDao {
             created_at,
             updated_at,
             sync_status,
-            conflict_origin_id
+            conflict_origin_id,
+            (
+                SELECT MIN(d.occurrence_at) FROM dated_entries d
+                WHERE d.item_id = vault_items.id
+                  AND d.completed_at IS NULL
+                  AND d.occurrence_at >= :now
+            ) AS next_dated_entry_at,
+            EXISTS(
+                SELECT 1 FROM dated_entries d
+                WHERE d.item_id = vault_items.id
+                  AND d.completed_at IS NULL
+                  AND d.occurrence_at < :now
+            ) AS has_overdue_entry
         FROM vault_items
         WHERE deleted_at IS NULL AND is_archived = 1
         ORDER BY updated_at DESC, id ASC
@@ -167,6 +192,7 @@ interface VaultItemDao {
         limit: Int,
         offset: Int,
         previewCharacterLimit: Int,
+        now: Long,
     ): Flow<List<VaultItemSummaryWithTags>>
 
     @Transaction
@@ -185,7 +211,19 @@ interface VaultItemDao {
             created_at,
             updated_at,
             sync_status,
-            conflict_origin_id
+            conflict_origin_id,
+            (
+                SELECT MIN(d.occurrence_at) FROM dated_entries d
+                WHERE d.item_id = vault_items.id
+                  AND d.completed_at IS NULL
+                  AND d.occurrence_at >= :now
+            ) AS next_dated_entry_at,
+            EXISTS(
+                SELECT 1 FROM dated_entries d
+                WHERE d.item_id = vault_items.id
+                  AND d.completed_at IS NULL
+                  AND d.occurrence_at < :now
+            ) AS has_overdue_entry
         FROM vault_items
         WHERE deleted_at IS NOT NULL
         ORDER BY deleted_at DESC, id ASC
@@ -197,6 +235,7 @@ interface VaultItemDao {
         limit: Int,
         offset: Int,
         previewCharacterLimit: Int,
+        now: Long,
     ): Flow<List<VaultItemSummaryWithTags>>
 
     @Transaction
@@ -215,7 +254,19 @@ interface VaultItemDao {
             created_at,
             updated_at,
             sync_status,
-            conflict_origin_id
+            conflict_origin_id,
+            (
+                SELECT MIN(d.occurrence_at) FROM dated_entries d
+                WHERE d.item_id = vault_items.id
+                  AND d.completed_at IS NULL
+                  AND d.occurrence_at >= :now
+            ) AS next_dated_entry_at,
+            EXISTS(
+                SELECT 1 FROM dated_entries d
+                WHERE d.item_id = vault_items.id
+                  AND d.completed_at IS NULL
+                  AND d.occurrence_at < :now
+            ) AS has_overdue_entry
         FROM vault_items
         WHERE sync_status = 'CONFLICT'
         ORDER BY updated_at DESC, id ASC
@@ -225,5 +276,6 @@ interface VaultItemDao {
     fun observeConflictSummaries(
         limit: Int,
         previewCharacterLimit: Int,
+        now: Long,
     ): Flow<List<VaultItemSummaryWithTags>>
 }

@@ -16,6 +16,7 @@ import com.vaultnote.core.database.dao.SyncOperationDao
 import com.vaultnote.core.database.dao.SyncStateDao
 import com.vaultnote.core.database.dao.TagDao
 import com.vaultnote.core.database.dao.VaultItemDao
+import com.vaultnote.core.database.dao.DatedEntryDao
 import com.vaultnote.core.database.entity.AppSettingEntity
 import com.vaultnote.core.database.entity.AttachmentEntity
 import com.vaultnote.core.database.entity.AttachmentFileCleanupEntity
@@ -26,6 +27,8 @@ import com.vaultnote.core.database.entity.SyncOperationEntity
 import com.vaultnote.core.database.entity.SyncStateEntity
 import com.vaultnote.core.database.entity.TagEntity
 import com.vaultnote.core.database.entity.VaultItemEntity
+import com.vaultnote.core.database.entity.DatedEntryAlertEntity
+import com.vaultnote.core.database.entity.DatedEntryEntity
 
 @Database(
     entities = [
@@ -39,6 +42,8 @@ import com.vaultnote.core.database.entity.VaultItemEntity
         SearchDocumentEntity::class,
         SearchFtsEntity::class,
         AppSettingEntity::class,
+        DatedEntryEntity::class,
+        DatedEntryAlertEntity::class,
     ],
     version = VaultDatabase.SCHEMA_VERSION,
     exportSchema = true,
@@ -54,9 +59,10 @@ abstract class VaultDatabase : RoomDatabase() {
     abstract fun syncStateDao(): SyncStateDao
     abstract fun searchDao(): SearchDao
     abstract fun appSettingDao(): AppSettingDao
+    abstract fun datedEntryDao(): DatedEntryDao
 
     companion object {
-        const val SCHEMA_VERSION: Int = 5
+        const val SCHEMA_VERSION: Int = 6
         const val DATABASE_NAME: String = "vaultnote.db"
 
         /** Adds optional media metadata and a crash-safe attachment file cleanup journal. */
@@ -146,12 +152,80 @@ abstract class VaultDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds structured note bodies and first-class dated entries with per-entry alerts. */
+        val MIGRATION_5_6: Migration = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE vault_items ADD COLUMN body_document_json TEXT")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS dated_entries (
+                        id TEXT NOT NULL,
+                        item_id TEXT NOT NULL,
+                        entry_type TEXT NOT NULL,
+                        label TEXT NOT NULL,
+                        occurrence_at INTEGER NOT NULL,
+                        is_all_day INTEGER NOT NULL,
+                        time_zone_id TEXT NOT NULL,
+                        recurrence_unit TEXT,
+                        recurrence_interval INTEGER,
+                        completed_at INTEGER,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        PRIMARY KEY(id),
+                        FOREIGN KEY(item_id) REFERENCES vault_items(id)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE INDEX IF NOT EXISTS index_dated_entries_item_id
+                    ON dated_entries(item_id)
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE INDEX IF NOT EXISTS index_dated_entries_agenda
+                    ON dated_entries(completed_at, occurrence_at, id)
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS dated_entry_alerts (
+                        id TEXT NOT NULL,
+                        entry_id TEXT NOT NULL,
+                        lead_time_minutes INTEGER NOT NULL,
+                        snoozed_until INTEGER,
+                        last_delivered_occurrence INTEGER,
+                        created_at INTEGER NOT NULL,
+                        PRIMARY KEY(id),
+                        FOREIGN KEY(entry_id) REFERENCES dated_entries(id)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE INDEX IF NOT EXISTS index_dated_entry_alerts_entry_id
+                    ON dated_entry_alerts(entry_id)
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE INDEX IF NOT EXISTS index_dated_entry_alerts_snoozed_until
+                    ON dated_entry_alerts(snoozed_until)
+                    """.trimIndent(),
+                )
+            }
+        }
+
         /** Production callers intentionally have no destructive migration fallback. */
         val ALL_MIGRATIONS: Array<Migration> = arrayOf(
             MIGRATION_1_2,
             MIGRATION_2_3,
             MIGRATION_3_4,
             MIGRATION_4_5,
+            MIGRATION_5_6,
         )
 
         private const val SORT_POSITION_GAP = 1_000_000_000_000L

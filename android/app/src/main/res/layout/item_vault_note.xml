@@ -81,6 +81,20 @@
         app:layout_constraintTop_toBottomOf="@id/header_bottom_barrier" />
 
     <TextView
+        android:id="@+id/date_status"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_xs"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textAppearance="?attr/textAppearanceLabelMedium"
+        android:textColor="@color/vault_primary"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/body_preview" />
+
+    <TextView
         android:id="@+id/tags"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
@@ -89,9 +103,9 @@
         android:maxLines="1"
         android:textAppearance="?attr/textAppearanceLabelMedium"
         android:textColor="@color/vault_primary"
-        app:layout_constraintBaseline_toBaselineOf="@id/updated_at"
         app:layout_constraintEnd_toStartOf="@id/updated_at"
-        app:layout_constraintStart_toStartOf="parent" />
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/date_status" />
 
     <TextView
         android:id="@+id/updated_at"
@@ -101,7 +115,7 @@
         android:textAppearance="?attr/textAppearanceLabelSmall"
         android:textColor="@color/vault_on_surface_variant"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/body_preview" />
+        app:layout_constraintTop_toBottomOf="@id/date_status" />
 
     <View
         android:layout_width="0dp"

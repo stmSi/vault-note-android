@@ -114,6 +114,8 @@ data class VaultItemSummary(
     val syncStatus: ItemSyncStatus,
     val conflictOriginId: String?,
     val tags: List<VaultTag>,
+    val nextDatedEntryAtEpochMillis: Long? = null,
+    val hasOverdueEntry: Boolean = false,
 )
 
 data class VaultNote(
@@ -135,4 +137,6 @@ data class VaultNote(
     val deletedAtEpochMillis: Long?,
     val conflictOriginId: String?,
     val tags: List<VaultTag>,
+    val bodyDocument: NoteBodyDocument? = null,
+    val datedEntries: List<DatedEntry> = emptyList(),
 )

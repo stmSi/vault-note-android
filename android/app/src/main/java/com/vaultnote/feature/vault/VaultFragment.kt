@@ -61,6 +61,9 @@ class VaultFragment : Fragment() {
             setHasFixedSize(true)
         }
         currentBinding.addNoteButton.setOnClickListener { viewModel.createNote() }
+        currentBinding.openCalendarButton.setOnClickListener {
+            (activity as? MainNavigator)?.openAgenda()
+        }
         currentBinding.retryButton.setOnClickListener { viewModel.retry() }
         currentBinding.previousPageButton.setOnClickListener { viewModel.previousPage() }
         currentBinding.nextPageButton.setOnClickListener { viewModel.nextPage() }
@@ -114,6 +117,7 @@ class VaultFragment : Fragment() {
         currentBinding.noteList.isVisible = state is VaultUiState.Content
         currentBinding.addNoteButton.isVisible = state.section == VaultSection.ACTIVE
         currentBinding.archiveTrashToggle.isVisible = state.section != VaultSection.ACTIVE
+        currentBinding.notesHeader.isVisible = state.section == VaultSection.ACTIVE
         if (state.section != VaultSection.ACTIVE) {
             val checkedId = if (state.section == VaultSection.ARCHIVED) {
                 R.id.show_archived_button

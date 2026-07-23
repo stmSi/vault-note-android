@@ -14,10 +14,13 @@ import com.vaultnote.core.common.model.VaultItemType
 import com.vaultnote.core.database.dao.AttachmentDao
 import com.vaultnote.core.database.dao.TagDao
 import com.vaultnote.core.database.dao.VaultItemDao
+import com.vaultnote.core.database.dao.DatedEntryDao
 import com.vaultnote.core.database.entity.AttachmentEntity
 import com.vaultnote.core.database.entity.ItemTagCrossRef
 import com.vaultnote.core.database.entity.TagEntity
 import com.vaultnote.core.database.entity.VaultItemEntity
+import com.vaultnote.core.database.entity.DatedEntryAlertEntity
+import com.vaultnote.core.database.entity.DatedEntryEntity
 import com.vaultnote.core.encryption.CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION
 import com.vaultnote.core.files.FilenameSanitizer
 import com.vaultnote.core.files.MAX_ATTACHMENT_BYTES
@@ -74,6 +77,7 @@ internal class RestoreStagingStore private constructor(
                 put("color", item.color.name)
                 put("title", item.title)
                 put("body", item.body)
+                putNullable("body_document", item.bodyDocumentJson)
                 put("ocr_text", item.ocrText)
                 put("is_pinned", item.isPinned)
                 put("is_favorite", item.isFavorite)
@@ -148,6 +152,49 @@ internal class RestoreStagingStore private constructor(
         require(actualAttachments <= expectedAttachments)
     }
 
+    override fun acceptDatedEntry(entry: DatedEntryEntity) {
+        check(!finished)
+        requireSafeId(entry.id)
+        requireSafeId(entry.itemId)
+        require(entry.occurrenceAt >= 0L)
+        require(entry.label.codePointCount(0, entry.label.length) <= MAX_DATE_LABEL_CHARACTERS)
+        sqlite.insertOrThrow(
+            DATED_ENTRIES,
+            null,
+            ContentValues().apply {
+                put("original_id", entry.id)
+                put("item_id", entry.itemId)
+                put("entry_type", entry.type.name)
+                put("label", entry.label)
+                put("occurrence_at", entry.occurrenceAt)
+                put("is_all_day", entry.isAllDay)
+                put("time_zone_id", entry.timeZoneId)
+                putNullable("recurrence_unit", entry.recurrenceUnit?.name)
+                putNullable("recurrence_interval", entry.recurrenceInterval)
+                putNullable("completed_at", entry.completedAt)
+                put("created_at", entry.createdAt)
+                put("updated_at", entry.updatedAt)
+            },
+        )
+    }
+
+    override fun acceptDatedEntryAlert(alert: DatedEntryAlertEntity) {
+        check(!finished)
+        requireSafeId(alert.id)
+        requireSafeId(alert.entryId)
+        require(alert.leadTimeMinutes >= 0L)
+        sqlite.insertOrThrow(
+            DATED_ENTRY_ALERTS,
+            null,
+            ContentValues().apply {
+                put("original_id", alert.id)
+                put("entry_id", alert.entryId)
+                put("lead_time_minutes", alert.leadTimeMinutes)
+                put("created_at", alert.createdAt)
+            },
+        )
+    }
+
     override fun finish() {
         check(!finished)
         try {
@@ -167,6 +214,7 @@ internal class RestoreStagingStore private constructor(
         itemDao: VaultItemDao,
         tagDao: TagDao,
         attachmentDao: AttachmentDao,
+        datedEntryDao: DatedEntryDao,
         idGenerator: IdGenerator,
     ): RestoreMappingStats {
         check(finished)
@@ -207,6 +255,28 @@ internal class RestoreStagingStore private constructor(
                     uniqueAttachmentId(attachmentDao, idGenerator)
                 }
                 updateFinalId(ATTACHMENTS, originalId, finalId)
+            }
+        }
+        query("SELECT original_id FROM $DATED_ENTRIES ORDER BY original_id").use { cursor ->
+            while (cursor.moveToNext()) {
+                val originalId = cursor.requiredString(0)
+                val finalId = if (datedEntryDao.getEntry(originalId) == null) {
+                    originalId
+                } else {
+                    uniqueDatedEntryId(datedEntryDao, idGenerator)
+                }
+                updateFinalId(DATED_ENTRIES, originalId, finalId)
+            }
+        }
+        query("SELECT original_id FROM $DATED_ENTRY_ALERTS ORDER BY original_id").use { cursor ->
+            while (cursor.moveToNext()) {
+                val originalId = cursor.requiredString(0)
+                val finalId = if (datedEntryDao.getAlert(originalId) == null) {
+                    originalId
+                } else {
+                    uniqueDatedEntryAlertId(datedEntryDao, idGenerator)
+                }
+                updateFinalId(DATED_ENTRY_ALERTS, originalId, finalId)
             }
         }
         return RestoreMappingStats(copiedItems)
@@ -314,7 +384,7 @@ internal class RestoreStagingStore private constructor(
         limit: Int,
     ): List<Pair<String, VaultItemEntity>> = query(
         """
-        SELECT original_id, final_id, type, color, title, body, ocr_text,
+        SELECT original_id, final_id, type, color, title, body, body_document, ocr_text,
                is_pinned, is_favorite, is_archived, sort_position, created_at, updated_at,
                local_revision, deleted_at, conflict_origin_id
         FROM $ITEMS
@@ -326,7 +396,7 @@ internal class RestoreStagingStore private constructor(
     ).use { cursor ->
         buildList {
             while (cursor.moveToNext()) {
-                val mappedConflict = cursor.optionalString(15)?.let(::mappedItemId)
+                val mappedConflict = cursor.optionalString(16)?.let(::mappedItemId)
                 add(
                     cursor.requiredString(0) to VaultItemEntity(
                         id = cursor.requiredString(1),
@@ -334,20 +404,21 @@ internal class RestoreStagingStore private constructor(
                         color = enumValueOf<VaultItemColor>(cursor.requiredString(3)),
                         title = cursor.requiredString(4),
                         body = cursor.requiredString(5),
-                        ocrText = cursor.requiredString(6),
-                        isPinned = cursor.getInt(7) != 0,
-                        isFavorite = cursor.getInt(8) != 0,
-                        isArchived = cursor.getInt(9) != 0,
-                        sortPosition = cursor.getLong(10),
-                        createdAt = cursor.getLong(11),
-                        updatedAt = cursor.getLong(12),
-                        localRevision = cursor.getLong(13).coerceAtLeast(1L),
+                        ocrText = cursor.requiredString(7),
+                        isPinned = cursor.getInt(8) != 0,
+                        isFavorite = cursor.getInt(9) != 0,
+                        isArchived = cursor.getInt(10) != 0,
+                        sortPosition = cursor.getLong(11),
+                        createdAt = cursor.getLong(12),
+                        updatedAt = cursor.getLong(13),
+                        localRevision = cursor.getLong(14).coerceAtLeast(1L),
                         remoteRevision = null,
                         lastSyncedRevision = null,
                         serverVersionToken = null,
                         syncStatus = ItemSyncStatus.PENDING,
-                        deletedAt = cursor.optionalLong(14),
+                        deletedAt = cursor.optionalLong(15),
                         conflictOriginId = mappedConflict,
+                        bodyDocumentJson = cursor.optionalString(6),
                     ),
                 )
             }
@@ -469,6 +540,78 @@ internal class RestoreStagingStore private constructor(
         }
     }
 
+    fun readDatedEntriesPage(
+        afterOriginalId: String,
+        limit: Int,
+    ): List<Pair<String, DatedEntryEntity>> = query(
+        """
+        SELECT dates.original_id, dates.final_id, items.final_id, dates.entry_type,
+               dates.label, dates.occurrence_at, dates.is_all_day, dates.time_zone_id,
+               dates.recurrence_unit, dates.recurrence_interval, dates.completed_at,
+               dates.created_at, dates.updated_at
+        FROM $DATED_ENTRIES dates
+        JOIN $ITEMS items ON items.original_id = dates.item_id
+        WHERE dates.original_id > ?
+        ORDER BY dates.original_id
+        LIMIT ?
+        """.trimIndent(),
+        arrayOf(afterOriginalId, limit.toString()),
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                add(
+                    cursor.requiredString(0) to DatedEntryEntity(
+                        id = cursor.requiredString(1),
+                        itemId = cursor.requiredString(2),
+                        type = enumValueOf(cursor.requiredString(3)),
+                        label = cursor.requiredString(4),
+                        occurrenceAt = cursor.getLong(5),
+                        isAllDay = cursor.getInt(6) != 0,
+                        timeZoneId = cursor.requiredString(7),
+                        recurrenceUnit = cursor.optionalString(8)?.let {
+                            enumValueOf<com.vaultnote.core.common.model.RecurrenceUnit>(it)
+                        },
+                        recurrenceInterval = cursor.optionalInt(9),
+                        completedAt = cursor.optionalLong(10),
+                        createdAt = cursor.getLong(11),
+                        updatedAt = cursor.getLong(12),
+                    ),
+                )
+            }
+        }
+    }
+
+    fun readDatedEntryAlertsPage(
+        afterOriginalId: String,
+        limit: Int,
+    ): List<Pair<String, DatedEntryAlertEntity>> = query(
+        """
+        SELECT alerts.original_id, alerts.final_id, dates.final_id,
+               alerts.lead_time_minutes, alerts.created_at
+        FROM $DATED_ENTRY_ALERTS alerts
+        JOIN $DATED_ENTRIES dates ON dates.original_id = alerts.entry_id
+        WHERE alerts.original_id > ?
+        ORDER BY alerts.original_id
+        LIMIT ?
+        """.trimIndent(),
+        arrayOf(afterOriginalId, limit.toString()),
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                add(
+                    cursor.requiredString(0) to DatedEntryAlertEntity(
+                        id = cursor.requiredString(1),
+                        entryId = cursor.requiredString(2),
+                        leadTimeMinutes = cursor.getLong(3),
+                        snoozedUntil = null,
+                        lastDeliveredOccurrence = null,
+                        createdAt = cursor.getLong(4),
+                    ),
+                )
+            }
+        }
+    }
+
     fun counts(): Pair<Long, Long> = actualItems to actualAttachments
 
     fun isReadyForCommit(): Boolean = finished && !closed
@@ -495,6 +638,16 @@ internal class RestoreStagingStore private constructor(
 
     private suspend fun uniqueTagId(dao: TagDao, ids: IdGenerator): String =
         uniqueId(ids) { candidate -> dao.getById(candidate) != null || finalIdInUse(TAGS, candidate) }
+
+    private suspend fun uniqueDatedEntryId(dao: DatedEntryDao, ids: IdGenerator): String =
+        uniqueId(ids) { candidate ->
+            dao.getEntry(candidate) != null || finalIdInUse(DATED_ENTRIES, candidate)
+        }
+
+    private suspend fun uniqueDatedEntryAlertId(dao: DatedEntryDao, ids: IdGenerator): String =
+        uniqueId(ids) { candidate ->
+            dao.getAlert(candidate) != null || finalIdInUse(DATED_ENTRY_ALERTS, candidate)
+        }
 
     private suspend fun uniqueId(
         ids: IdGenerator,
@@ -673,6 +826,7 @@ internal class RestoreStagingStore private constructor(
                     color TEXT NOT NULL,
                     title TEXT NOT NULL,
                     body TEXT NOT NULL,
+                    body_document TEXT,
                     ocr_text TEXT NOT NULL,
                     is_pinned INTEGER NOT NULL,
                     is_favorite INTEGER NOT NULL,
@@ -693,6 +847,36 @@ internal class RestoreStagingStore private constructor(
                     final_id TEXT,
                     name TEXT NOT NULL,
                     normalized_name TEXT UNIQUE NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE TABLE $DATED_ENTRIES (
+                    original_id TEXT PRIMARY KEY NOT NULL,
+                    final_id TEXT UNIQUE,
+                    item_id TEXT NOT NULL REFERENCES $ITEMS(original_id),
+                    entry_type TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    occurrence_at INTEGER NOT NULL,
+                    is_all_day INTEGER NOT NULL,
+                    time_zone_id TEXT NOT NULL,
+                    recurrence_unit TEXT,
+                    recurrence_interval INTEGER,
+                    completed_at INTEGER,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE TABLE $DATED_ENTRY_ALERTS (
+                    original_id TEXT PRIMARY KEY NOT NULL,
+                    final_id TEXT UNIQUE,
+                    entry_id TEXT NOT NULL REFERENCES $DATED_ENTRIES(original_id),
+                    lead_time_minutes INTEGER NOT NULL,
                     created_at INTEGER NOT NULL
                 )
                 """.trimIndent(),
@@ -751,8 +935,11 @@ internal class RestoreStagingStore private constructor(
         private const val ARCHIVE_ENTRIES = "archive_entries"
         private const val ITEM_TAGS = "item_tags"
         private const val ATTACHMENTS = "attachments"
+        private const val DATED_ENTRIES = "dated_entries"
+        private const val DATED_ENTRY_ALERTS = "dated_entry_alerts"
         private const val MAX_TAG_CHARACTERS = 64
         private const val MAX_OCR_CHARACTERS = 200_000
+        private const val MAX_DATE_LABEL_CHARACTERS = 200
         private const val MAX_ID_GENERATION_ATTEMPTS = 16
         private val SAFE_ID_PATTERN = Regex("[A-Za-z0-9_-]{1,128}")
         private val SHA256_PATTERN = Regex("[a-f0-9]{64}")

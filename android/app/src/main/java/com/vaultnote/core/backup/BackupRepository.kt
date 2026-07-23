@@ -21,6 +21,8 @@ import com.vaultnote.core.database.entity.SyncOperationEntity
 import com.vaultnote.core.files.RestoredAttachmentStorage
 import com.vaultnote.core.files.StagedRestoredAttachment
 import com.vaultnote.core.security.VaultLockManager
+import com.vaultnote.core.reminder.NoOpReminderScheduler
+import com.vaultnote.core.reminder.ReminderScheduler
 import com.vaultnote.core.sync.SyncScheduleResult
 import com.vaultnote.core.sync.SyncScheduler
 import java.io.BufferedInputStream
@@ -109,6 +111,7 @@ internal class AndroidBackupRepository(
     private val dispatchers: DispatcherProvider,
     private val clock: Clock,
     private val idGenerator: IdGenerator,
+    private val reminderScheduler: ReminderScheduler = NoOpReminderScheduler,
     private val crypto: BackupCrypto = BackupCrypto(),
     private val resolver: ContentResolver = context.applicationContext.contentResolver,
     private val availableBytes: (File) -> Long = { directory ->
@@ -462,6 +465,7 @@ internal class AndroidBackupRepository(
                 commitStagedFiles(staging)
                 databaseTransactionStarted = true
                 database.withTransaction { commitStagedDatabase(staging) }
+                reminderScheduler.reconcileAll()
                 val scheduled = try {
                     syncScheduler.requestSync()
                 } catch (_: RuntimeException) {
@@ -840,6 +844,7 @@ internal class AndroidBackupRepository(
             itemDao = database.vaultItemDao(),
             tagDao = database.tagDao(),
             attachmentDao = database.attachmentDao(),
+            datedEntryDao = database.datedEntryDao(),
             idGenerator = idGenerator,
         )
 
@@ -1015,6 +1020,7 @@ internal class AndroidBackupRepository(
         val searchDao = database.searchDao()
         val syncDao = database.syncOperationDao()
         val cleanupDao = database.attachmentFileCleanupDao()
+        val datedEntryDao = database.datedEntryDao()
 
         var after = ""
         while (true) {
@@ -1043,6 +1049,22 @@ internal class AndroidBackupRepository(
         while (true) {
             val page = staging.readAttachmentsPage(after, BackupFormat.PAGE_SIZE)
             page.forEach { (_, attachment) -> attachmentDao.insert(attachment) }
+            if (page.size < BackupFormat.PAGE_SIZE) break
+            after = page.last().first
+        }
+        after = ""
+        while (true) {
+            val page = staging.readDatedEntriesPage(after, BackupFormat.PAGE_SIZE)
+            page.forEach { (_, entry) -> datedEntryDao.insertEntry(entry) }
+            if (page.size < BackupFormat.PAGE_SIZE) break
+            after = page.last().first
+        }
+        after = ""
+        while (true) {
+            val page = staging.readDatedEntryAlertsPage(after, BackupFormat.PAGE_SIZE)
+            if (page.isNotEmpty()) {
+                datedEntryDao.insertAlerts(page.map { it.second })
+            }
             if (page.size < BackupFormat.PAGE_SIZE) break
             after = page.last().first
         }

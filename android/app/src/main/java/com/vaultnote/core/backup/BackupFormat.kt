@@ -25,7 +25,7 @@ internal object BackupFormat {
     const val MIN_READER_VERSION = 1
     const val PLAINTEXT_VERSION = 2
     const val PLAINTEXT_MIN_READER_VERSION = 2
-    const val DATABASE_SCHEMA_VERSION = 2
+    const val DATABASE_SCHEMA_VERSION = 3
     const val MIN_DATABASE_SCHEMA_VERSION = 1
     const val MANIFEST_PATH = "manifest.json"
     const val DATABASE_PATH = "database.json.enc"

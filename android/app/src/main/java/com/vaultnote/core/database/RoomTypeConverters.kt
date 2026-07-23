@@ -8,8 +8,23 @@ import com.vaultnote.core.common.model.SyncOperationState
 import com.vaultnote.core.common.model.SyncOperationType
 import com.vaultnote.core.common.model.VaultItemType
 import com.vaultnote.core.common.model.VaultItemColor
+import com.vaultnote.core.common.model.DatedEntryType
+import com.vaultnote.core.common.model.RecurrenceUnit
 
 class RoomTypeConverters {
+    @TypeConverter
+    fun datedEntryTypeToString(value: DatedEntryType): String = value.name
+
+    @TypeConverter
+    fun stringToDatedEntryType(value: String): DatedEntryType = enumValueOf(value)
+
+    @TypeConverter
+    fun recurrenceUnitToString(value: RecurrenceUnit?): String? = value?.name
+
+    @TypeConverter
+    fun stringToRecurrenceUnit(value: String?): RecurrenceUnit? =
+        value?.let { enumValueOf<RecurrenceUnit>(it) }
+
     @TypeConverter
     fun vaultItemColorToString(value: VaultItemColor): String = value.name
 
