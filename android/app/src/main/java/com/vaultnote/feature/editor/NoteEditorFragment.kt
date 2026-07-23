@@ -324,6 +324,12 @@ class NoteEditorFragment : Fragment() {
                     updateEditorChrome(currentBinding)
                 }
             },
+            onBlockFocusRequested = { position ->
+                currentBinding.bodyBlocks.post {
+                    if (binding !== currentBinding) return@post
+                    currentBinding.bodyBlocks.scrollToPosition(position)
+                }
+            },
         )
         currentBinding.bodyBlocks.layoutManager = LinearLayoutManager(requireContext())
         currentBinding.bodyBlocks.adapter = noteBlockAdapter

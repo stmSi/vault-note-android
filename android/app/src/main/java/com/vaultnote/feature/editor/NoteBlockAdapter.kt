@@ -19,8 +19,10 @@ import java.util.UUID
 internal class NoteBlockAdapter(
     private val onDocumentChanged: (NoteBodyDocument) -> Unit,
     private val onBodyFocusChanged: (Boolean) -> Unit,
+    private val onBlockFocusRequested: (Int) -> Unit,
 ) : RecyclerView.Adapter<NoteBlockAdapter.Holder>() {
     private val blocks = mutableListOf<NoteBlock>()
+    private var pendingFocus: PendingFocus? = null
 
     init {
         setHasStableIds(true)
@@ -35,7 +37,10 @@ internal class NoteBlockAdapter(
     override fun getItemCount(): Int = blocks.size
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
-        holder.bind(blocks[position])
+        holder.bind(
+            block = blocks[position],
+            showBodyHint = blocks.size == 1 && position == 0,
+        )
     }
 
     override fun onViewRecycled(holder: Holder) {
@@ -51,13 +56,17 @@ internal class NoteBlockAdapter(
 
     fun addBlock(type: NoteBlockType) {
         val position = blocks.size
-        blocks += NoteBlock(
+        val block = NoteBlock(
             id = UUID.randomUUID().toString(),
             type = type,
             text = "",
         )
+        blocks += block
+        pendingFocus = PendingFocus(block.id, 0)
         notifyItemInserted(position)
+        if (position == 1) notifyItemChanged(0)
         dispatchDocument()
+        onBlockFocusRequested(position)
     }
 
     private fun updateText(blockId: String, value: String) {
@@ -86,25 +95,29 @@ internal class NoteBlockAdapter(
         } else {
             original.type
         }
-        blocks.add(
-            index + 1,
-            NoteBlock(
-                id = UUID.randomUUID().toString(),
-                type = nextType,
-                text = after,
-            ),
+        val nextBlock = NoteBlock(
+            id = UUID.randomUUID().toString(),
+            type = nextType,
+            text = after,
         )
+        blocks.add(index + 1, nextBlock)
+        pendingFocus = PendingFocus(nextBlock.id, 0)
         notifyItemChanged(index)
         notifyItemInserted(index + 1)
         dispatchDocument()
+        onBlockFocusRequested(index + 1)
     }
 
     private fun deleteEmptyBlock(blockId: String): Boolean {
         val index = blocks.indexOfFirst { it.id == blockId }
         if (index <= 0 || blocks[index].text.isNotEmpty()) return false
+        val previousBlock = blocks[index - 1]
         blocks.removeAt(index)
+        pendingFocus = PendingFocus(previousBlock.id, previousBlock.text.length)
         notifyItemRemoved(index)
+        notifyItemChanged(index - 1)
         dispatchDocument()
+        onBlockFocusRequested(index - 1)
         return true
     }
 
@@ -119,12 +132,17 @@ internal class NoteBlockAdapter(
         private var boundId: String? = null
         private var rendering = false
 
-        fun bind(block: NoteBlock) = with(binding) {
+        fun bind(block: NoteBlock, showBodyHint: Boolean) = with(binding) {
             recycle()
             boundId = block.id
             rendering = true
             text.setText(block.text)
             text.setSelection(text.text?.length ?: 0)
+            text.hint = if (showBodyHint) {
+                text.context.getString(com.vaultnote.R.string.note_body_hint)
+            } else {
+                null
+            }
             checkBox.visibility =
                 if (block.type == NoteBlockType.CHECKLIST_ITEM) View.VISIBLE else View.GONE
             checkBox.isChecked = block.isChecked
@@ -167,6 +185,17 @@ internal class NoteBlockAdapter(
                     text.text.isNullOrEmpty() &&
                     boundId?.let(::deleteEmptyBlock) == true
             }
+            pendingFocus?.takeIf { it.blockId == block.id }?.let { request ->
+                pendingFocus = null
+                text.post {
+                    if (boundId != request.blockId) return@post
+                    text.requestFocus()
+                    text.setSelection(
+                        request.cursorOffset.coerceAtMost(text.text?.length ?: 0),
+                    )
+                    text.requestCursorVisibility()
+                }
+            }
         }
 
         fun recycle() {
@@ -178,6 +207,11 @@ internal class NoteBlockAdapter(
             boundId = null
         }
     }
+
+    private data class PendingFocus(
+        val blockId: String,
+        val cursorOffset: Int,
+    )
 }
 
 internal fun TextInputEditText.requestCursorVisibility() {
