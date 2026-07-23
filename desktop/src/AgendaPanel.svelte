@@ -115,8 +115,8 @@
     z-index: 12;
     display: grid;
     grid-template-rows: auto auto minmax(0, 1fr);
-    color: #293b37;
-    background: #f7faf9;
+    color: var(--vn-text);
+    background: var(--vn-surface-subtle);
   }
 
   header {
@@ -124,8 +124,8 @@
     align-items: center;
     justify-content: space-between;
     padding: 16px 20px;
-    color: #fff;
-    background: #1e554f;
+    color: var(--vn-on-accent);
+    background: var(--vn-accent-header);
   }
 
   header p,
@@ -135,7 +135,7 @@
 
   header p {
     font-size: 11px;
-    color: #cbe0db;
+    color: var(--vn-on-accent-muted);
   }
 
   header h2 {
@@ -146,9 +146,9 @@
     width: 36px;
     height: 36px;
     font-size: 24px;
-    color: #fff;
+    color: var(--vn-on-accent);
     background: transparent;
-    border-color: #6c918a;
+    border-color: var(--vn-accent);
   }
 
   .calendar-controls {
@@ -156,8 +156,8 @@
     align-items: end;
     gap: 10px;
     padding: 12px 20px;
-    background: #e8f2ef;
-    border-bottom: 1px solid #cadbd7;
+    background: var(--vn-accent-soft);
+    border-bottom: 1px solid var(--vn-border);
   }
 
   .calendar-controls label:not(.completed-toggle) {
@@ -171,6 +171,10 @@
   .calendar-controls button {
     min-height: 36px;
     padding: 6px 10px;
+    color: var(--vn-text);
+    background: var(--vn-control-background);
+    border: 1px solid var(--vn-border-strong);
+    border-radius: 8px;
   }
 
   .completed-toggle {
@@ -183,7 +187,7 @@
   }
 
   .completed-toggle input {
-    accent-color: #237767;
+    accent-color: var(--vn-accent);
   }
 
   .agenda-list {
@@ -197,14 +201,14 @@
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 12px;
     margin-bottom: 10px;
-    background: #fff;
-    border: 1px solid #d4dfdc;
-    border-left: 4px solid #3c8a7b;
+    background: var(--vn-surface);
+    border: 1px solid var(--vn-border);
+    border-left: 4px solid var(--vn-accent);
     border-radius: 10px;
   }
 
   article.overdue {
-    border-left-color: #c55348;
+    border-left-color: var(--vn-danger);
   }
 
   article.completed {
@@ -222,7 +226,7 @@
 
   .agenda-main span,
   .agenda-main small {
-    color: #657873;
+    color: var(--vn-text-muted);
   }
 
   .date-type {
@@ -249,7 +253,7 @@
     gap: 5px;
     place-content: center;
     min-height: 220px;
-    color: #6b7c78;
+    color: var(--vn-text-muted);
     text-align: center;
   }
 

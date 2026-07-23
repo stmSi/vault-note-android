@@ -167,15 +167,15 @@
     display: grid;
     place-items: center;
     padding: 24px;
-    background: rgb(15 35 38 / 55%);
+    background: var(--vn-overlay);
   }
 
   .date-dialog {
     width: min(100%, 620px);
     max-height: calc(100vh - 48px);
     overflow: auto;
-    color: #253632;
-    background: #fff;
+    color: var(--vn-text);
+    background: var(--vn-surface);
     border-radius: 16px;
     box-shadow: 0 22px 70px rgb(0 0 0 / 30%);
   }
@@ -190,7 +190,7 @@
 
   header {
     justify-content: space-between;
-    border-bottom: 1px solid #dde6e3;
+    border-bottom: 1px solid var(--vn-border);
   }
 
   header h2,
@@ -201,7 +201,7 @@
   .eyebrow {
     font-size: 11px;
     font-weight: 700;
-    color: #4f776f;
+    color: var(--vn-control-text);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -231,9 +231,9 @@
   select {
     min-height: 38px;
     padding: 7px 9px;
-    color: #253632;
-    background: #fff;
-    border: 1px solid #bdcbc7;
+    color: var(--vn-text);
+    background: var(--vn-control-background);
+    border: 1px solid var(--vn-border-strong);
     border-radius: 8px;
   }
 
@@ -262,7 +262,7 @@
     width: 17px;
     min-height: 17px;
     margin: 0;
-    accent-color: #237767;
+    accent-color: var(--vn-accent);
   }
 
   .disabled {
@@ -271,7 +271,7 @@
 
   fieldset {
     padding: 12px;
-    border: 1px solid #d4dfdc;
+    border: 1px solid var(--vn-border);
     border-radius: 10px;
   }
 
@@ -290,13 +290,13 @@
   fieldset small {
     display: block;
     margin-top: 10px;
-    color: #61736f;
+    color: var(--vn-text-muted);
   }
 
   footer {
     display: grid;
     grid-template-columns: auto 1fr auto auto;
-    border-top: 1px solid #dde6e3;
+    border-top: 1px solid var(--vn-border);
   }
 
   footer button {
@@ -305,9 +305,9 @@
   }
 
   .primary-button {
-    color: #fff;
-    background: #1e6a5c;
-    border-color: #1e6a5c;
+    color: var(--vn-on-accent);
+    background: var(--vn-accent-strong);
+    border-color: var(--vn-accent-strong);
   }
 
   @media (max-width: 560px) {

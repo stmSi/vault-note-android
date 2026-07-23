@@ -78,11 +78,11 @@
     grid-template-rows: auto minmax(0, 1fr);
     width: min(620px, calc(100% - 36px));
     max-height: min(430px, calc(100% - 100px));
-    color: #2b3c38;
-    background: #fff;
-    border: 1px solid #cbd8d5;
+    color: var(--vn-text);
+    background: var(--vn-surface);
+    border: 1px solid var(--vn-border);
     border-radius: 12px;
-    box-shadow: 0 15px 50px rgb(22 55 50 / 22%);
+    box-shadow: var(--vn-panel-shadow);
   }
 
   header {
@@ -91,8 +91,8 @@
     align-items: center;
     gap: 8px;
     padding: 10px 12px;
-    background: #eff6f4;
-    border-bottom: 1px solid #d5e1de;
+    background: var(--vn-surface-muted);
+    border-bottom: 1px solid var(--vn-border);
     border-radius: 12px 12px 0 0;
   }
 
@@ -101,7 +101,7 @@
   }
 
   header small {
-    color: #6a7d78;
+    color: var(--vn-text-muted);
   }
 
   header button {
@@ -110,8 +110,8 @@
 
   .add-button {
     padding: 5px 9px;
-    color: #1d6256;
-    border-color: #a9c9c1;
+    color: var(--vn-control-text);
+    border-color: var(--vn-border-strong);
   }
 
   .close-button {
@@ -129,7 +129,7 @@
 
   .date-list > p {
     padding: 18px;
-    color: #687a76;
+    color: var(--vn-text-muted);
     text-align: center;
   }
 
@@ -137,8 +137,8 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     margin-bottom: 7px;
-    border: 1px solid #dce5e2;
-    border-left: 3px solid #3b8879;
+    border: 1px solid var(--vn-border);
+    border-left: 3px solid var(--vn-accent);
     border-radius: 8px;
   }
 
@@ -158,13 +158,13 @@
   .date-main span {
     font-size: 9px;
     font-weight: 800;
-    color: #4e746c;
+    color: var(--vn-control-text);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
 
   .date-main small {
-    color: #687a76;
+    color: var(--vn-text-muted);
   }
 
   .date-actions {

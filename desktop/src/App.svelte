@@ -83,8 +83,7 @@
   let selected: VaultNote | null = null;
   let editorTitle = '';
   let editorDocument: NoteBodyDocument = { version: 1, blocks: [] };
-  let bodyFocused = false;
-  let metadataPanel: 'dates' | 'files' | null = null;
+  let metadataPanel: 'dates' | null = null;
   let dateDialogOpen = false;
   let editingDate: DatedEntry | null = null;
   let agendaOpen = false;
@@ -336,7 +335,6 @@
     actionError = null;
     attachments = [];
     metadataPanel = null;
-    bodyFocused = false;
     void loadNoteAttachments(note.id);
     if (note.deletedAtEpochMillis !== null) {
       autosaver = null;
@@ -707,8 +705,8 @@
     await openNote(itemId);
   }
 
-  function toggleMetadataPanel(panel: 'dates' | 'files'): void {
-    metadataPanel = metadataPanel === panel ? null : panel;
+  function toggleDatesPanel(): void {
+    metadataPanel = metadataPanel === 'dates' ? null : 'dates';
   }
 
   function formattedDate(epochMillis: number): string {
@@ -858,7 +856,7 @@
       </section>
     </aside>
 
-    <section class:body-focused={bodyFocused} class="editor-pane" aria-label="Note editor">
+    <section class="editor-pane" aria-label="Note editor">
       {#if selected === null}
         <div class="editor-empty">
           <div class="empty-glyph" aria-hidden="true">✦</div>
@@ -914,12 +912,43 @@
             document={editorDocument}
             readonly={selected.deletedAtEpochMillis !== null}
             dateCount={selected.datedEntries.length}
-            fileCount={attachments.length}
             onDocumentChange={bodyDocumentChanged}
-            onFocusChange={(focused) => (bodyFocused = focused)}
-            onDates={() => toggleMetadataPanel('dates')}
-            onFiles={() => toggleMetadataPanel('files')}
+            onDates={toggleDatesPanel}
           />
+          <section class="attachment-section" aria-label="Attachments">
+            <header>
+              <div>
+                <strong>Attachments</strong>
+                <small>
+                  {attachments.length} {attachments.length === 1 ? 'file' : 'files'}
+                </small>
+              </div>
+              {#if selected.deletedAtEpochMillis === null}
+                <button disabled={attachmentBusy} onclick={addAttachment}>+ Add file</button>
+              {/if}
+            </header>
+            <div class="attachment-list">
+              {#if attachments.length === 0}
+                <p>No attachments yet.</p>
+              {/if}
+              {#each attachments as attachment (attachment.id)}
+                <div class="attachment-row">
+                  <span>
+                    <strong>{attachment.displayName}</strong>
+                    <small>
+                      {formattedFileSize(attachment.fileSize)} · {authentication?.encryptionMode === 'PASSWORD'
+                        ? 'encrypted locally'
+                        : 'stored without encryption'}
+                    </small>
+                  </span>
+                  <button disabled={attachmentBusy} onclick={() => saveAttachment(attachment.id)}>Save copy</button>
+                  {#if selected.deletedAtEpochMillis === null}
+                    <button class="danger-button" disabled={attachmentBusy} onclick={() => removeAttachment(attachment.id)}>Delete</button>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          </section>
           {#if metadataPanel === 'dates' && selected.deletedAtEpochMillis === null}
             <DatePanel
               entries={selected.datedEntries}
@@ -931,40 +960,6 @@
               onExport={exportDate}
               onClose={() => (metadataPanel = null)}
             />
-          {:else if metadataPanel === 'files'}
-            <section class="attachment-panel" aria-label="Attachments">
-              <header>
-                <div>
-                  <strong>Attachments</strong>
-                  <small>Hidden until you open this panel</small>
-                </div>
-                {#if selected.deletedAtEpochMillis === null}
-                  <button disabled={attachmentBusy} onclick={addAttachment}>+ Add file</button>
-                {/if}
-                <button aria-label="Close files" onclick={() => (metadataPanel = null)}>×</button>
-              </header>
-              <div class="attachment-list">
-                {#if attachments.length === 0}
-                  <p>No attachments yet.</p>
-                {/if}
-                {#each attachments as attachment (attachment.id)}
-                  <div class="attachment-row">
-                    <span>
-                      <strong>{attachment.displayName}</strong>
-                      <small>
-                        {formattedFileSize(attachment.fileSize)} · {authentication?.encryptionMode === 'PASSWORD'
-                          ? 'encrypted locally'
-                          : 'stored without encryption'}
-                      </small>
-                    </span>
-                    <button disabled={attachmentBusy} onclick={() => saveAttachment(attachment.id)}>Save copy</button>
-                    {#if selected.deletedAtEpochMillis === null}
-                      <button class="danger-button" disabled={attachmentBusy} onclick={() => removeAttachment(attachment.id)}>Delete</button>
-                    {/if}
-                  </div>
-                {/each}
-              </div>
-            </section>
           {/if}
           <footer class="editor-footer">
             <span>Revision {selected.localRevision}</span>

@@ -5,11 +5,8 @@
   export let document: NoteBodyDocument;
   export let readonly = false;
   export let dateCount = 0;
-  export let fileCount = 0;
   export let onDocumentChange: (document: NoteBodyDocument) => void;
-  export let onFocusChange: (focused: boolean) => void = () => undefined;
   export let onDates: () => void;
-  export let onFiles: () => void;
 
   let root: HTMLDivElement;
 
@@ -83,15 +80,6 @@
     }
   }
 
-  function handleBlur(): void {
-    requestAnimationFrame(() => {
-      onFocusChange(root.contains(documentActiveElement()));
-    });
-  }
-
-  function documentActiveElement(): Element | null {
-    return window.document.activeElement;
-  }
 </script>
 
 <div class="block-editor" bind:this={root}>
@@ -117,8 +105,6 @@
           maxlength="100000"
           value={block.text}
           {readonly}
-          onfocus={() => onFocusChange(true)}
-          onblur={handleBlur}
           oninput={(event) => updateBlock(index, { text: event.currentTarget.value })}
           onkeydown={(event) => handleKeydown(event, index, event.currentTarget)}
         ></textarea>
@@ -131,7 +117,6 @@
       <button onclick={() => addBlock('PARAGRAPH')}>Text</button>
       <button onclick={() => addBlock('CHECKLIST_ITEM')}>☐ Checklist</button>
       <button onclick={onDates}>◷ Dates{dateCount > 0 ? ` ${dateCount}` : ''}</button>
-      <button onclick={onFiles}>⌕ Files{fileCount > 0 ? ` ${fileCount}` : ''}</button>
     </div>
   {/if}
 </div>
@@ -145,7 +130,7 @@
 
   .blocks {
     min-height: 0;
-    padding: 4px 2px 80px;
+    padding: 4px 2px 16px;
     overflow: auto;
   }
 
@@ -162,7 +147,7 @@
     padding: 5px 2px;
     overflow: hidden;
     line-height: 1.65;
-    color: #263330;
+    color: var(--vn-text);
     resize: none;
     background: transparent;
     border: 0;
@@ -176,33 +161,34 @@
     width: 18px;
     height: 18px;
     margin: 10px 0 0;
-    accent-color: #237767;
+    accent-color: var(--vn-accent);
   }
 
   .checklist textarea {
-    color: #344943;
+    color: var(--vn-text);
   }
 
   .checklist:has(.block-check:checked) textarea {
-    color: #778681;
+    color: var(--vn-text-muted);
     text-decoration: line-through;
   }
 
   .block-toolbar {
     display: flex;
     gap: 6px;
-    padding: 7px 0 0;
+    padding: 7px 8px;
     overflow-x: auto;
-    background: #fff;
-    border-top: 1px solid #dce4e2;
+    background: var(--vn-surface-muted);
+    border: 1px solid var(--vn-border);
+    border-radius: 9px;
   }
 
   .block-toolbar button {
     flex: 0 0 auto;
     min-height: 34px;
     padding: 5px 10px;
-    color: #31574f;
-    background: #f7faf9;
-    border-color: #d5e1de;
+    color: var(--vn-control-text);
+    background: var(--vn-control-background);
+    border-color: var(--vn-border);
   }
 </style>

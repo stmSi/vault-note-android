@@ -1,10 +1,29 @@
 :root {
+  color-scheme: light;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #1f2933;
   background: #edf1f3;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  --vn-surface: #fff;
+  --vn-surface-subtle: #f7faf9;
+  --vn-surface-muted: #eff6f4;
+  --vn-control-background: #f7faf9;
+  --vn-text: #253632;
+  --vn-text-muted: #61736f;
+  --vn-control-text: #31574f;
+  --vn-border: #d5e1de;
+  --vn-border-strong: #bdcbc7;
+  --vn-accent: #237767;
+  --vn-accent-strong: #1e6a5c;
+  --vn-accent-soft: #e8f2ef;
+  --vn-accent-header: #1e554f;
+  --vn-on-accent: #fff;
+  --vn-on-accent-muted: #cbe0db;
+  --vn-danger: #9b2c2c;
+  --vn-overlay: rgb(15 35 38 / 55%);
+  --vn-panel-shadow: 0 15px 50px rgb(22 55 50 / 22%);
 }
 
 * {
@@ -514,60 +533,43 @@ button:disabled {
 
 .editor-content {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   height: calc(100% - 57px);
   max-width: 900px;
   margin: 0 auto;
   padding: 28px 42px 15px;
 }
 
-.editor-pane.body-focused .editor-toolbar,
-.editor-pane.body-focused .title-input,
-.editor-pane.body-focused .editor-footer {
-  display: none;
-}
-
-.editor-pane.body-focused .editor-content {
-  height: 100%;
-  padding-top: 10px;
-}
-
-.attachment-panel {
-  position: absolute;
-  right: 18px;
-  bottom: 58px;
-  z-index: 8;
+.attachment-section {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  width: min(680px, calc(100% - 36px));
-  max-height: min(430px, calc(100% - 100px));
-  color: #2b3c38;
-  background: #fff;
-  border: 1px solid #cbd8d5;
-  border-radius: 12px;
-  box-shadow: 0 15px 50px rgb(22 55 50 / 22%);
+  grid-template-rows: auto minmax(0, auto);
+  max-height: 190px;
+  color: var(--vn-text);
+  background: var(--vn-surface-subtle);
+  border: 1px solid var(--vn-border);
+  border-radius: 10px;
 }
 
-.attachment-panel > header {
+.attachment-section > header {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto;
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  background: #eff6f4;
-  border-bottom: 1px solid #d5e1de;
-  border-radius: 12px 12px 0 0;
+  background: var(--vn-surface-muted);
+  border-bottom: 1px solid var(--vn-border);
+  border-radius: 10px 10px 0 0;
 }
 
-.attachment-panel > header div {
+.attachment-section > header div {
   display: grid;
 }
 
-.attachment-panel > header small {
-  color: #6f7c79;
+.attachment-section > header small {
+  color: var(--vn-text-muted);
 }
 
-.attachment-panel > header button {
+.attachment-section > header button {
   min-height: 32px;
   padding: 5px 9px;
 }
@@ -581,8 +583,9 @@ button:disabled {
 }
 
 .attachment-list > p {
-  padding: 18px;
-  color: #6f7c79;
+  margin: 0;
+  padding: 10px;
+  color: var(--vn-text-muted);
   text-align: center;
 }
 
@@ -591,7 +594,7 @@ button:disabled {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  background: #f3f6f5;
+  background: var(--vn-surface);
   border-radius: 8px;
 }
 
@@ -608,7 +611,7 @@ button:disabled {
 }
 
 .attachment-row small {
-  color: #6f7c79;
+  color: var(--vn-text-muted);
 }
 
 .attachment-row button {
@@ -678,8 +681,27 @@ button:disabled {
 
 @media (prefers-color-scheme: dark) {
   :root {
+    color-scheme: dark;
     color: #e5ecea;
     background: #121918;
+    --vn-surface: #17201f;
+    --vn-surface-subtle: #1d2927;
+    --vn-surface-muted: #263532;
+    --vn-control-background: #26312f;
+    --vn-text: #edf3f1;
+    --vn-text-muted: #aab7b3;
+    --vn-control-text: #b8eadc;
+    --vn-border: #43514e;
+    --vn-border-strong: #566662;
+    --vn-accent: #57a18f;
+    --vn-accent-strong: #2f806f;
+    --vn-accent-soft: #1f3b35;
+    --vn-accent-header: #183d37;
+    --vn-on-accent: #f5fffc;
+    --vn-on-accent-muted: #a8cbc2;
+    --vn-danger: #ffb4ab;
+    --vn-overlay: rgb(2 9 8 / 72%);
+    --vn-panel-shadow: 0 18px 56px rgb(0 0 0 / 45%);
   }
 
   .app-shell,
