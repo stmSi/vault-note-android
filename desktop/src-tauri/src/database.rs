@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
 
 #[derive(Clone)]
@@ -265,6 +265,52 @@ fn migrate(connection: &mut Connection) -> Result<(), AppError> {
     if version < 5 {
         transaction.execute_batch("DROP TABLE IF EXISTS app_security;")?;
     }
+    if version < 6 {
+        transaction.execute_batch(
+            r#"
+            ALTER TABLE vault_items ADD COLUMN body_document_json TEXT;
+
+            CREATE TABLE dated_entries (
+                id TEXT NOT NULL PRIMARY KEY,
+                item_id TEXT NOT NULL REFERENCES vault_items(id) ON DELETE CASCADE,
+                entry_type TEXT NOT NULL
+                    CHECK(entry_type IN ('REMINDER', 'DEADLINE', 'IMPORTANT_DATE', 'RENEWAL')),
+                label TEXT NOT NULL CHECK(length(label) <= 500),
+                occurrence_at INTEGER NOT NULL CHECK(occurrence_at >= 0),
+                is_all_day INTEGER NOT NULL CHECK(is_all_day IN (0, 1)),
+                time_zone_id TEXT NOT NULL CHECK(length(time_zone_id) BETWEEN 1 AND 100),
+                recurrence_unit TEXT
+                    CHECK(recurrence_unit IS NULL OR recurrence_unit IN ('DAY', 'WEEK', 'MONTH', 'YEAR')),
+                recurrence_interval INTEGER
+                    CHECK(recurrence_interval IS NULL OR recurrence_interval BETWEEN 1 AND 999),
+                completed_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                CHECK(
+                    (recurrence_unit IS NULL AND recurrence_interval IS NULL) OR
+                    (recurrence_unit IS NOT NULL AND recurrence_interval IS NOT NULL)
+                )
+            );
+            CREATE INDEX index_dated_entries_item
+                ON dated_entries(item_id, completed_at, occurrence_at, id);
+            CREATE INDEX index_dated_entries_agenda
+                ON dated_entries(completed_at, occurrence_at, id);
+
+            CREATE TABLE dated_entry_alerts (
+                id TEXT NOT NULL PRIMARY KEY,
+                entry_id TEXT NOT NULL REFERENCES dated_entries(id) ON DELETE CASCADE,
+                lead_time_minutes INTEGER NOT NULL
+                    CHECK(lead_time_minutes BETWEEN 0 AND 5256000),
+                snoozed_until INTEGER,
+                created_at INTEGER NOT NULL
+            );
+            CREATE INDEX index_dated_entry_alerts_entry
+                ON dated_entry_alerts(entry_id, lead_time_minutes, id);
+            CREATE INDEX index_dated_entry_alerts_snooze
+                ON dated_entry_alerts(snoozed_until);
+            "#,
+        )?;
+    }
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
@@ -397,12 +443,60 @@ mod tests {
                     [],
                     |row| row.get(0),
                 )?;
+                let dated_tables: i64 = connection.query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('dated_entries', 'dated_entry_alerts')",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let body_document_columns: i64 = connection.query_row(
+                    "SELECT count(*) FROM pragma_table_info('vault_items') WHERE name = 'body_document_json'",
+                    [],
+                    |row| row.get(0),
+                )?;
                 assert_eq!(version, SCHEMA_VERSION);
                 assert!(fts_sql.contains("fts5"));
                 assert_eq!(legacy_security_tables, 0);
+                assert_eq!(dated_tables, 2);
+                assert_eq!(body_document_columns, 1);
                 Ok(())
             })
             .expect("schema should be readable");
+    }
+
+    #[test]
+    fn version_five_migration_preserves_notes_and_adds_date_tables() {
+        let mut connection = Connection::open_in_memory().expect("database should open");
+        connection
+            .execute_batch(
+                r#"
+                PRAGMA user_version = 5;
+                CREATE TABLE vault_items (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    body TEXT NOT NULL
+                );
+                INSERT INTO vault_items(id, body) VALUES ('legacy-note', 'kept');
+                "#,
+            )
+            .expect("version five fixture should be created");
+
+        migrate(&mut connection).expect("migration should succeed");
+
+        let row: (String, Option<String>) = connection
+            .query_row(
+                "SELECT body, body_document_json FROM vault_items WHERE id = 'legacy-note'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("legacy note should remain");
+        let dated_tables: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('dated_entries', 'dated_entry_alerts')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("date tables should be listed");
+        assert_eq!(row, ("kept".to_owned(), None));
+        assert_eq!(dated_tables, 2);
     }
 
     #[test]

@@ -31,8 +31,8 @@ button {
 }
 
 .app-shell {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   height: 100%;
   background: #f7f8f9;
 }
@@ -136,6 +136,27 @@ button:disabled {
   color: #7f1d1d;
   background: #fee2e2;
   border-bottom: 1px solid #fecaca;
+}
+
+.reminder-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 18px;
+  color: #245247;
+  background: #e1f2ec;
+  border-bottom: 1px solid #bad9d0;
+}
+
+.reminder-banner span {
+  flex: 1;
+}
+
+.reminder-banner button {
+  padding: 2px 8px;
+  color: #245247;
+  background: transparent;
+  border-color: #a7c9bf;
 }
 
 .security-panel {
@@ -258,6 +279,7 @@ button:disabled {
 
 .workspace {
   display: grid;
+  flex: 1;
   grid-template-columns: minmax(280px, 350px) minmax(0, 1fr);
   min-height: 0;
 }
@@ -368,6 +390,21 @@ button:disabled {
   color: #788481;
 }
 
+.date-badge {
+  align-self: flex-start;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #32685d;
+  background: #e4f2ee;
+  border-radius: 999px;
+}
+
+.date-badge.overdue {
+  color: #992f2f;
+  background: #fde9e7;
+}
+
 .state-card {
   padding: 28px 14px;
   text-align: center;
@@ -405,6 +442,7 @@ button:disabled {
 }
 
 .editor-pane {
+  position: relative;
   min-width: 0;
   min-height: 0;
   background: #fff;
@@ -483,13 +521,69 @@ button:disabled {
   padding: 28px 42px 15px;
 }
 
+.editor-pane.body-focused .editor-toolbar,
+.editor-pane.body-focused .title-input,
+.editor-pane.body-focused .editor-footer {
+  display: none;
+}
+
+.editor-pane.body-focused .editor-content {
+  height: 100%;
+  padding-top: 10px;
+}
+
+.attachment-panel {
+  position: absolute;
+  right: 18px;
+  bottom: 58px;
+  z-index: 8;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(680px, calc(100% - 36px));
+  max-height: min(430px, calc(100% - 100px));
+  color: #2b3c38;
+  background: #fff;
+  border: 1px solid #cbd8d5;
+  border-radius: 12px;
+  box-shadow: 0 15px 50px rgb(22 55 50 / 22%);
+}
+
+.attachment-panel > header {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #eff6f4;
+  border-bottom: 1px solid #d5e1de;
+  border-radius: 12px 12px 0 0;
+}
+
+.attachment-panel > header div {
+  display: grid;
+}
+
+.attachment-panel > header small {
+  color: #6f7c79;
+}
+
+.attachment-panel > header button {
+  min-height: 32px;
+  padding: 5px 9px;
+}
+
 .attachment-list {
   display: grid;
   gap: 7px;
-  max-height: 150px;
-  padding: 10px 0;
+  min-height: 0;
+  padding: 10px;
   overflow: auto;
-  border-top: 1px solid #edf0ef;
+}
+
+.attachment-list > p {
+  padding: 18px;
+  color: #6f7c79;
+  text-align: center;
 }
 
 .attachment-row {
@@ -533,26 +627,11 @@ button:disabled {
   border-bottom: 1px solid #edf0ef;
 }
 
-.editor-content textarea {
-  width: 100%;
-  min-height: 0;
-  padding: 20px 0;
-  resize: none;
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-  font-size: 15px;
-  line-height: 1.65;
-  color: #263330;
-  background: transparent;
-  border: 0;
-}
-
-.title-input:focus,
-.editor-content textarea:focus {
+.title-input:focus {
   outline: none;
 }
 
-.title-input[readonly],
-.editor-content textarea[readonly] {
+.title-input[readonly] {
   color: #6e7775;
 }
 
@@ -649,8 +728,7 @@ button:disabled {
 
   .state-title,
   .editor-empty h2,
-  .title-input,
-  .editor-content textarea {
+  .title-input {
     color: #edf3f1;
   }
 

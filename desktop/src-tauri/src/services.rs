@@ -3,16 +3,22 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use chrono::{DateTime, Days, Utc};
+use chrono_tz::Tz;
+
 use crate::{
     backup::BackupService,
     crypto::AttachmentCrypto,
     error::AppError,
     models::{
-        AttachmentRecord, SearchResult, SyncQueueStatus, SyncReport, VaultAttachment,
-        VaultItemSummary, VaultNote,
+        AgendaEntry, AttachmentRecord, DatedEntryDraft, NoteBodyDocument, ScheduledAlert,
+        SearchResult, SyncQueueStatus, SyncReport, VaultAttachment, VaultItemSummary, VaultNote,
     },
     repository::VaultRepository,
-    validation::{compile_search_query, parse_section, validate_id, validate_limit, validate_note},
+    validation::{
+        compile_search_query, parse_section, validate_dated_entry, validate_id, validate_limit,
+        validate_note, validate_note_document,
+    },
 };
 
 #[derive(Clone)]
@@ -51,6 +57,83 @@ impl VaultService {
         self.repository
             .save_note(id, title, body, now_epoch_millis()?)?;
         self.repository.get_note(id)
+    }
+
+    pub fn save_structured_note(
+        &self,
+        id: &str,
+        title: &str,
+        document: &NoteBodyDocument,
+    ) -> Result<VaultNote, AppError> {
+        validate_id(id)?;
+        let body = validate_note_document(title, document)?;
+        let document_json = serde_json::to_string(document).map_err(|_| AppError::InvalidState)?;
+        self.repository.save_structured_note(
+            id,
+            title,
+            &body,
+            &document_json,
+            now_epoch_millis()?,
+        )?;
+        self.repository.get_note(id)
+    }
+
+    pub fn save_dated_entry(
+        &self,
+        item_id: &str,
+        draft: &DatedEntryDraft,
+    ) -> Result<VaultNote, AppError> {
+        validate_id(item_id)?;
+        validate_dated_entry(draft)?;
+        self.repository
+            .save_dated_entry(item_id, draft, now_epoch_millis()?)?;
+        self.repository.get_note(item_id)
+    }
+
+    pub fn delete_dated_entry(&self, entry_id: &str) -> Result<(), AppError> {
+        validate_id(entry_id)?;
+        self.repository
+            .delete_dated_entry(entry_id, now_epoch_millis()?)
+    }
+
+    pub fn complete_dated_entry(&self, entry_id: &str) -> Result<(), AppError> {
+        validate_id(entry_id)?;
+        self.repository
+            .complete_dated_entry(entry_id, now_epoch_millis()?)
+    }
+
+    pub fn snooze_dated_entry(&self, entry_id: &str, minutes: i64) -> Result<(), AppError> {
+        validate_id(entry_id)?;
+        if !(1..=10_080).contains(&minutes) {
+            return Err(AppError::InvalidInput {
+                field: "date",
+                reason: "invalid snooze duration".to_owned(),
+            });
+        }
+        let until = now_epoch_millis()?
+            .checked_add(minutes.checked_mul(60_000).ok_or(AppError::InvalidState)?)
+            .ok_or(AppError::InvalidState)?;
+        self.repository.snooze_dated_entry(entry_id, until)
+    }
+
+    pub fn list_agenda(
+        &self,
+        include_completed: bool,
+        limit: usize,
+    ) -> Result<Vec<AgendaEntry>, AppError> {
+        self.repository
+            .list_agenda(include_completed, validate_limit(limit)?)
+    }
+
+    pub fn scheduled_alerts(&self) -> Result<Vec<ScheduledAlert>, AppError> {
+        self.repository
+            .scheduled_alerts(now_epoch_millis()?, 10_000)
+    }
+
+    pub fn calendar_export(&self, entry_id: &str) -> Result<(String, String), AppError> {
+        validate_id(entry_id)?;
+        let row = self.repository.get_dated_entry(entry_id)?;
+        calendar_export(&row, now_epoch_millis()?)
     }
 
     pub fn set_pinned(&self, id: &str, value: bool) -> Result<VaultNote, AppError> {
@@ -217,4 +300,106 @@ pub(crate) fn now_epoch_millis() -> Result<i64, AppError> {
         .duration_since(UNIX_EPOCH)
         .map_err(|_| AppError::Clock)?;
     i64::try_from(duration.as_millis()).map_err(|_| AppError::Clock)
+}
+
+fn calendar_export(row: &AgendaEntry, now: i64) -> Result<(String, String), AppError> {
+    let entry = &row.entry;
+    let instant = DateTime::<Utc>::from_timestamp_millis(entry.occurrence_at_epoch_millis)
+        .ok_or(AppError::InvalidState)?;
+    let summary = if entry.label.trim().is_empty() {
+        if row.note_title.trim().is_empty() {
+            "VaultNote date"
+        } else {
+            row.note_title.trim()
+        }
+    } else {
+        entry.label.trim()
+    };
+    let (start, end) = if entry.is_all_day {
+        let timezone: Tz = entry
+            .time_zone_id
+            .parse()
+            .map_err(|_| AppError::InvalidState)?;
+        let date = instant.with_timezone(&timezone).date_naive();
+        let next = date
+            .checked_add_days(Days::new(1))
+            .ok_or(AppError::InvalidState)?;
+        (
+            format!("DTSTART;VALUE=DATE:{}", date.format("%Y%m%d")),
+            format!("DTEND;VALUE=DATE:{}", next.format("%Y%m%d")),
+        )
+    } else {
+        (
+            format!("DTSTART:{}", instant.format("%Y%m%dT%H%M%SZ")),
+            String::new(),
+        )
+    };
+    let recurrence = entry
+        .recurrence_unit
+        .as_deref()
+        .zip(entry.recurrence_interval)
+        .map(|(unit, interval)| {
+            let frequency = match unit {
+                "DAY" => "DAILY",
+                "WEEK" => "WEEKLY",
+                "MONTH" => "MONTHLY",
+                "YEAR" => "YEARLY",
+                _ => return Err(AppError::InvalidState),
+            };
+            Ok(format!("RRULE:FREQ={frequency};INTERVAL={interval}"))
+        })
+        .transpose()?;
+    let mut lines = vec![
+        "BEGIN:VCALENDAR".to_owned(),
+        "VERSION:2.0".to_owned(),
+        "PRODID:-//VaultNote//Private dates//EN".to_owned(),
+        "CALSCALE:GREGORIAN".to_owned(),
+        "BEGIN:VEVENT".to_owned(),
+        format!("UID:{}@vaultnote.local", entry.id),
+        format!(
+            "DTSTAMP:{}",
+            DateTime::<Utc>::from_timestamp_millis(now)
+                .ok_or(AppError::InvalidState)?
+                .format("%Y%m%dT%H%M%SZ")
+        ),
+        start,
+    ];
+    if !end.is_empty() {
+        lines.push(end);
+    }
+    lines.push(format!("SUMMARY:{}", escape_icalendar(summary)));
+    lines.push(format!(
+        "DESCRIPTION:{}",
+        escape_icalendar("Exported from VaultNote")
+    ));
+    if let Some(recurrence) = recurrence {
+        lines.push(recurrence);
+    }
+    lines.extend([
+        "END:VEVENT".to_owned(),
+        "END:VCALENDAR".to_owned(),
+        String::new(),
+    ]);
+    let stem: String = summary
+        .chars()
+        .filter(|character| character.is_alphanumeric() || matches!(character, ' ' | '-' | '_'))
+        .take(80)
+        .collect();
+    let filename = format!(
+        "{}.ics",
+        if stem.trim().is_empty() {
+            "VaultNote-date"
+        } else {
+            stem.trim()
+        }
+    );
+    Ok((filename, lines.join("\r\n")))
+}
+
+fn escape_icalendar(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace(',', "\\,")
+        .replace(';', "\\;")
 }

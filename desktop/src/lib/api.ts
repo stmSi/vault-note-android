@@ -1,12 +1,16 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   AppCommandError,
+  AgendaEntry,
   AuthStatus,
   BackupSummary,
   SearchResult,
   SyncQueueStatus,
   SyncReport,
   RestoreSummary,
+  DatedEntryDraft,
+  NoteBodyDocument,
+  ScheduledAlert,
   VaultAttachment,
   VaultItemSummary,
   VaultNote,
@@ -29,6 +33,47 @@ export function createNote(): Promise<VaultNote> {
 
 export function saveNote(id: string, title: string, body: string): Promise<VaultNote> {
   return invoke('save_note', { request: { id, title, body } });
+}
+
+export function saveStructuredNote(
+  id: string,
+  title: string,
+  bodyDocument: NoteBodyDocument,
+): Promise<VaultNote> {
+  return invoke('save_structured_note', { request: { id, title, bodyDocument } });
+}
+
+export function saveDatedEntry(
+  itemId: string,
+  draft: DatedEntryDraft,
+): Promise<VaultNote> {
+  return invoke('save_dated_entry', { request: { itemId, draft } });
+}
+
+export function deleteDatedEntry(id: string): Promise<void> {
+  return invoke('delete_dated_entry', { request: { id } });
+}
+
+export function completeDatedEntry(id: string): Promise<void> {
+  return invoke('complete_dated_entry', { request: { id } });
+}
+
+export function snoozeDatedEntry(id: string, minutes: number): Promise<void> {
+  return invoke('snooze_dated_entry', { request: { id, minutes } });
+}
+
+export function listAgenda(includeCompleted: boolean): Promise<AgendaEntry[]> {
+  return invoke('list_agenda', {
+    request: { includeCompleted, limit: DEFAULT_LIMIT },
+  });
+}
+
+export function listScheduledAlerts(): Promise<ScheduledAlert[]> {
+  return invoke('scheduled_alerts');
+}
+
+export function exportCalendarEntry(id: string): Promise<boolean> {
+  return invoke('export_calendar_entry', { request: { id } });
 }
 
 export function setPinned(id: string, value: boolean): Promise<VaultNote> {

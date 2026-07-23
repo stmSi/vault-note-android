@@ -5,8 +5,9 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use crate::{
     error::CommandError,
     models::{
-        AuthStatus, BackupSummary, RestoreSummary, SearchResult, SyncQueueStatus, SyncReport,
-        VaultAttachment, VaultItemSummary, VaultNote,
+        AgendaEntry, AuthStatus, BackupSummary, DatedEntryDraft, NoteBodyDocument, RestoreSummary,
+        ScheduledAlert, SearchResult, SyncQueueStatus, SyncReport, VaultAttachment,
+        VaultItemSummary, VaultNote,
     },
     runtime::RuntimeState,
     validation::{validate_id, validate_password},
@@ -31,6 +32,35 @@ pub struct SaveNoteRequest {
     id: String,
     title: String,
     body: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SaveStructuredNoteRequest {
+    id: String,
+    title: String,
+    body_document: NoteBodyDocument,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SaveDatedEntryRequest {
+    item_id: String,
+    draft: DatedEntryDraft,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgendaRequest {
+    include_completed: bool,
+    limit: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SnoozeRequest {
+    id: String,
+    minutes: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,6 +122,113 @@ pub fn save_note(
                 .save_note(&request.id, &request.title, &request.body)
         })
         .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn save_structured_note(
+    state: State<'_, RuntimeState>,
+    request: SaveStructuredNoteRequest,
+) -> Result<VaultNote, CommandError> {
+    state
+        .with_services(|services| {
+            services
+                .vault
+                .save_structured_note(&request.id, &request.title, &request.body_document)
+        })
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn save_dated_entry(
+    state: State<'_, RuntimeState>,
+    request: SaveDatedEntryRequest,
+) -> Result<VaultNote, CommandError> {
+    state
+        .with_services(|services| {
+            services
+                .vault
+                .save_dated_entry(&request.item_id, &request.draft)
+        })
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn delete_dated_entry(
+    state: State<'_, RuntimeState>,
+    request: ItemRequest,
+) -> Result<(), CommandError> {
+    state
+        .with_services(|services| services.vault.delete_dated_entry(&request.id))
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn complete_dated_entry(
+    state: State<'_, RuntimeState>,
+    request: ItemRequest,
+) -> Result<(), CommandError> {
+    state
+        .with_services(|services| services.vault.complete_dated_entry(&request.id))
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn snooze_dated_entry(
+    state: State<'_, RuntimeState>,
+    request: SnoozeRequest,
+) -> Result<(), CommandError> {
+    state
+        .with_services(|services| {
+            services
+                .vault
+                .snooze_dated_entry(&request.id, request.minutes)
+        })
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn list_agenda(
+    state: State<'_, RuntimeState>,
+    request: AgendaRequest,
+) -> Result<Vec<AgendaEntry>, CommandError> {
+    state
+        .with_services(|services| {
+            services
+                .vault
+                .list_agenda(request.include_completed, request.limit)
+        })
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn scheduled_alerts(
+    state: State<'_, RuntimeState>,
+) -> Result<Vec<ScheduledAlert>, CommandError> {
+    state
+        .with_services(|services| services.vault.scheduled_alerts())
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn export_calendar_entry(
+    state: State<'_, RuntimeState>,
+    request: ItemRequest,
+) -> Result<bool, CommandError> {
+    let (filename, contents) = state
+        .with_services(|services| services.vault.calendar_export(&request.id))
+        .map_err(CommandError::from)?;
+    let selected = rfd::AsyncFileDialog::new()
+        .set_title("Export date to calendar")
+        .add_filter("Calendar event", &["ics"])
+        .set_file_name(filename)
+        .save_file()
+        .await;
+    let Some(selected) = selected else {
+        return Ok(false);
+    };
+    std::fs::write(selected.path(), contents)
+        .map(|()| true)
+        .map_err(|error| CommandError::from(crate::error::AppError::Storage(error)))
 }
 
 #[tauri::command]

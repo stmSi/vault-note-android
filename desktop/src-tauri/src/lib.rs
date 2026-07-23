@@ -17,6 +17,7 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let database_path = storage::prepare_database_path(app.handle())?;
             app.manage(RuntimeState::new(database_path)?);
@@ -27,6 +28,14 @@ pub fn run() {
             commands::get_note,
             commands::create_note,
             commands::save_note,
+            commands::save_structured_note,
+            commands::save_dated_entry,
+            commands::delete_dated_entry,
+            commands::complete_dated_entry,
+            commands::snooze_dated_entry,
+            commands::list_agenda,
+            commands::scheduled_alerts,
+            commands::export_calendar_entry,
             commands::set_pinned,
             commands::set_favorite,
             commands::set_archived,

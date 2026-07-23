@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "The main VaultNote window uses only application-defined commands.",
+  "description": "The main VaultNote window uses application commands and private reminder notifications.",
   "windows": ["main"],
-  "permissions": []
+  "permissions": ["notification:default"]
 }

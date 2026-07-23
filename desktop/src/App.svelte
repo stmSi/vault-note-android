@@ -1,9 +1,16 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
+  import AgendaPanel from './AgendaPanel.svelte';
+  import DateDialog from './DateDialog.svelte';
+  import DatePanel from './DatePanel.svelte';
+  import NoteBlockEditor from './NoteBlockEditor.svelte';
   import {
     commandError,
+    completeDatedEntry,
     createNote,
+    deleteDatedEntry,
     deleteAttachment,
+    exportCalendarEntry,
     exportAttachment,
     exportBackup,
     getNote,
@@ -12,24 +19,34 @@
     importAttachment,
     initializeUnencryptedVault,
     initializeVault,
+    listAgenda,
     listItems,
+    listScheduledAlerts,
     listAttachments,
     lock,
     moveToTrash,
     restore,
     restoreBackup,
     runFakeSync,
-    saveNote,
+    saveDatedEntry,
+    saveStructuredNote,
     searchNotes,
     setArchived,
     setFavorite,
     setPinned,
+    snoozeDatedEntry,
     unlock,
   } from './lib/api';
   import { DebouncedAutosaver, type AutosaveStatus } from './lib/autosave';
+  import { derivePlainText, documentFromPlainText } from './lib/noteBody';
+  import { reconcileReminderNotifications } from './lib/reminders';
   import type {
+    AgendaEntry,
     AppCommandError,
     AuthStatus,
+    DatedEntry,
+    DatedEntryDraft,
+    NoteBodyDocument,
     SyncQueueStatus,
     VaultItemSummary,
     VaultAttachment,
@@ -45,7 +62,7 @@
   interface Draft {
     id: string;
     title: string;
-    body: string;
+    bodyDocument: NoteBodyDocument;
   }
 
   type ListState =
@@ -65,7 +82,17 @@
   let listState: ListState = { kind: 'loading' };
   let selected: VaultNote | null = null;
   let editorTitle = '';
-  let editorBody = '';
+  let editorDocument: NoteBodyDocument = { version: 1, blocks: [] };
+  let bodyFocused = false;
+  let metadataPanel: 'dates' | 'files' | null = null;
+  let dateDialogOpen = false;
+  let editingDate: DatedEntry | null = null;
+  let agendaOpen = false;
+  let agendaEntries: AgendaEntry[] = [];
+  let agendaIncludeCompleted = false;
+  let agendaSelectedDate = '';
+  let dateBusy = false;
+  let reminderMessage = '';
   let searchQuery = '';
   let autosaveStatus: AutosaveStatus = 'saved';
   let autosaver: DebouncedAutosaver<Draft> | null = null;
@@ -74,6 +101,7 @@
   let syncRunning = false;
   let loadGeneration = 0;
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let reminderRefreshTimer: ReturnType<typeof setInterval> | undefined;
   let authentication: AuthStatus | null = null;
   let unlockPassword = '';
   let newPassword = '';
@@ -88,13 +116,20 @@
 
   onMount(() => {
     void initializeAuthentication();
+    reminderRefreshTimer = setInterval(() => {
+      void refreshReminderSchedule(false);
+    }, 60_000);
   });
 
   async function initializeAuthentication(): Promise<void> {
     try {
       authentication = await getAuthStatus();
       if (authentication.unlocked) {
-        await Promise.all([loadVisibleItems(), refreshQueueStatus()]);
+        await Promise.all([
+          loadVisibleItems(),
+          refreshQueueStatus(),
+          refreshReminderSchedule(false),
+        ]);
       }
     } catch (error) {
       actionError = commandError(error);
@@ -107,7 +142,11 @@
     try {
       authentication = await unlock(unlockPassword);
       unlockPassword = '';
-      await Promise.all([loadVisibleItems(), refreshQueueStatus()]);
+      await Promise.all([
+        loadVisibleItems(),
+        refreshQueueStatus(),
+        refreshReminderSchedule(false),
+      ]);
     } catch (error) {
       unlockPassword = '';
       actionError = commandError(error);
@@ -125,7 +164,9 @@
       autosaver = null;
       selected = null;
       editorTitle = '';
-      editorBody = '';
+      editorDocument = { version: 1, blocks: [] };
+      agendaOpen = false;
+      metadataPanel = null;
       listState = { kind: 'loading' };
       securityPanelOpen = false;
     } catch (error) {
@@ -147,7 +188,11 @@
       authentication = await initializeVault(newPassword);
       newPassword = '';
       confirmPassword = '';
-      await Promise.all([loadVisibleItems(), refreshQueueStatus()]);
+      await Promise.all([
+        loadVisibleItems(),
+        refreshQueueStatus(),
+        refreshReminderSchedule(false),
+      ]);
     } catch (error) {
       actionError = commandError(error);
       try {
@@ -167,7 +212,11 @@
     actionError = null;
     try {
       authentication = await initializeUnencryptedVault();
-      await Promise.all([loadVisibleItems(), refreshQueueStatus()]);
+      await Promise.all([
+        loadVisibleItems(),
+        refreshQueueStatus(),
+        refreshReminderSchedule(false),
+      ]);
     } catch (error) {
       actionError = commandError(error);
       try {
@@ -207,7 +256,11 @@
         selected = null;
         autosaver = null;
         backupMessage = `Restored ${result.restoredItemCount} notes and ${result.restoredAttachmentCount} files as new local copies.`;
-        await Promise.all([loadVisibleItems(), refreshQueueStatus()]);
+        await Promise.all([
+          loadVisibleItems(),
+          refreshQueueStatus(),
+          refreshReminderSchedule(false),
+        ]);
       }
     } catch (error) {
       actionError = commandError(error);
@@ -220,6 +273,9 @@
   onDestroy(() => {
     if (searchTimer !== undefined) {
       clearTimeout(searchTimer);
+    }
+    if (reminderRefreshTimer !== undefined) {
+      clearInterval(reminderRefreshTimer);
     }
     void autosaver?.flush();
   });
@@ -275,10 +331,12 @@
     autosaver?.cancelPending();
     selected = note;
     editorTitle = note.title;
-    editorBody = note.body;
+    editorDocument = note.bodyDocument ?? documentFromPlainText(note.body);
     autosaveStatus = 'saved';
     actionError = null;
     attachments = [];
+    metadataPanel = null;
+    bodyFocused = false;
     void loadNoteAttachments(note.id);
     if (note.deletedAtEpochMillis !== null) {
       autosaver = null;
@@ -287,9 +345,18 @@
     autosaver = new DebouncedAutosaver<Draft>(
       async (draft) => {
         try {
-          const updated = await saveNote(draft.id, draft.title, draft.body);
+          const updated = await saveStructuredNote(
+            draft.id,
+            draft.title,
+            draft.bodyDocument,
+          );
           if (selected?.id === updated.id) {
-            selected = { ...updated, title: editorTitle, body: editorBody };
+            selected = {
+              ...updated,
+              title: editorTitle,
+              body: derivePlainText(editorDocument),
+              bodyDocument: editorDocument,
+            };
           }
           await Promise.all([loadVisibleItems(false), refreshQueueStatus()]);
         } catch (error) {
@@ -396,7 +463,11 @@
       section = 'active';
       const note = await createNote();
       installNote(note);
-      await Promise.all([loadVisibleItems(false), refreshQueueStatus()]);
+      await Promise.all([
+        loadVisibleItems(false),
+        refreshQueueStatus(),
+        refreshReminderSchedule(false),
+      ]);
     } catch (error) {
       actionError = commandError(error);
     }
@@ -409,8 +480,13 @@
     autosaver.submit({
       id: selected.id,
       title: editorTitle,
-      body: editorBody,
+      bodyDocument: editorDocument,
     });
+  }
+
+  function bodyDocumentChanged(document: NoteBodyDocument): void {
+    editorDocument = document;
+    draftChanged();
   }
 
   async function chooseSection(nextSection: VaultSection): Promise<void> {
@@ -452,7 +528,11 @@
       } else {
         installNote(updated);
       }
-      await Promise.all([loadVisibleItems(false), refreshQueueStatus()]);
+      await Promise.all([
+        loadVisibleItems(false),
+        refreshQueueStatus(),
+        refreshReminderSchedule(false),
+      ]);
     } catch (error) {
       actionError = commandError(error);
     }
@@ -475,6 +555,160 @@
     } finally {
       syncRunning = false;
     }
+  }
+
+  async function refreshReminderSchedule(requestAccess: boolean): Promise<void> {
+    if (!authentication?.unlocked) return;
+    try {
+      const result = await reconcileReminderNotifications(
+        await listScheduledAlerts(),
+        requestAccess,
+      );
+      reminderMessage =
+        requestAccess && !result.permissionGranted
+            ? 'Notification access is off. Dates remain available in the agenda.'
+          : result.scheduledCount > 0
+            ? `${result.scheduledCount} private alert${result.scheduledCount === 1 ? '' : 's'} active while VaultNote is running.`
+            : '';
+    } catch {
+      reminderMessage = 'System notifications are unavailable. Dates remain saved in the agenda.';
+    }
+  }
+
+  async function showAgenda(): Promise<void> {
+    if (!(await flushEditor())) return;
+    agendaOpen = true;
+    await refreshAgenda();
+  }
+
+  async function refreshAgenda(): Promise<void> {
+    try {
+      agendaEntries = await listAgenda(agendaIncludeCompleted);
+    } catch (error) {
+      actionError = commandError(error);
+    }
+  }
+
+  async function setAgendaIncludeCompleted(value: boolean): Promise<void> {
+    agendaIncludeCompleted = value;
+    await refreshAgenda();
+  }
+
+  function addDate(): void {
+    editingDate = null;
+    dateDialogOpen = true;
+  }
+
+  function editDate(entry: DatedEntry): void {
+    editingDate = entry;
+    dateDialogOpen = true;
+  }
+
+  async function persistDate(draft: DatedEntryDraft): Promise<void> {
+    const itemId = editingDate?.itemId ?? selected?.id;
+    if (itemId === undefined || !(await flushEditor())) return;
+    dateBusy = true;
+    try {
+      const updated = await saveDatedEntry(itemId, draft);
+      if (selected?.id === updated.id) {
+        installNote(updated);
+        metadataPanel = 'dates';
+      }
+      dateDialogOpen = false;
+      editingDate = null;
+      await Promise.all([
+        loadVisibleItems(false),
+        refreshQueueStatus(),
+        refreshAgenda(),
+        refreshReminderSchedule(true),
+      ]);
+    } catch (error) {
+      actionError = commandError(error);
+    } finally {
+      dateBusy = false;
+    }
+  }
+
+  async function removeDate(id: string): Promise<void> {
+    if (!window.confirm('Delete this date and its alerts?')) return;
+    dateBusy = true;
+    try {
+      await deleteDatedEntry(id);
+      dateDialogOpen = false;
+      editingDate = null;
+      await refreshAfterDateChange(true);
+    } catch (error) {
+      actionError = commandError(error);
+    } finally {
+      dateBusy = false;
+    }
+  }
+
+  async function finishDate(id: string): Promise<void> {
+    dateBusy = true;
+    try {
+      await completeDatedEntry(id);
+      await refreshAfterDateChange(false);
+    } catch (error) {
+      actionError = commandError(error);
+    } finally {
+      dateBusy = false;
+    }
+  }
+
+  async function snoozeDate(id: string): Promise<void> {
+    dateBusy = true;
+    try {
+      await snoozeDatedEntry(id, 10);
+      await refreshAfterDateChange(true);
+      reminderMessage = 'Alert snoozed for 10 minutes.';
+    } catch (error) {
+      actionError = commandError(error);
+    } finally {
+      dateBusy = false;
+    }
+  }
+
+  async function refreshAfterDateChange(requestAccess: boolean): Promise<void> {
+    const selectedId = selected?.id;
+    if (selectedId !== undefined) {
+      const panel = metadataPanel;
+      installNote(await getNote(selectedId));
+      metadataPanel = panel;
+    }
+    await Promise.all([
+      loadVisibleItems(false),
+      refreshQueueStatus(),
+      refreshAgenda(),
+      refreshReminderSchedule(requestAccess),
+    ]);
+  }
+
+  async function exportDate(id: string): Promise<void> {
+    if (
+      !window.confirm(
+        'Exporting creates a readable calendar file containing this date label and note title. Continue?',
+      )
+    ) {
+      return;
+    }
+    dateBusy = true;
+    try {
+      await exportCalendarEntry(id);
+    } catch (error) {
+      actionError = commandError(error);
+    } finally {
+      dateBusy = false;
+    }
+  }
+
+  async function openAgendaNote(itemId: string): Promise<void> {
+    agendaOpen = false;
+    await openNote(itemId);
+  }
+
+  function toggleMetadataPanel(panel: 'dates' | 'files'): void {
+    metadataPanel = metadataPanel === panel ? null : panel;
   }
 
   function formattedDate(epochMillis: number): string {
@@ -502,6 +736,7 @@
         {syncRunning ? 'Syncing…' : 'Run fake sync'}
       </button>
       {#if authentication?.unlocked}
+        <button class="secondary-button" onclick={showAgenda}>Calendar</button>
         <button class="secondary-button" onclick={() => (securityPanelOpen = !securityPanelOpen)}>
           Security
         </button>
@@ -540,6 +775,12 @@
         <button onclick={() => void flushEditor()}>Retry save</button>
       {/if}
       <button aria-label="Dismiss error" onclick={() => (actionError = null)}>×</button>
+    </div>
+  {/if}
+  {#if reminderMessage}
+    <div class="reminder-banner" role="status">
+      <span>{reminderMessage}</span>
+      <button aria-label="Dismiss reminder status" onclick={() => (reminderMessage = '')}>×</button>
     </div>
   {/if}
 
@@ -604,13 +845,20 @@
               <span class="note-meta">
                 {formattedDate(display.item.updatedAtEpochMillis)} · {display.item.syncStatus.toLowerCase()}
               </span>
+              {#if display.item.hasOverdueEntry}
+                <span class="date-badge overdue">Overdue deadline</span>
+              {:else if display.item.nextDatedEntryAtEpochMillis !== null}
+                <span class="date-badge">
+                  Next {formattedDate(display.item.nextDatedEntryAtEpochMillis)}
+                </span>
+              {/if}
             </button>
           {/each}
         {/if}
       </section>
     </aside>
 
-    <section class="editor-pane" aria-label="Note editor">
+    <section class:body-focused={bodyFocused} class="editor-pane" aria-label="Note editor">
       {#if selected === null}
         <div class="editor-empty">
           <div class="empty-glyph" aria-hidden="true">✦</div>
@@ -639,7 +887,6 @@
               <button class="danger-button" onclick={() => updateMetadata(moveToTrash, true)}>
                 Move to trash
               </button>
-              <button disabled={attachmentBusy} onclick={addAttachment}>Add file</button>
             {/if}
           </div>
           <span class:save-error={autosaveStatus === 'error'} class="save-status">
@@ -663,32 +910,60 @@
             bind:value={editorTitle}
             oninput={draftChanged}
           />
-          <textarea
-            aria-label="Note body"
-            placeholder="Start writing…"
-            maxlength="100000"
+          <NoteBlockEditor
+            document={editorDocument}
             readonly={selected.deletedAtEpochMillis !== null}
-            bind:value={editorBody}
-            oninput={draftChanged}
-          ></textarea>
-          {#if attachments.length > 0}
-            <section class="attachment-list" aria-label="Encrypted attachments">
-              {#each attachments as attachment (attachment.id)}
-                <div class="attachment-row">
-                  <span>
-                    <strong>{attachment.displayName}</strong>
-                    <small>
-                      {formattedFileSize(attachment.fileSize)} · {authentication?.encryptionMode === 'PASSWORD'
-                        ? 'encrypted locally'
-                        : 'stored without encryption'}
-                    </small>
-                  </span>
-                  <button disabled={attachmentBusy} onclick={() => saveAttachment(attachment.id)}>Save copy</button>
-                  {#if selected.deletedAtEpochMillis === null}
-                    <button class="danger-button" disabled={attachmentBusy} onclick={() => removeAttachment(attachment.id)}>Delete</button>
-                  {/if}
+            dateCount={selected.datedEntries.length}
+            fileCount={attachments.length}
+            onDocumentChange={bodyDocumentChanged}
+            onFocusChange={(focused) => (bodyFocused = focused)}
+            onDates={() => toggleMetadataPanel('dates')}
+            onFiles={() => toggleMetadataPanel('files')}
+          />
+          {#if metadataPanel === 'dates' && selected.deletedAtEpochMillis === null}
+            <DatePanel
+              entries={selected.datedEntries}
+              busy={dateBusy}
+              onAdd={addDate}
+              onEdit={editDate}
+              onComplete={finishDate}
+              onSnooze={snoozeDate}
+              onExport={exportDate}
+              onClose={() => (metadataPanel = null)}
+            />
+          {:else if metadataPanel === 'files'}
+            <section class="attachment-panel" aria-label="Attachments">
+              <header>
+                <div>
+                  <strong>Attachments</strong>
+                  <small>Hidden until you open this panel</small>
                 </div>
-              {/each}
+                {#if selected.deletedAtEpochMillis === null}
+                  <button disabled={attachmentBusy} onclick={addAttachment}>+ Add file</button>
+                {/if}
+                <button aria-label="Close files" onclick={() => (metadataPanel = null)}>×</button>
+              </header>
+              <div class="attachment-list">
+                {#if attachments.length === 0}
+                  <p>No attachments yet.</p>
+                {/if}
+                {#each attachments as attachment (attachment.id)}
+                  <div class="attachment-row">
+                    <span>
+                      <strong>{attachment.displayName}</strong>
+                      <small>
+                        {formattedFileSize(attachment.fileSize)} · {authentication?.encryptionMode === 'PASSWORD'
+                          ? 'encrypted locally'
+                          : 'stored without encryption'}
+                      </small>
+                    </span>
+                    <button disabled={attachmentBusy} onclick={() => saveAttachment(attachment.id)}>Save copy</button>
+                    {#if selected.deletedAtEpochMillis === null}
+                      <button class="danger-button" disabled={attachmentBusy} onclick={() => removeAttachment(attachment.id)}>Delete</button>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
             </section>
           {/if}
           <footer class="editor-footer">
@@ -697,8 +972,36 @@
           </footer>
         </div>
       {/if}
+      {#if agendaOpen}
+        <AgendaPanel
+          entries={agendaEntries}
+          includeCompleted={agendaIncludeCompleted}
+          selectedDate={agendaSelectedDate}
+          busy={dateBusy}
+          onClose={() => (agendaOpen = false)}
+          onIncludeCompleted={setAgendaIncludeCompleted}
+          onSelectedDate={(value) => (agendaSelectedDate = value)}
+          onOpen={openAgendaNote}
+          onEdit={(row) => editDate(row.entry)}
+          onComplete={finishDate}
+          onSnooze={snoozeDate}
+          onExport={exportDate}
+        />
+      {/if}
     </section>
   </main>
+
+  {#if dateDialogOpen}
+    <DateDialog
+      entry={editingDate}
+      onSave={persistDate}
+      onDelete={removeDate}
+      onClose={() => {
+        dateDialogOpen = false;
+        editingDate = null;
+      }}
+    />
+  {/if}
 
   {#if authentication === null}
     <div class="lock-overlay" aria-live="polite">

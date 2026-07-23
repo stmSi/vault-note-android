@@ -1,0 +1,208 @@
+<script lang="ts">
+  import type { NoteBlock, NoteBlockType, NoteBodyDocument } from './lib/models';
+  import { newBlock } from './lib/noteBody';
+
+  export let document: NoteBodyDocument;
+  export let readonly = false;
+  export let dateCount = 0;
+  export let fileCount = 0;
+  export let onDocumentChange: (document: NoteBodyDocument) => void;
+  export let onFocusChange: (focused: boolean) => void = () => undefined;
+  export let onDates: () => void;
+  export let onFiles: () => void;
+
+  let root: HTMLDivElement;
+
+  function replaceBlocks(blocks: NoteBlock[]): void {
+    onDocumentChange({
+      version: 1,
+      blocks: blocks.length === 0 ? [newBlock()] : blocks,
+    });
+  }
+
+  function updateBlock(index: number, patch: Partial<NoteBlock>): void {
+    replaceBlocks(
+      document.blocks.map((block, blockIndex) =>
+        blockIndex === index ? { ...block, ...patch } : block,
+      ),
+    );
+  }
+
+  function addBlock(type: NoteBlockType): void {
+    replaceBlocks([...document.blocks, newBlock(type)]);
+  }
+
+  function splitBlock(index: number, target: HTMLTextAreaElement): void {
+    const block = document.blocks[index];
+    const position = target.selectionStart ?? block.text.length;
+    const before = block.text.slice(0, position);
+    const after = block.text.slice(position);
+    const nextType =
+      block.type === 'CHECKLIST_ITEM' && before.length === 0 && after.length === 0
+        ? 'PARAGRAPH'
+        : block.type;
+    const blocks = [...document.blocks];
+    blocks.splice(
+      index,
+      1,
+      { ...block, text: before },
+      newBlock(nextType, after),
+    );
+    replaceBlocks(blocks);
+    requestAnimationFrame(() => {
+      const inputs = root.querySelectorAll<HTMLTextAreaElement>('[data-block-input]');
+      inputs[index + 1]?.focus();
+      inputs[index + 1]?.setSelectionRange(0, 0);
+    });
+  }
+
+  function handleKeydown(
+    event: KeyboardEvent,
+    index: number,
+    target: HTMLTextAreaElement,
+  ): void {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      splitBlock(index, target);
+      return;
+    }
+    if (
+      event.key === 'Backspace' &&
+      target.value.length === 0 &&
+      document.blocks.length > 1
+    ) {
+      event.preventDefault();
+      const blocks = document.blocks.filter((_, blockIndex) => blockIndex !== index);
+      replaceBlocks(blocks);
+      requestAnimationFrame(() => {
+        const inputs = root.querySelectorAll<HTMLTextAreaElement>('[data-block-input]');
+        const previous = inputs[Math.max(0, index - 1)];
+        previous?.focus();
+        previous?.setSelectionRange(previous.value.length, previous.value.length);
+      });
+    }
+  }
+
+  function handleBlur(): void {
+    requestAnimationFrame(() => {
+      onFocusChange(root.contains(documentActiveElement()));
+    });
+  }
+
+  function documentActiveElement(): Element | null {
+    return window.document.activeElement;
+  }
+</script>
+
+<div class="block-editor" bind:this={root}>
+  <div class="blocks" aria-label="Note body">
+    {#each document.blocks as block, index (block.id)}
+      <div class:checklist={block.type === 'CHECKLIST_ITEM'} class="block-row">
+        {#if block.type === 'CHECKLIST_ITEM'}
+          <input
+            class="block-check"
+            type="checkbox"
+            aria-label="Toggle checklist item"
+            checked={block.checked}
+            disabled={readonly}
+            onchange={(event) =>
+              updateBlock(index, { checked: event.currentTarget.checked })}
+          />
+        {/if}
+        <textarea
+          data-block-input
+          aria-label={block.type === 'CHECKLIST_ITEM' ? 'Checklist item' : 'Text block'}
+          placeholder={block.type === 'CHECKLIST_ITEM' ? 'Checklist item' : 'Start writing…'}
+          rows={Math.max(1, block.text.split('\n').length)}
+          maxlength="100000"
+          value={block.text}
+          {readonly}
+          onfocus={() => onFocusChange(true)}
+          onblur={handleBlur}
+          oninput={(event) => updateBlock(index, { text: event.currentTarget.value })}
+          onkeydown={(event) => handleKeydown(event, index, event.currentTarget)}
+        ></textarea>
+      </div>
+    {/each}
+  </div>
+
+  {#if !readonly}
+    <div class="block-toolbar" aria-label="Note actions">
+      <button onclick={() => addBlock('PARAGRAPH')}>Text</button>
+      <button onclick={() => addBlock('CHECKLIST_ITEM')}>☐ Checklist</button>
+      <button onclick={onDates}>◷ Dates{dateCount > 0 ? ` ${dateCount}` : ''}</button>
+      <button onclick={onFiles}>⌕ Files{fileCount > 0 ? ` ${fileCount}` : ''}</button>
+    </div>
+  {/if}
+</div>
+
+<style>
+  .block-editor {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    min-height: 0;
+  }
+
+  .blocks {
+    min-height: 0;
+    padding: 4px 2px 80px;
+    overflow: auto;
+  }
+
+  .block-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    min-height: 34px;
+  }
+
+  .block-row textarea {
+    width: 100%;
+    min-height: 34px;
+    padding: 5px 2px;
+    overflow: hidden;
+    line-height: 1.65;
+    color: #263330;
+    resize: none;
+    background: transparent;
+    border: 0;
+  }
+
+  .block-row textarea:focus {
+    outline: none;
+  }
+
+  .block-check {
+    width: 18px;
+    height: 18px;
+    margin: 10px 0 0;
+    accent-color: #237767;
+  }
+
+  .checklist textarea {
+    color: #344943;
+  }
+
+  .checklist:has(.block-check:checked) textarea {
+    color: #778681;
+    text-decoration: line-through;
+  }
+
+  .block-toolbar {
+    display: flex;
+    gap: 6px;
+    padding: 7px 0 0;
+    overflow-x: auto;
+    background: #fff;
+    border-top: 1px solid #dce4e2;
+  }
+
+  .block-toolbar button {
+    flex: 0 0 auto;
+    min-height: 34px;
+    padding: 5px 10px;
+    color: #31574f;
+    background: #f7faf9;
+    border-color: #d5e1de;
+  }
+</style>

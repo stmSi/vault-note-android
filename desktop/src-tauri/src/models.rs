@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VaultSection {
@@ -22,6 +22,8 @@ pub struct VaultItemSummary {
     pub updated_at_epoch_millis: i64,
     pub sync_status: String,
     pub deleted_at_epoch_millis: Option<i64>,
+    pub next_dated_entry_at_epoch_millis: Option<i64>,
+    pub has_overdue_entry: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -41,6 +43,85 @@ pub struct VaultNote {
     pub last_synced_revision: Option<i64>,
     pub sync_status: String,
     pub deleted_at_epoch_millis: Option<i64>,
+    pub body_document: Option<NoteBodyDocument>,
+    pub dated_entries: Vec<DatedEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NoteBodyDocument {
+    pub version: u32,
+    pub blocks: Vec<NoteBlock>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NoteBlock {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub block_type: String,
+    pub text: String,
+    pub checked: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DatedEntryAlert {
+    pub id: String,
+    pub lead_time_minutes: i64,
+    pub snoozed_until_epoch_millis: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DatedEntry {
+    pub id: String,
+    pub item_id: String,
+    #[serde(rename = "type")]
+    pub entry_type: String,
+    pub label: String,
+    pub occurrence_at_epoch_millis: i64,
+    pub is_all_day: bool,
+    pub time_zone_id: String,
+    pub recurrence_unit: Option<String>,
+    pub recurrence_interval: Option<i64>,
+    pub completed_at_epoch_millis: Option<i64>,
+    pub created_at_epoch_millis: i64,
+    pub updated_at_epoch_millis: i64,
+    pub alerts: Vec<DatedEntryAlert>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DatedEntryDraft {
+    pub id: Option<String>,
+    #[serde(rename = "type")]
+    pub entry_type: String,
+    pub label: String,
+    pub occurrence_at_epoch_millis: i64,
+    pub is_all_day: bool,
+    pub time_zone_id: String,
+    pub recurrence_unit: Option<String>,
+    pub recurrence_interval: Option<i64>,
+    pub alert_lead_times_minutes: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgendaEntry {
+    pub entry: DatedEntry,
+    pub note_title: String,
+    pub is_archived: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduledAlert {
+    pub notification_id: i32,
+    pub alert_id: String,
+    pub entry_id: String,
+    pub item_id: String,
+    pub trigger_at_epoch_millis: i64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -116,6 +197,7 @@ pub struct PortableItem {
     pub local_revision: i64,
     pub deleted_at: Option<i64>,
     pub conflict_origin_id: Option<String>,
+    pub body_document_json: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,11 +228,17 @@ pub struct PortableAttachment {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortableDatedEntry {
+    pub entry: DatedEntry,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortableSnapshot {
     pub items: Vec<PortableItem>,
     pub tags: Vec<PortableTag>,
     pub item_tags: Vec<PortableItemTag>,
     pub attachments: Vec<PortableAttachment>,
+    pub dated_entries: Vec<PortableDatedEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

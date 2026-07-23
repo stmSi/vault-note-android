@@ -12,7 +12,8 @@
     "bundle:linux": "NO_STRIP=1 tauri build --ci --bundles deb,rpm,appimage"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.11.1"
+    "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/plugin-notification": "2.3.3"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.2.0",

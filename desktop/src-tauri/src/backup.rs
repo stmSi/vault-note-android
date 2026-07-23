@@ -24,16 +24,19 @@ use crate::{
     crypto::AttachmentCrypto,
     error::AppError,
     models::{
-        AttachmentRecord, BackupSummary, PortableAttachment, PortableItem, PortableItemTag,
-        PortableSnapshot, PortableTag, RestoreSummary, VaultAttachment,
+        AttachmentRecord, BackupSummary, DatedEntry, DatedEntryAlert, NoteBodyDocument,
+        PortableAttachment, PortableDatedEntry, PortableItem, PortableItemTag, PortableSnapshot,
+        PortableTag, RestoreSummary, VaultAttachment,
     },
     repository::VaultRepository,
+    validation::validate_note_document,
 };
 
 const MAGIC: &str = "VaultNoteBackup";
 const FORMAT_VERSION: u32 = 1;
 const MINIMUM_READER_VERSION: u32 = 1;
-const DATABASE_SCHEMA_VERSION: u32 = 1;
+const DATABASE_SCHEMA_VERSION: u32 = 2;
+const MINIMUM_DATABASE_SCHEMA_VERSION: u32 = 1;
 const MANIFEST_PATH: &str = "manifest.json";
 const CHECKSUMS_PATH: &str = "checksums.json.enc";
 const DATABASE_PATH: &str = "database.json.enc";
@@ -299,6 +302,7 @@ impl BackupService {
                     local_revision: item.local_revision,
                     deleted_at: item.deleted_at,
                     conflict_origin_id,
+                    body_document_json: item.body_document,
                 }
             })
             .collect();
@@ -380,6 +384,41 @@ impl BackupService {
             }
             attachments.push(prepared);
         }
+        let dated_entries = database
+            .dated_entries
+            .into_iter()
+            .map(|entry| {
+                let item_id = item_ids
+                    .get(&entry.item_id)
+                    .cloned()
+                    .ok_or(AppError::InvalidBackup)?;
+                Ok(PortableDatedEntry {
+                    entry: DatedEntry {
+                        id: new_id(),
+                        item_id,
+                        entry_type: entry.entry_type,
+                        label: entry.label,
+                        occurrence_at_epoch_millis: entry.occurrence_at,
+                        is_all_day: entry.all_day,
+                        time_zone_id: entry.time_zone_id,
+                        recurrence_unit: entry.recurrence_unit,
+                        recurrence_interval: entry.recurrence_interval,
+                        completed_at_epoch_millis: entry.completed_at,
+                        created_at_epoch_millis: entry.created_at,
+                        updated_at_epoch_millis: entry.updated_at,
+                        alerts: entry
+                            .alerts
+                            .into_iter()
+                            .map(|alert| DatedEntryAlert {
+                                id: new_id(),
+                                lead_time_minutes: alert.lead_time_minutes,
+                                snoozed_until_epoch_millis: None,
+                            })
+                            .collect(),
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
         if !encrypted_entries.is_empty() {
             cleanup_attachments(&self.crypto, &attachments);
             return Err(AppError::InvalidBackup);
@@ -389,6 +428,7 @@ impl BackupService {
             tags,
             item_tags,
             attachments,
+            dated_entries,
         })
     }
 }
@@ -492,6 +532,8 @@ struct DatabaseSnapshot {
     tags: Vec<DatabaseTag>,
     item_tags: Vec<DatabaseItemTag>,
     attachments: Vec<DatabaseAttachment>,
+    #[serde(default)]
+    dated_entries: Vec<DatabaseDatedEntry>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -512,6 +554,8 @@ struct DatabaseItem {
     local_revision: i64,
     deleted_at: Option<i64>,
     conflict_origin_id: Option<String>,
+    #[serde(default)]
+    body_document: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -551,6 +595,32 @@ struct DatabaseAttachment {
     content_entry: String,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DatabaseDatedEntry {
+    id: String,
+    item_id: String,
+    #[serde(rename = "type")]
+    entry_type: String,
+    label: String,
+    occurrence_at: i64,
+    all_day: bool,
+    time_zone_id: String,
+    recurrence_unit: Option<String>,
+    recurrence_interval: Option<i64>,
+    completed_at: Option<i64>,
+    created_at: i64,
+    updated_at: i64,
+    alerts: Vec<DatabaseDatedEntryAlert>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DatabaseDatedEntryAlert {
+    id: String,
+    lead_time_minutes: i64,
+}
+
 fn database_from_snapshot(snapshot: &PortableSnapshot) -> Result<DatabaseSnapshot, AppError> {
     let items = snapshot
         .items
@@ -570,6 +640,7 @@ fn database_from_snapshot(snapshot: &PortableSnapshot) -> Result<DatabaseSnapsho
             local_revision: item.local_revision,
             deleted_at: item.deleted_at,
             conflict_origin_id: item.conflict_origin_id.clone(),
+            body_document: item.body_document_json.clone(),
         })
         .collect();
     let tags = snapshot
@@ -613,6 +684,35 @@ fn database_from_snapshot(snapshot: &PortableSnapshot) -> Result<DatabaseSnapsho
             content_entry: attachment_path(index + 1),
         })
         .collect();
+    let dated_entries = snapshot
+        .dated_entries
+        .iter()
+        .map(|portable| {
+            let entry = &portable.entry;
+            DatabaseDatedEntry {
+                id: entry.id.clone(),
+                item_id: entry.item_id.clone(),
+                entry_type: entry.entry_type.clone(),
+                label: entry.label.clone(),
+                occurrence_at: entry.occurrence_at_epoch_millis,
+                all_day: entry.is_all_day,
+                time_zone_id: entry.time_zone_id.clone(),
+                recurrence_unit: entry.recurrence_unit.clone(),
+                recurrence_interval: entry.recurrence_interval,
+                completed_at: entry.completed_at_epoch_millis,
+                created_at: entry.created_at_epoch_millis,
+                updated_at: entry.updated_at_epoch_millis,
+                alerts: entry
+                    .alerts
+                    .iter()
+                    .map(|alert| DatabaseDatedEntryAlert {
+                        id: alert.id.clone(),
+                        lead_time_minutes: alert.lead_time_minutes,
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
     Ok(DatabaseSnapshot {
         schema_version: DATABASE_SCHEMA_VERSION,
         item_count: snapshot.items.len(),
@@ -621,6 +721,7 @@ fn database_from_snapshot(snapshot: &PortableSnapshot) -> Result<DatabaseSnapsho
         tags,
         item_tags,
         attachments,
+        dated_entries,
     })
 }
 
@@ -645,7 +746,8 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), AppError> {
 }
 
 fn validate_database(database: &DatabaseSnapshot) -> Result<(), AppError> {
-    if database.schema_version != DATABASE_SCHEMA_VERSION
+    if !(MINIMUM_DATABASE_SCHEMA_VERSION..=DATABASE_SCHEMA_VERSION)
+        .contains(&database.schema_version)
         || database.item_count != database.items.len()
         || database.attachment_count != database.attachments.len()
         || database.items.len() > MAX_ITEMS
@@ -675,6 +777,16 @@ fn validate_database(database: &DatabaseSnapshot) -> Result<(), AppError> {
                 .is_some_and(|id| !is_safe_id(id))
         {
             return Err(AppError::InvalidBackup);
+        }
+        if let Some(document_json) = &item.body_document {
+            let document: NoteBodyDocument =
+                serde_json::from_str(document_json).map_err(|_| AppError::InvalidBackup)?;
+            if !matches!(
+                validate_note_document(&item.title, &document),
+                Ok(derived) if derived == item.body
+            ) {
+                return Err(AppError::InvalidBackup);
+            }
         }
     }
     let mut tag_ids = HashSet::new();
@@ -741,6 +853,47 @@ fn validate_database(database: &DatabaseSnapshot) -> Result<(), AppError> {
             || attachment.ocr_updated_at.is_some_and(|value| value < 0)
         {
             return Err(AppError::InvalidBackup);
+        }
+    }
+    let mut dated_entry_ids = HashSet::new();
+    let mut alert_ids = HashSet::new();
+    for entry in &database.dated_entries {
+        let recurrence_valid = match (&entry.recurrence_unit, entry.recurrence_interval) {
+            (None, None) => true,
+            (Some(unit), Some(interval)) => {
+                matches!(unit.as_str(), "DAY" | "WEEK" | "MONTH" | "YEAR")
+                    && (1..=999).contains(&interval)
+            }
+            _ => false,
+        };
+        if !is_safe_id(&entry.id)
+            || !dated_entry_ids.insert(entry.id.as_str())
+            || !item_ids.contains(entry.item_id.as_str())
+            || !matches!(
+                entry.entry_type.as_str(),
+                "REMINDER" | "DEADLINE" | "IMPORTANT_DATE" | "RENEWAL"
+            )
+            || entry.label.chars().count() > 500
+            || entry.label.contains('\0')
+            || entry.occurrence_at < 0
+            || entry.time_zone_id.parse::<chrono_tz::Tz>().is_err()
+            || !recurrence_valid
+            || entry.completed_at.is_some_and(|value| value < 0)
+            || entry.created_at < 0
+            || entry.updated_at < 0
+            || entry.alerts.len() > 5
+        {
+            return Err(AppError::InvalidBackup);
+        }
+        let mut lead_times = HashSet::new();
+        for alert in &entry.alerts {
+            if !is_safe_id(&alert.id)
+                || !alert_ids.insert(alert.id.as_str())
+                || !lead_times.insert(alert.lead_time_minutes)
+                || !(0..=5_256_000).contains(&alert.lead_time_minutes)
+            {
+                return Err(AppError::InvalidBackup);
+            }
         }
     }
     Ok(())
