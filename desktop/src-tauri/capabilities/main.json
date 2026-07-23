@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "The main VaultNote window uses only application-defined commands.",
+  "windows": ["main"],
+  "permissions": []
+}

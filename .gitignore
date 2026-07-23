@@ -10,3 +10,9 @@ captures/
 *.iml
 .DS_Store
 /VaultNote Development Plan.pdf
+
+# Desktop frontend and Rust build output
+desktop/node_modules/
+desktop/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/

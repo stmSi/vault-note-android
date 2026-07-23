@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="VaultNote">
+  <rect width="512" height="512" rx="112" fill="#d8e2ff"/>
+  <path fill="#315da8" d="M120 72h220l60 60v308H120z"/>
+  <path fill="#fff" d="M320 72v80h80zM176 208h168v32H176zm0 72h168v32H176zm0 72h112v32H176z"/>
+</svg>
