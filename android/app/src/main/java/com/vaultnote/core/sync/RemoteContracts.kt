@@ -22,6 +22,11 @@ data class RemoteAttachmentReference(
     val fileSizeBytes: Long,
     val plaintextSha256: String,
     val encryptionFormatVersion: Int,
+    val originalFilename: String = "attachment",
+    val imageWidth: Int? = null,
+    val imageHeight: Int? = null,
+    val pdfPageCount: Int? = null,
+    val createdAtEpochMillis: Long = 0L,
 )
 
 data class RemoteItemMetadata(
@@ -73,6 +78,7 @@ enum class RemoteErrorCode(val retryable: Boolean) {
     QUOTA_EXCEEDED(false),
     NOT_FOUND(false),
     CORRUPTED_UPLOAD(false),
+    UNSUPPORTED_PROTOCOL(false),
 }
 
 sealed interface RemoteMutationResult {
@@ -132,16 +138,45 @@ sealed interface RemoteFileResult {
     data class Failure(val code: RemoteErrorCode) : RemoteFileResult
 }
 
+sealed interface RemoteVerificationResult {
+    data object Verified : RemoteVerificationResult
+    data class Failure(val code: RemoteErrorCode) : RemoteVerificationResult
+}
+
 /** Transfers already-encrypted attachment envelopes. Implementations must stream [source]. */
 interface RemoteFileStore {
     suspend fun uploadEncrypted(
         operationId: String,
         attachmentId: String,
         plaintextSha256: String,
+        plaintextSize: Long,
         source: File,
     ): RemoteFileResult
 
-    suspend fun verifyUpload(remotePath: String, plaintextSha256: String): Boolean
+    suspend fun verifyUpload(
+        remotePath: String,
+        plaintextSha256: String,
+    ): RemoteVerificationResult
 
     suspend fun delete(operationId: String, attachmentId: String): RemoteFileResult
+
+    suspend fun downloadDecrypted(
+        attachment: RemoteAttachmentReference,
+        output: java.io.OutputStream,
+    ): RemoteDownloadResult
+}
+
+/**
+ * Releases retry artifacts only after the local source of truth has durably committed a terminal
+ * remote result. Implementations must treat missing artifacts as success.
+ */
+interface SyncOperationArtifactStore {
+    suspend fun releaseItemOperation(operationId: String)
+
+    suspend fun releaseAttachment(attachmentId: String)
+}
+
+sealed interface RemoteDownloadResult {
+    data object Downloaded : RemoteDownloadResult
+    data class Failure(val code: RemoteErrorCode) : RemoteDownloadResult
 }

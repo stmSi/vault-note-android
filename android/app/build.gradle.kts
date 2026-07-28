@@ -14,8 +14,8 @@ android {
         applicationId = "com.vaultnote"
         minSdk = 26
         targetSdk = 37
-        versionCode = 28
-        versionName = "1.10.5"
+        versionCode = 29
+        versionName = "1.11.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -115,6 +115,7 @@ dependencies {
     implementation(libs.androidx.biometric)
     implementation(libs.mlkit.text.recognition)
     implementation(libs.androidx.work.runtime)
+    implementation(libs.okhttp)
 
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
@@ -125,7 +126,6 @@ dependencies {
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.androidx.room.testing)
     testImplementation(libs.robolectric)
-
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.rules)
     androidTestImplementation(libs.androidx.test.ext.junit)

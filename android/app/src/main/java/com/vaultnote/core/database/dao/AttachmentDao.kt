@@ -21,6 +21,15 @@ interface AttachmentDao {
 
     @Query(
         """
+        UPDATE attachments
+        SET remote_path = NULL,
+            upload_status = 'PENDING'
+        """,
+    )
+    suspend fun resetAllForNewRelay(): Int
+
+    @Query(
+        """
         SELECT * FROM attachments
         WHERE parent_item_id = :itemId
         ORDER BY created_at ASC, id ASC

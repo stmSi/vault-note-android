@@ -112,6 +112,7 @@ class InMemoryFakeSyncBackend(
         operationId: String,
         attachmentId: String,
         plaintextSha256: String,
+        plaintextSize: Long,
         source: File,
     ): RemoteFileResult {
         mutex.withLock { idempotentFiles[operationId] }?.let { return it }
@@ -136,12 +137,17 @@ class InMemoryFakeSyncBackend(
     override suspend fun verifyUpload(
         remotePath: String,
         plaintextSha256: String,
-    ): Boolean = mutex.withLock {
-        files[remotePath]?.let { stored ->
+    ): RemoteVerificationResult = mutex.withLock {
+        val verified = files[remotePath]?.let { stored ->
             stored.plaintextSha256 == plaintextSha256 &&
                 stored.byteCount > 0L &&
                 stored.encryptedSha256.length == SHA256_HEX_LENGTH
         } == true
+        if (verified) {
+            RemoteVerificationResult.Verified
+        } else {
+            RemoteVerificationResult.Failure(RemoteErrorCode.CORRUPTED_UPLOAD)
+        }
     }
 
     override suspend fun delete(
@@ -155,6 +161,11 @@ class InMemoryFakeSyncBackend(
         files.entries.removeAll { it.value.attachmentId == attachmentId }
         RemoteFileResult.Deleted.also { idempotentFiles[operationId] = it }
     }
+
+    override suspend fun downloadDecrypted(
+        attachment: RemoteAttachmentReference,
+        output: java.io.OutputStream,
+    ): RemoteDownloadResult = RemoteDownloadResult.Failure(RemoteErrorCode.NOT_FOUND)
 
     private suspend fun inspectEncryptedFile(source: File): Pair<String, Long>? =
         withContext(dispatchers.io) {

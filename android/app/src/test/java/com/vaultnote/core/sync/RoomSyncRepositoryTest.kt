@@ -8,6 +8,7 @@ import com.vaultnote.core.common.DispatcherProvider
 import com.vaultnote.core.common.IdGenerator
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.model.ItemSyncStatus
+import com.vaultnote.core.common.model.SyncOperationState
 import com.vaultnote.core.database.VaultDatabase
 import com.vaultnote.core.files.AndroidAttachmentFileManager
 import com.vaultnote.core.repository.RoomVaultRepository
@@ -34,6 +35,7 @@ class RoomSyncRepositoryTest {
     private lateinit var syncRepository: RoomSyncRepository
     private lateinit var vaultRepository: RoomVaultRepository
     private lateinit var ids: SequenceIdGenerator
+    private lateinit var artifacts: RecordingArtifactStore
 
     @Before
     fun setUp() {
@@ -41,6 +43,7 @@ class RoomSyncRepositoryTest {
         database = Room.inMemoryDatabaseBuilder(context, VaultDatabase::class.java).build()
         backend = InMemoryFakeSyncBackend(TestDispatchers)
         ids = SequenceIdGenerator()
+        artifacts = RecordingArtifactStore()
         val scheduler = CoalescingFakeSyncScheduler()
         val clock = IncrementingClock()
         vaultRepository = RoomVaultRepository(
@@ -60,6 +63,7 @@ class RoomSyncRepositoryTest {
             dispatchers = TestDispatchers,
             clock = clock,
             idGenerator = ids,
+            artifactStore = artifacts,
         )
     }
 
@@ -71,6 +75,9 @@ class RoomSyncRepositoryTest {
     @Test
     fun `queued note synchronizes idempotently and records revisions`() = runBlocking {
         val itemId = vaultRepository.createNote("Offline", "First").successValue()
+        val operation = requireNotNull(
+            database.syncOperationDao().getByDedupeKey("item:$itemId"),
+        )
 
         val first = syncRepository.synchronize()
         val second = syncRepository.synchronize()
@@ -83,9 +90,23 @@ class RoomSyncRepositoryTest {
         assertNotNull(note.remoteRevision)
         assertNotNull(note.serverVersionToken)
         assertEquals(note.localRevision, note.lastSyncedRevision)
+        assertEquals(listOf(operation.operationId), artifacts.releasedItemOperations)
         assertEquals(0L, database.syncOperationDao().observeOutstandingCount(
             com.vaultnote.core.common.model.SyncOperationState.COMPLETED,
         ).first())
+    }
+
+    private class RecordingArtifactStore : SyncOperationArtifactStore {
+        val releasedItemOperations = mutableListOf<String>()
+        val releasedAttachments = mutableListOf<String>()
+
+        override suspend fun releaseItemOperation(operationId: String) {
+            releasedItemOperations += operationId
+        }
+
+        override suspend fun releaseAttachment(attachmentId: String) {
+            releasedAttachments += attachmentId
+        }
     }
 
     @Test
@@ -131,6 +152,33 @@ class RoomSyncRepositoryTest {
         assertEquals(SyncRunResult.AuthenticationRequired, syncRepository.synchronize())
         val operation = requireNotNull(database.syncOperationDao().getByDedupeKey("item:$itemId"))
         assertEquals(com.vaultnote.core.common.model.SyncOperationState.PENDING, operation.state)
+    }
+
+    @Test
+    fun `pairing again resumes operations stopped by expired authentication`() = runBlocking {
+        val itemId = vaultRepository.createNote("Private", "Body").successValue()
+        val operation = requireNotNull(
+            database.syncOperationDao().getByDedupeKey("item:$itemId"),
+        )
+        database.syncOperationDao().updateAttemptState(
+            operationId = operation.operationId,
+            state = SyncOperationState.FAILED_PERMANENT,
+            attemptCount = 1,
+            nextAttemptAt = 1_000L,
+            leaseToken = null,
+            leaseExpiresAt = null,
+            updatedAt = 1_000L,
+            lastErrorCode = "authentication_expired",
+        )
+
+        syncRepository.resumeAfterAuthentication().requireSuccess()
+
+        val resumed = requireNotNull(
+            database.syncOperationDao().getByDedupeKey("item:$itemId"),
+        )
+        assertEquals(SyncOperationState.PENDING, resumed.state)
+        assertEquals(0, resumed.attemptCount)
+        assertEquals(null, resumed.lastErrorCode)
     }
 
     private fun com.vaultnote.core.common.model.VaultNote.toRemoteMetadata(

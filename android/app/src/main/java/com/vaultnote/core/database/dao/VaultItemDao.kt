@@ -29,6 +29,17 @@ interface VaultItemDao {
 
     @Query(
         """
+        UPDATE vault_items
+        SET remote_revision = NULL,
+            last_synced_revision = NULL,
+            server_version_token = NULL,
+            sync_status = 'PENDING'
+        """,
+    )
+    suspend fun resetAllForNewRelay(): Int
+
+    @Query(
+        """
         SELECT * FROM vault_items
         WHERE id = :originId OR conflict_origin_id = :originId
         ORDER BY conflict_origin_id IS NOT NULL ASC, created_at ASC, id ASC

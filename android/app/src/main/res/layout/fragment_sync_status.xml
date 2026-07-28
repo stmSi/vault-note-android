@@ -16,32 +16,214 @@
         app:navigationIcon="@drawable/ic_back"
         app:title="@string/sync_status_title" />
 
-    <LinearLayout
-        android:id="@+id/content"
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/scroll_content"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:orientation="vertical"
-        android:padding="@dimen/space_m"
+        android:fillViewport="true"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/toolbar">
 
-        <TextView android:id="@+id/pending_count" android:layout_width="match_parent" android:layout_height="wrap_content" android:textAppearance="?attr/textAppearanceBodyLarge" />
-        <TextView android:id="@+id/running_count" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/space_s" android:textAppearance="?attr/textAppearanceBodyLarge" />
-        <TextView android:id="@+id/retry_count" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/space_s" android:textAppearance="?attr/textAppearanceBodyLarge" />
-        <TextView android:id="@+id/failed_count" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/space_s" android:textAppearance="?attr/textAppearanceBodyLarge" />
-        <TextView android:id="@+id/conflict_count" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/space_s" android:textAppearance="?attr/textAppearanceBodyLarge" />
-        <TextView android:id="@+id/last_success" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/space_l" android:textAppearance="?attr/textAppearanceBodyMedium" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/sync_now_button"
+        <LinearLayout
+            android:id="@+id/content"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_l"
-            android:minHeight="@dimen/touch_target"
-            android:text="@string/sync_now" />
-    </LinearLayout>
+            android:orientation="vertical"
+            android:padding="@dimen/space_m">
+
+            <TextView
+                android:id="@+id/connection_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+            <TextView
+                android:id="@+id/connection_details"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_xs"
+                android:textAppearance="?attr/textAppearanceBodySmall" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/discover_relay_button"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_m"
+                android:minHeight="@dimen/touch_target"
+                android:text="@string/discover_lan_relay" />
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/relay_host_container"
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_m"
+                android:hint="@string/relay_host_address">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/relay_host_input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:autofillHints=""
+                    android:inputType="textUri"
+                    android:maxLength="255"
+                    android:singleLine="true" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/relay_port_container"
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_s"
+                android:hint="@string/relay_port">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/relay_port_input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="number"
+                    android:maxLength="5"
+                    android:singleLine="true" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/relay_vault_container"
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_s"
+                android:hint="@string/relay_vault_id">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/relay_vault_input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="textNoSuggestions"
+                    android:maxLength="128"
+                    android:singleLine="true" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/relay_fingerprint_container"
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_s"
+                android:hint="@string/relay_certificate_fingerprint">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/relay_fingerprint_input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:inputType="textNoSuggestions"
+                    android:maxLength="95"
+                    android:singleLine="true" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.checkbox.MaterialCheckBox
+                android:id="@+id/fingerprint_verified_checkbox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_xs"
+                android:filterTouchesWhenObscured="true"
+                android:minHeight="@dimen/touch_target"
+                android:text="@string/relay_fingerprint_verified" />
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/relay_token_container"
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_s"
+                android:hint="@string/relay_authentication_token"
+                app:endIconMode="password_toggle">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/relay_token_input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:autofillHints="password"
+                    android:inputType="textPassword"
+                    android:maxLength="128"
+                    android:singleLine="true" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/sync_password_container"
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_s"
+                android:hint="@string/sync_encryption_password"
+                app:endIconMode="password_toggle">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/sync_password_input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:autofillHints="newPassword"
+                    android:inputType="textPassword"
+                    android:maxLength="1024"
+                    android:singleLine="true" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_xs"
+                android:text="@string/sync_password_warning"
+                android:textAppearance="?attr/textAppearanceBodySmall" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/pair_relay_button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_m"
+                android:minHeight="@dimen/touch_target"
+                android:text="@string/pair_lan_relay" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/disconnect_relay_button"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_s"
+                android:minHeight="@dimen/touch_target"
+                android:text="@string/disconnect_lan_relay" />
+
+            <com.google.android.material.progressindicator.LinearProgressIndicator
+                android:id="@+id/connection_progress"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_s"
+                android:visibility="gone" />
+
+            <com.google.android.material.divider.MaterialDivider
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginVertical="@dimen/space_l" />
+
+            <TextView android:id="@+id/pending_count" android:layout_width="match_parent" android:layout_height="wrap_content" android:textAppearance="?attr/textAppearanceBodyLarge" />
+            <TextView android:id="@+id/running_count" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/space_s" android:textAppearance="?attr/textAppearanceBodyLarge" />
+            <TextView android:id="@+id/retry_count" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/space_s" android:textAppearance="?attr/textAppearanceBodyLarge" />
+            <TextView android:id="@+id/failed_count" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/space_s" android:textAppearance="?attr/textAppearanceBodyLarge" />
+            <TextView android:id="@+id/conflict_count" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/space_s" android:textAppearance="?attr/textAppearanceBodyLarge" />
+            <TextView android:id="@+id/last_success" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/space_l" android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/sync_now_button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_l"
+                android:minHeight="@dimen/touch_target"
+                android:text="@string/sync_now" />
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
 
     <com.google.android.material.progressindicator.CircularProgressIndicator
         android:id="@+id/loading_indicator"

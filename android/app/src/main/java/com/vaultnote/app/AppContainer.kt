@@ -21,11 +21,17 @@ import com.vaultnote.core.repository.AttachmentRepository
 import com.vaultnote.core.repository.RoomVaultRepository
 import com.vaultnote.core.repository.RoomAttachmentRepository
 import com.vaultnote.core.repository.VaultRepository
-import com.vaultnote.core.sync.InMemoryFakeSyncBackend
 import com.vaultnote.core.sync.RoomSyncRepository
 import com.vaultnote.core.sync.SyncRepository
 import com.vaultnote.core.sync.SyncScheduler
 import com.vaultnote.core.sync.WorkManagerSyncScheduler
+import com.vaultnote.core.sync.lan.AndroidLanRelayDiscovery
+import com.vaultnote.core.sync.lan.AndroidSyncCredentialStore
+import com.vaultnote.core.sync.lan.DefaultLanSyncConnectionRepository
+import com.vaultnote.core.sync.lan.LanSyncConnectionRepository
+import com.vaultnote.core.sync.lan.RelayHttpBackend
+import com.vaultnote.core.sync.lan.SyncCredentialStore
+import com.vaultnote.core.sync.lan.SyncEnvelopeCrypto
 import com.vaultnote.feature.viewer.AndroidFileViewer
 import com.vaultnote.feature.viewer.AndroidAttachmentExporter
 import com.vaultnote.feature.viewer.AttachmentExporter
@@ -62,6 +68,7 @@ interface AppContainer {
     val ocrRepository: OcrRepository
     val syncRepository: SyncRepository
     val syncScheduler: SyncScheduler
+    val lanSyncConnectionRepository: LanSyncConnectionRepository
     val reminderScheduler: ReminderScheduler
 }
 
@@ -78,12 +85,30 @@ class DefaultAppContainer(context: Context) : AppContainer {
     override val syncScheduler: SyncScheduler by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         WorkManagerSyncScheduler(applicationContext)
     }
-    private val fakeSyncBackend by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        InMemoryFakeSyncBackend(DefaultDispatcherProvider)
+    private val syncCredentialStore: SyncCredentialStore by lazy(
+        LazyThreadSafetyMode.SYNCHRONIZED,
+    ) {
+        AndroidSyncCredentialStore(applicationContext)
+    }
+    private val lanRelayDiscovery by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        AndroidLanRelayDiscovery(applicationContext)
+    }
+    private val syncEnvelopeCrypto by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        SyncEnvelopeCrypto(DefaultDispatcherProvider)
     }
     private val encryptionService: EncryptionService by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         AesGcmEncryptionService(
             keyProvider = AndroidKeystoreKeyProvider(),
+            dispatchers = DefaultDispatcherProvider,
+        )
+    }
+    private val relayBackend by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        RelayHttpBackend(
+            context = applicationContext,
+            credentialStore = syncCredentialStore,
+            discovery = lanRelayDiscovery,
+            envelopeCrypto = syncEnvelopeCrypto,
+            deviceEncryption = encryptionService,
             dispatchers = DefaultDispatcherProvider,
         )
     }
@@ -235,14 +260,27 @@ class DefaultAppContainer(context: Context) : AppContainer {
     override val syncRepository: SyncRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         RoomSyncRepository(
             database = database,
-            syncApi = fakeSyncBackend,
-            authProvider = fakeSyncBackend,
-            remoteFileStore = fakeSyncBackend,
+            syncApi = relayBackend,
+            authProvider = relayBackend,
+            remoteFileStore = relayBackend,
             fileManager = attachmentFileManager,
             syncScheduler = syncScheduler,
             dispatchers = DefaultDispatcherProvider,
             clock = SystemClock,
             idGenerator = UuidIdGenerator,
+            artifactStore = relayBackend,
+        )
+    }
+
+    override val lanSyncConnectionRepository: LanSyncConnectionRepository by lazy(
+        LazyThreadSafetyMode.SYNCHRONIZED,
+    ) {
+        DefaultLanSyncConnectionRepository(
+            credentialStore = syncCredentialStore,
+            discovery = lanRelayDiscovery,
+            backend = relayBackend,
+            envelopeCrypto = syncEnvelopeCrypto,
+            syncRepository = syncRepository,
         )
     }
 }

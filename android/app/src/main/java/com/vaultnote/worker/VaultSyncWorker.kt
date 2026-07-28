@@ -21,6 +21,9 @@ class VaultSyncWorker(
             SyncRunResult.AuthenticationRequired -> Result.failure(
                 workDataOf(KEY_FAILURE_CODE to FAILURE_AUTHENTICATION),
             )
+            is SyncRunResult.PermanentFailure -> Result.failure(
+                workDataOf(KEY_FAILURE_CODE to result.code.name.lowercase()),
+            )
         }
     } catch (cancelled: CancellationException) {
         throw cancelled

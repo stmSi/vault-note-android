@@ -2,17 +2,15 @@
 
 ## Status and compatibility
 
-This document defines the client-facing protocol boundary implemented in Phase 5. The Android app currently connects it to an in-memory fake backend; that fake is for deterministic development and is not a remote backup. A production service or future PC client must implement the same revision, idempotency, attachment-ordering, pagination, and error rules.
+This document defines the protocol-3 client implemented by Android and the opaque HTTPS relay under `sync-server/`. The older in-memory implementation remains only as a deterministic unit-test fake. The relay persists revisions, encrypted item envelopes, encrypted attachment envelopes, tombstones, idempotency receipts, and the incremental cursor; it never receives decrypted vault metadata or files.
 
-The repository now also contains a production-oriented opaque protocol-3 relay under `sync-server/`, including HTTPS, persistent revisions, encrypted-envelope storage, attachment transfer, and LAN discovery. Android is not wired to protocol 3 yet: it still uses this protocol-2 fake, and its current Keystore attachment envelope remains device-bound. Cross-device synchronization must not be presented as active until the Android client implements the protocol-3 envelope and pairing contract in `sync-server/docs/wire-protocol.md`.
-
-Protocol implementations negotiate an integer protocol version. Version `2` is described here. Version `2` adds the signed 64-bit `sortPosition` field; a version-1 item is imported with a deterministic position derived from its existing order. Unknown required fields or a higher incompatible protocol version must fail as `unsupported_protocol`; clients must not guess at semantics.
+Protocol implementations negotiate integer version `3`. The encrypted item JSON schema is independently versioned as `3`; unknown required fields or an incompatible protocol version fail as `unsupported_protocol`. The normative HTTP and binary contract is [the relay wire protocol](../../sync-server/docs/wire-protocol.md).
 
 ## Authentication
 
-Production clients obtain an access token from an external `AuthProvider`. Tokens never enter item payloads, filenames, logs, Room, or backup archives. HTTP implementations send `Authorization: Bearer <token>` over TLS and refresh credentials outside a sync transaction.
+Pairing requires the relay address, bearer token, a manually compared SHA-256 TLS certificate fingerprint, and a separate shared sync password. The token is sent only after exact certificate pin validation. The password is never sent; PBKDF2-HMAC-SHA256 derives the master key and an encrypted key-check proves that clients used the same password.
 
-An expired or revoked credential returns `authentication_expired`. The current work attempt stops and is not retried indefinitely. Durable local operations remain available; a successful reauthentication explicitly schedules sync again. The Phase 5 fake reports only `authenticated` or `expired` and stores no credential.
+Android stores the token and derived master key only inside an AES-GCM credential envelope whose non-exportable wrapping key is held by Android Keystore. It stores neither the sync password nor plaintext credentials. An expired or replaced token stops work without an automatic retry loop. Pairing the same vault again reactivates authentication-stopped queue rows and schedules unique work.
 
 ## Item schema
 
@@ -20,7 +18,7 @@ Item IDs and attachment IDs are collision-resistant client-generated strings. Pe
 
 ```json
 {
-  "protocolVersion": 2,
+  "schemaVersion": 3,
   "id": "uuid",
   "type": "NOTE",
   "title": "text",
@@ -38,11 +36,16 @@ Item IDs and attachment IDs are collision-resistant client-generated strings. Pe
   "attachments": [
     {
       "id": "uuid",
-      "remotePath": "opaque server path",
+      "remotePath": "/v1/attachments/uuid",
+      "originalFilename": "paper.pdf",
       "mimeType": "application/pdf",
       "fileSizeBytes": 123,
       "plaintextSha256": "64 lowercase hex characters",
-      "encryptionFormatVersion": 1
+      "encryptionFormatVersion": 1,
+      "imageWidth": null,
+      "imageHeight": null,
+      "pdfPageCount": 2,
+      "createdAt": 0
     }
   ]
 }
@@ -52,11 +55,11 @@ Responses add a monotonic server-issued `serverRevision` and opaque `versionToke
 
 `sortPosition` orders items ascending inside separate pinned and unpinned groups. A drag changes the moved item's client revision and is synchronized like other metadata. Clients choose positions between adjacent items and may transactionally rebalance a crowded range; timestamps never determine an explicit manual order.
 
-Phase 5 sends note metadata as application payload and encrypts attachment bytes. This is not a zero-knowledge metadata protocol: a production backend can see note/title/tag/OCR fields unless a later protocol version adds independently designed metadata encryption and searchable-encryption behavior.
+The JSON above is plaintext only inside the authenticated item envelope on paired clients. The relay sees item and attachment IDs, encrypted sizes, revisions, access timing, and tombstones, but not titles, bodies, tags, filenames, OCR text, plaintext hashes, or colors.
 
 ## Idempotency and item mutations
 
-Every mutation includes the durable Room `operationId` as its idempotency key. Repeating an operation ID must return the original outcome and must not create another server revision.
+Every mutation includes the durable Room `operationId` as its idempotency key. Repeating an operation ID must return the original outcome and must not create another server revision. Because AES-GCM uses a random nonce, Android atomically caches the encrypted item envelope under that operation ID and reuses the exact bytes until Room commits the terminal acknowledgement. A response lost before that commit therefore remains an exact replay after process death.
 
 An upsert or deletion includes `expectedVersionToken`, which is the last server version observed by that client. The server applies the mutation only when the token matches the current version. A new item uses `null`. Success atomically creates a server revision and opaque replacement token. Mismatch returns `conflict` plus the current remote item, or a deletion marker if the item no longer exists.
 
@@ -66,20 +69,20 @@ The client marks an item synchronized only after the response is durable locally
 
 Attachment bytes use the documented [attachment encryption envelope](encryption-format.md). Upload order is mandatory:
 
-1. Validate, checksum, encrypt, fsync, and atomically store the file locally.
+1. Validate, checksum, encrypt under the device Keystore key, fsync, and atomically store the file locally.
 2. Commit attachment metadata and a deduplicated `UPLOAD_ATTACHMENT` operation in Room.
-3. Stream ciphertext to the remote file store with operation ID, attachment ID, and plaintext SHA-256 metadata.
+3. Authenticate and stream-transform the device envelope into a purpose-separated shared sync envelope without a plaintext temporary file.
 4. Resume or repeat using the same operation ID after interruption.
-5. Verify remote completion and checksum metadata.
+5. Verify that relay `HEAD` returns the exact local sync-envelope SHA-256 and byte count.
 6. Persist the opaque remote path and `UPLOADED` state locally.
 7. Upload item metadata referencing only verified remote paths.
 8. Mark the item synchronized in a Room transaction only when all current required operations are complete.
 
-The server must never interpret a client filename as a storage path. Remote paths are opaque server-generated values. A partial transfer is not visible as complete metadata; retrying the same operation is idempotent. Phase 5's fake streams and hashes ciphertext but intentionally retains no attachment bytes.
+The server never receives or interprets a filename as a storage path. A partial transfer is not visible as complete metadata; retrying the same operation reuses the same local envelope. Downloads resume into an app-private ciphertext partial, verify complete SHA-256, authenticate AES-GCM in a first pass, then stream directly into a new device-bound envelope. No plaintext attachment temporary is created by synchronization.
 
 ## Incremental download and pagination
 
-Clients call `pullChanges(cursor, limit)`. The cursor is opaque outside the issuing server; the fake uses a decimal server revision only for deterministic tests. A response contains ordered changes, `nextCursor`, and `hasMore`.
+Clients call `pullChanges(cursor, limit)`. Protocol 3 uses a validated decimal revision cursor, though callers treat it as server-issued state. A response contains ordered changes, `nextCursor`, and `hasMore`.
 
 Clients validate and commit one page plus its cursor in the same Room transaction. A crash before commit replays the page safely. Pages are bounded to 200 records; Android requests 100 and processes at most four pages per worker run before yielding. Newer work is rescheduled rather than retaining an unbounded response in memory.
 
@@ -117,6 +120,7 @@ Errors contain a stable code, retryability classification, optional bounded retr
 | `quota_exceeded` | no until user action | Remote capacity must be changed. |
 | `not_found` | no, unless operation is idempotent delete | Referenced remote object is absent. |
 | `corrupted_upload` | no | Verification failed; local ciphertext remains untouched. |
+| `unsupported_protocol` | no | Client and relay versions are incompatible. |
 | `conflict` | user resolution | Expected version token did not match. |
 
 Transient failures use bounded exponential backoff. Android starts at 30 seconds, caps at six hours, and converts repeated failures to attention-required state after ten attempts. Permanent failures remain visible in Sync status and are not retried indefinitely.
@@ -126,3 +130,9 @@ Transient failures use bounded exponential backoff. Android starts at 30 seconds
 Android schedules unique immediate work and unique six-hour periodic work with a connected-network constraint; periodic work also requires battery-not-low. WorkManager initialization is on demand after first display. Queue rows remain authoritative—WorkManager acceptance is not proof of upload.
 
 A worker claims a row with a random lease and expiry. Expired `RUNNING` rows return to retry state after process death or interruption. A newer local edit rotates the operation identity in the same deduplication slot, invalidating stale ownership. All remote operations remain idempotent across device restart and duplicate delivery.
+
+## LAN discovery and endpoint changes
+
+The relay advertises `_vaultnote-sync._tcp.local.` only when started with `--lan`. Android resolves it through `NsdManager`, reads protocol/vault/fingerprint TXT attributes after resolution, and keeps a multicast lock only for the bounded discovery window. Android 17 and newer requests `ACCESS_LOCAL_NETWORK` only when the user starts discovery or pairing.
+
+Discovery is a reachability hint, not authentication. Initial pairing requires explicit fingerprint confirmation. A paired client may accept a new host/port only when discovery matches both the saved vault ID and pinned fingerprint; TLS pinning still applies to the subsequent connection. Manual address entry remains available for networks that suppress multicast.

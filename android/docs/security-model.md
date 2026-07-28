@@ -13,8 +13,9 @@ OCR requires plaintext input. Only after the encrypted envelope authenticates, V
 - Android's application sandbox confines Room, ciphertext, thumbnails, and pending files from ordinary apps.
 - Android Keystore holds non-exportable attachment keys. VaultNote stores only an integer key version in each envelope.
 - The device lock and `BiometricPrompt` authenticate the user; VaultNote never receives biometric material, a PIN, pattern, or password.
-- Room remains the only displayed source of truth. The replaceable sync boundary consumes a durable queue; the included in-memory backend contains no credential, stores no attachment bytes, and is not remote backup.
-- Attachment ciphertext can cross the sync boundary, but note/title/tag/OCR metadata is not end-to-end encrypted. A future production backend administrator could read that metadata unless the protocol changes.
+- Room remains the only displayed source of truth. The protocol-3 LAN client consumes a durable queue and writes authenticated remote changes to Room before the UI can observe them.
+- The relay receives only purpose-separated AES-256-GCM item/attachment envelopes, revision state, opaque IDs, sizes, and traffic metadata. Note/title/tag/filename/OCR metadata and files are end-to-end encrypted with the shared sync password.
+- mDNS is an untrusted reachability hint. Initial pairing requires manual comparison of the relay certificate SHA-256 fingerprint, and every HTTPS request uses exact certificate pinning with redirects disabled.
 - Imported providers, filenames, MIME claims, sizes, file contents, camera apps, external viewers, and future remote systems are untrusted.
 - Backup document providers and archives are untrusted. Restore accepts only bounded exact paths and strict versioned metadata, authenticates every encrypted entry or checksum-verifies explicitly unencrypted entries, validates content in private staging, and changes live Room only after confirmation. Unkeyed plaintext checksums do not defend against a malicious archive author.
 
@@ -61,6 +62,8 @@ An explicit open or share action issues a random 144-bit token bound to one atta
 The attachment key does not leave Android Keystore. There is no recovery phrase, escrow key or cloud key copy. Clearing app data removes the database and keys; loss or invalidation of a required historical key makes device ciphertext unavailable. A separately exported manual backup remains recoverable because it contains password-encrypted plaintext-equivalent content rather than Keystore keys. Restore validates it and encrypts attachments under the destination installation's current Keystore key. Without both a valid archive and its password, key loss remains unrecoverable. Versioned aliases and envelopes provide the structural seam for key rotation.
 
 The app intentionally sets `allowBackup=false` and does not rely on Android Auto Backup. Passwords are never saved to Room, preferences, files, saved state or intents. Encryption remains selected by default; disabling it clears the password inputs and exposes a warning that all notes, OCR, filenames and attachments will be readable outside VaultNote. The complete portable format, temporary-plaintext boundary and restore transaction are documented in [Backup format](backup-format.md).
+
+The sync password is also never persisted. Android retains only its 256-bit derived master key and relay token inside an AES-GCM credential envelope protected by a separate non-exportable Android Keystore key. A relay salt and encrypted known key-check permit joining clients to detect a wrong password locally. This construction does not prevent offline guessing after a relay compromise, so security still depends on a strong sync password. Losing that password and every paired device makes relay ciphertext unrecoverable.
 
 ## Operational rules
 

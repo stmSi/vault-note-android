@@ -21,6 +21,7 @@ import com.vaultnote.core.files.AttachmentPreview
 import com.vaultnote.core.files.AttachmentValidationLevel
 import com.vaultnote.core.files.CleanupResult
 import com.vaultnote.core.files.PreparedAttachment
+import com.vaultnote.core.files.PreparedRemoteAttachment
 import com.vaultnote.core.files.PlannedAttachmentPaths
 import com.vaultnote.core.encryption.CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION
 import com.vaultnote.core.encryption.EncryptedFilePurpose
@@ -672,6 +673,27 @@ class RoomAttachmentRepositoryTest {
                     imageHeight = null,
                     pdfPageCount = if (passwordProtectedPdf) null else 2,
                     isPasswordProtectedPdf = passwordProtectedPdf,
+                ),
+            )
+        }
+
+        override suspend fun storeRemoteAttachment(
+            attachmentId: String,
+            plaintextLength: Long,
+            expectedPlaintextSha256: String,
+            plaintextProducer: suspend (OutputStream) -> RepositoryResult<Unit>,
+        ): RepositoryResult<PreparedRemoteAttachment> {
+            val relativePath = "attachments/$attachmentId.bin"
+            val destination = resolve(relativePath)
+            destination.parentFile?.mkdirs()
+            val produced = destination.outputStream().use { plaintextProducer(it) }
+            if (produced is RepositoryResult.Failure) return produced
+            return RepositoryResult.Success(
+                PreparedRemoteAttachment(
+                    attachmentId = attachmentId,
+                    localRelativePath = relativePath,
+                    thumbnailRelativePath = null,
+                    encryptionFormatVersion = CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION,
                 ),
             )
         }

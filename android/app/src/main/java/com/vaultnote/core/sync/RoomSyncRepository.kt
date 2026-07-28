@@ -23,6 +23,12 @@ import com.vaultnote.core.database.entity.DatedEntryEntity
 import com.vaultnote.core.database.model.DatedEntryWithAlerts
 import com.vaultnote.core.database.model.VaultItemSummaryWithTags
 import com.vaultnote.core.files.AttachmentFileManager
+import com.vaultnote.core.files.AttachmentFormat
+import com.vaultnote.core.files.FilenameSanitizer
+import com.vaultnote.core.files.PreparedRemoteAttachment
+import com.vaultnote.core.database.entity.AttachmentEntity
+import com.vaultnote.core.database.entity.AttachmentFileCleanupEntity
+import com.vaultnote.core.common.model.OcrState
 import java.text.Normalizer
 import java.util.Locale
 import java.util.concurrent.CancellationException
@@ -43,6 +49,7 @@ class RoomSyncRepository(
     private val clock: Clock,
     private val idGenerator: IdGenerator,
     private val backoffPolicy: ExponentialBackoffPolicy = ExponentialBackoffPolicy(),
+    private val artifactStore: SyncOperationArtifactStore? = null,
 ) : SyncRepository {
     private val itemDao = database.vaultItemDao()
     private val attachmentDao = database.attachmentDao()
@@ -51,6 +58,7 @@ class RoomSyncRepository(
     private val stateDao = database.syncStateDao()
     private val searchDao = database.searchDao()
     private val datedEntryDao = database.datedEntryDao()
+    private val cleanupDao = database.attachmentFileCleanupDao()
 
     override fun observeOverview(): Flow<SyncOverview> = combine(
         operationDao.observeQueueStatus(),
@@ -80,6 +88,44 @@ class RoomSyncRepository(
         ).map { rows -> rows.map { row -> row.toDomain() } }
             .flowOn(dispatchers.io)
 
+    override suspend fun prepareForNewRemote(): RepositoryResult<Unit> =
+        withContext(dispatchers.io) {
+            try {
+                val now = clock.nowEpochMillis()
+                database.withTransaction {
+                    operationDao.deleteAll()
+                    stateDao.delete(DEFAULT_SYNC_SCOPE)
+                    itemDao.resetAllForNewRelay()
+                    attachmentDao.resetAllForNewRelay()
+                    operationDao.enqueueAllAttachmentsForNewRelay(now)
+                    operationDao.enqueueAllItemsForNewRelay(now)
+                }
+                syncScheduler.requestSync()
+                RepositoryResult.Success(Unit)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                RepositoryResult.Failure(
+                    AppError.DatabaseFailure("prepare_new_sync_remote", failure),
+                )
+            }
+        }
+
+    override suspend fun resumeAfterAuthentication(): RepositoryResult<Unit> =
+        withContext(dispatchers.io) {
+            try {
+                operationDao.resumeAfterAuthentication(clock.nowEpochMillis())
+                syncScheduler.requestSync()
+                RepositoryResult.Success(Unit)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                RepositoryResult.Failure(
+                    AppError.DatabaseFailure("resume_sync_authentication", failure),
+                )
+            }
+        }
+
     override suspend fun synchronize(maxOperations: Int): SyncRunResult = withContext(dispatchers.io) {
         val boundedMaximum = maxOperations.coerceIn(1, MAX_OPERATIONS_PER_RUN)
         if (authProvider.authenticationState() != AuthenticationState.AUTHENTICATED) {
@@ -105,10 +151,12 @@ class RoomSyncRepository(
             return@withContext SyncRunResult.RetryRequired(processed)
         }
 
-        when (pullRemoteChanges()) {
+        when (val pullOutcome = pullRemoteChanges()) {
             PullOutcome.Complete -> Unit
             PullOutcome.Retry -> return@withContext SyncRunResult.RetryRequired(processed)
             PullOutcome.AuthenticationRequired -> return@withContext SyncRunResult.AuthenticationRequired
+            is PullOutcome.PermanentFailure ->
+                return@withContext SyncRunResult.PermanentFailure(pullOutcome.code)
         }
         recordAttempt(success = true)
         SyncRunResult.Completed(processed)
@@ -253,22 +301,30 @@ class RoomSyncRepository(
                 operationId = claimed.operation.operationId,
                 attachmentId = attachment.id,
                 plaintextSha256 = attachment.sha256Checksum,
+                plaintextSize = attachment.fileSize,
                 source = file,
             )
         ) {
             is RemoteFileResult.Uploaded -> {
-                if (!remoteFileStore.verifyUpload(result.remotePath, attachment.sha256Checksum)) {
-                    fail(claimed, RemoteErrorCode.CORRUPTED_UPLOAD)
-                } else {
-                    database.withTransaction {
-                        attachmentDao.updateRemoteState(
-                            attachment.id,
-                            AttachmentUploadStatus.UPLOADED,
-                            result.remotePath,
-                        )
-                        completeOperation(claimed, serverResult = null)
+                when (
+                    val verification = remoteFileStore.verifyUpload(
+                        result.remotePath,
+                        attachment.sha256Checksum,
+                    )
+                ) {
+                    RemoteVerificationResult.Verified -> {
+                        database.withTransaction {
+                            attachmentDao.updateRemoteState(
+                                attachment.id,
+                                AttachmentUploadStatus.UPLOADED,
+                                result.remotePath,
+                            )
+                            completeOperation(claimed, serverResult = null)
+                        }
+                        artifactStore?.releaseAttachment(attachment.id)
+                        ProcessOutcome.Continue
                     }
-                    ProcessOutcome.Continue
+                    is RemoteVerificationResult.Failure -> fail(claimed, verification.code)
                 }
             }
             is RemoteFileResult.Failure -> fail(claimed, result.code)
@@ -285,6 +341,7 @@ class RoomSyncRepository(
             is RemoteFileResult.Uploaded,
             -> {
                 database.withTransaction { completeOperation(claimed, serverResult = null) }
+                artifactStore?.releaseAttachment(attachmentId)
                 ProcessOutcome.Continue
             }
             is RemoteFileResult.Failure -> fail(claimed, result.code)
@@ -303,6 +360,11 @@ class RoomSyncRepository(
                 fileSizeBytes = attachment.fileSize,
                 plaintextSha256 = attachment.sha256Checksum,
                 encryptionFormatVersion = attachment.encryptionFormatVersion,
+                originalFilename = attachment.originalFilename,
+                imageWidth = attachment.imageWidth,
+                imageHeight = attachment.imageHeight,
+                pdfPageCount = attachment.pdfPageCount,
+                createdAtEpochMillis = attachment.createdAt,
             )
         }
         val metadata = RemoteItemMetadata(
@@ -352,10 +414,12 @@ class RoomSyncRepository(
     ): ProcessOutcome = when (result) {
         is RemoteMutationResult.Applied -> {
             database.withTransaction { completeOperation(claimed, result) }
+            releaseItemArtifact(claimed)
             ProcessOutcome.Continue
         }
         is RemoteMutationResult.Conflict -> {
             preserveConflict(claimed, result.remote)
+            releaseItemArtifact(claimed)
             ProcessOutcome.Continue
         }
         is RemoteMutationResult.Failure -> fail(claimed, result.code)
@@ -363,7 +427,20 @@ class RoomSyncRepository(
 
     private suspend fun completeStale(claimed: ClaimedOperation): ProcessOutcome {
         database.withTransaction { operationDao.deleteById(claimed.operation.operationId) }
+        when (claimed.operation.operationType) {
+            SyncOperationType.UPLOAD_ATTACHMENT,
+            SyncOperationType.DELETE_ATTACHMENT,
+            -> claimed.operation.attachmentId?.let { artifactStore?.releaseAttachment(it) }
+            SyncOperationType.UPSERT_ITEM -> releaseItemArtifact(claimed)
+            SyncOperationType.DELETE_ITEM -> Unit
+        }
         return ProcessOutcome.Continue
+    }
+
+    private suspend fun releaseItemArtifact(claimed: ClaimedOperation) {
+        if (claimed.operation.operationType == SyncOperationType.UPSERT_ITEM) {
+            artifactStore?.releaseItemOperation(claimed.operation.operationId)
+        }
     }
 
     private suspend fun completeOperation(
@@ -531,18 +608,36 @@ class RoomSyncRepository(
                     result.code == RemoteErrorCode.AUTHENTICATION_EXPIRED ->
                         PullOutcome.AuthenticationRequired
                     result.code.retryable -> PullOutcome.Retry
-                    else -> PullOutcome.Complete
+                    else -> PullOutcome.PermanentFailure(result.code)
                 }
                 is RemotePullResult.Success -> {
-                    database.withTransaction {
-                        result.page.changes.forEach { change -> applyRemoteChange(change) }
-                        state = state.copy(
-                            incrementalCursor = result.page.nextCursor,
-                            serverRevision = result.page.changes.maxOfOrNull {
-                                change -> change.serverRevision
-                            } ?: state.serverRevision,
-                        )
-                        stateDao.upsert(state)
+                    val prepared = when (
+                        val preparation = prepareRemoteAttachments(result.page.changes)
+                    ) {
+                        is RemotePreparation.Success -> preparation.attachments
+                        is RemotePreparation.Failure -> return if (preparation.code.retryable) {
+                            PullOutcome.Retry
+                        } else {
+                            PullOutcome.PermanentFailure(preparation.code)
+                        }
+                    }
+                    var committed = false
+                    try {
+                        database.withTransaction {
+                            result.page.changes.forEach { change ->
+                                applyRemoteChange(change, prepared)
+                            }
+                            state = state.copy(
+                                incrementalCursor = result.page.nextCursor,
+                                serverRevision = result.page.changes.maxOfOrNull {
+                                    change -> change.serverRevision
+                                } ?: state.serverRevision,
+                            )
+                            stateDao.upsert(state)
+                        }
+                        committed = true
+                    } finally {
+                        if (!committed) cleanupPreparedDownloads(prepared.values)
                     }
                     if (!result.page.hasMore) return PullOutcome.Complete
                 }
@@ -551,14 +646,20 @@ class RoomSyncRepository(
         return PullOutcome.Retry
     }
 
-    private suspend fun applyRemoteChange(change: RemoteChange) {
+    private suspend fun applyRemoteChange(
+        change: RemoteChange,
+        prepared: Map<String, PreparedDownload>,
+    ) {
         when (change) {
-            is RemoteChange.Upsert -> applyRemoteUpsert(change.item)
+            is RemoteChange.Upsert -> applyRemoteUpsert(change.item, prepared)
             is RemoteChange.Delete -> applyRemoteDelete(change)
         }
     }
 
-    private suspend fun applyRemoteUpsert(remote: RemoteItemVersion) {
+    private suspend fun applyRemoteUpsert(
+        remote: RemoteItemVersion,
+        prepared: Map<String, PreparedDownload>,
+    ) {
         val metadata = remote.metadata
         val local = itemDao.getById(metadata.id)
         if (local == null) {
@@ -587,10 +688,13 @@ class RoomSyncRepository(
             itemDao.insert(imported)
             replaceTags(imported.id, metadata.tags, clock.nowEpochMillis())
             replaceRemoteDatedEntries(imported.id, metadata.datedEntries, preserveIds = true)
+            applyRemoteAttachments(imported.id, metadata.attachments, prepared)
             updateSearchDocument(imported)
             return
         }
-        if (local.serverVersionToken == remote.versionToken) return
+        if (local.serverVersionToken == remote.versionToken) {
+            return
+        }
         val hasLocalChanges = local.lastSyncedRevision == null ||
             local.localRevision != local.lastSyncedRevision
         if (hasLocalChanges) {
@@ -619,7 +723,178 @@ class RoomSyncRepository(
         itemDao.update(updated)
         replaceTags(updated.id, metadata.tags, clock.nowEpochMillis())
         replaceRemoteDatedEntries(updated.id, metadata.datedEntries, preserveIds = true)
+        applyRemoteAttachments(updated.id, metadata.attachments, prepared)
         updateSearchDocument(updated)
+    }
+
+    private suspend fun prepareRemoteAttachments(
+        changes: List<RemoteChange>,
+    ): RemotePreparation {
+        val prepared = linkedMapOf<String, PreparedDownload>()
+        for (change in changes) {
+            if (change !is RemoteChange.Upsert) continue
+            val localItem = itemDao.getById(change.item.metadata.id)
+            val hasLocalChanges = localItem != null &&
+                (localItem.lastSyncedRevision == null ||
+                    localItem.localRevision != localItem.lastSyncedRevision)
+            if (hasLocalChanges) continue
+            for (remote in change.item.metadata.attachments) {
+                val sanitized = when (val name = FilenameSanitizer.sanitize(remote.originalFilename)) {
+                    is RepositoryResult.Success -> name.value
+                    is RepositoryResult.Failure -> {
+                        cleanupPreparedDownloads(prepared.values)
+                        return RemotePreparation.Failure(RemoteErrorCode.INVALID_REQUEST)
+                    }
+                }
+                val format = AttachmentFormat.entries.firstOrNull {
+                    it.canonicalMimeType == remote.mimeType
+                }
+                val extension = sanitized.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                if (
+                    format == null ||
+                    extension !in format.extensions ||
+                    remote.fileSizeBytes !in 0..com.vaultnote.core.files.MAX_ATTACHMENT_BYTES
+                ) {
+                    cleanupPreparedDownloads(prepared.values)
+                    return RemotePreparation.Failure(RemoteErrorCode.INVALID_REQUEST)
+                }
+                val existing = attachmentDao.getById(remote.id)
+                if (existing != null) {
+                    if (
+                        existing.parentItemId != change.item.metadata.id ||
+                        !existing.sha256Checksum.equals(remote.plaintextSha256, ignoreCase = true)
+                    ) {
+                        cleanupPreparedDownloads(prepared.values)
+                        return RemotePreparation.Failure(RemoteErrorCode.CORRUPTED_UPLOAD)
+                    }
+                    continue
+                }
+                if (prepared.containsKey(remote.id)) continue
+                val stored = fileManager.storeRemoteAttachment(
+                    attachmentId = remote.id,
+                    plaintextLength = remote.fileSizeBytes,
+                    expectedPlaintextSha256 = remote.plaintextSha256,
+                ) { output ->
+                    when (val downloaded = remoteFileStore.downloadDecrypted(remote, output)) {
+                        RemoteDownloadResult.Downloaded -> RepositoryResult.Success(Unit)
+                        is RemoteDownloadResult.Failure -> RepositoryResult.Failure(
+                            if (downloaded.code.retryable) {
+                                AppError.NetworkUnavailable
+                            } else {
+                                AppError.CorruptedFile
+                            },
+                        )
+                    }
+                }
+                when (stored) {
+                    is RepositoryResult.Success -> {
+                        prepared[remote.id] = PreparedDownload(
+                            remote.copy(originalFilename = sanitized),
+                            stored.value,
+                        )
+                    }
+                    is RepositoryResult.Failure -> {
+                        cleanupPreparedDownloads(prepared.values)
+                        return RemotePreparation.Failure(
+                            if (stored.error.isRetryable) {
+                                RemoteErrorCode.NETWORK_UNAVAILABLE
+                            } else {
+                                RemoteErrorCode.CORRUPTED_UPLOAD
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        return RemotePreparation.Success(prepared)
+    }
+
+    private suspend fun applyRemoteAttachments(
+        parentItemId: String,
+        references: List<RemoteAttachmentReference>,
+        prepared: Map<String, PreparedDownload>,
+    ) {
+        val referencedIds = references.mapTo(hashSetOf(), RemoteAttachmentReference::id)
+        attachmentDao.getForItem(parentItemId)
+            .filterNot { it.id in referencedIds }
+            .forEach { removed ->
+                cleanupDao.upsert(
+                    AttachmentFileCleanupEntity(
+                        cleanupId = "sync-delete:${removed.id}",
+                        localRelativePath = removed.localEncryptedPath,
+                        thumbnailRelativePath = removed.thumbnailPath,
+                        createdAt = clock.nowEpochMillis(),
+                        attemptCount = 0,
+                        lastAttemptAt = null,
+                    ),
+                )
+                if (attachmentDao.deleteById(removed.id) != 1) {
+                    error("Remote attachment delete did not affect one row")
+                }
+            }
+        references.forEach { reference ->
+            val existing = attachmentDao.getById(reference.id)
+            if (existing != null) {
+                val sanitized = when (
+                    val result = FilenameSanitizer.sanitize(reference.originalFilename)
+                ) {
+                    is RepositoryResult.Success -> result.value
+                    is RepositoryResult.Failure -> error("Prepared remote filename became invalid")
+                }
+                if (
+                    attachmentDao.update(
+                        existing.copy(
+                            originalFilename = sanitized,
+                            imageWidth = reference.imageWidth,
+                            imageHeight = reference.imageHeight,
+                            pdfPageCount = reference.pdfPageCount,
+                            remotePath = reference.remotePath,
+                            uploadStatus = AttachmentUploadStatus.UPLOADED,
+                            createdAt = reference.createdAtEpochMillis,
+                        ),
+                    ) != 1
+                ) {
+                    error("Remote attachment update did not affect one row")
+                }
+                return@forEach
+            }
+            val downloaded = prepared[reference.id]
+                ?: error("Remote attachment was not prepared")
+            val stored = downloaded.prepared
+            attachmentDao.insert(
+                AttachmentEntity(
+                    id = reference.id,
+                    parentItemId = parentItemId,
+                    originalFilename = downloaded.reference.originalFilename,
+                    mimeType = reference.mimeType,
+                    fileSize = reference.fileSizeBytes,
+                    imageWidth = reference.imageWidth,
+                    imageHeight = reference.imageHeight,
+                    pdfPageCount = reference.pdfPageCount,
+                    sha256Checksum = reference.plaintextSha256,
+                    localEncryptedPath = stored.localRelativePath,
+                    remotePath = reference.remotePath,
+                    thumbnailPath = stored.thumbnailRelativePath,
+                    encryptionFormatVersion = stored.encryptionFormatVersion,
+                    uploadStatus = AttachmentUploadStatus.UPLOADED,
+                    createdAt = reference.createdAtEpochMillis,
+                    ocrState = OcrState.NOT_APPLICABLE,
+                    extractedOcrText = "",
+                    ocrSourceChecksum = null,
+                    ocrFailureCode = null,
+                    ocrUpdatedAt = null,
+                ),
+            )
+        }
+    }
+
+    private suspend fun cleanupPreparedDownloads(downloads: Collection<PreparedDownload>) {
+        downloads.forEach { download ->
+            fileManager.removeStored(
+                download.prepared.localRelativePath,
+                download.prepared.thumbnailRelativePath,
+            )
+        }
     }
 
     private suspend fun applyRemoteDelete(change: RemoteChange.Delete) {
@@ -769,7 +1044,7 @@ class RoomSyncRepository(
             title = item.title,
             body = item.body,
             tags = tags,
-            attachmentFilenames = existing?.attachmentFilenames.orEmpty(),
+            attachmentFilenames = attachmentDao.getSearchableFilenames(item.id).orEmpty(),
             ocrText = item.ocrText,
         )
         if (existing == null) {
@@ -898,7 +1173,22 @@ class RoomSyncRepository(
     }
 
     private enum class ProcessOutcome { Continue, Retry, AuthenticationRequired }
-    private enum class PullOutcome { Complete, Retry, AuthenticationRequired }
+    private sealed interface PullOutcome {
+        data object Complete : PullOutcome
+        data object Retry : PullOutcome
+        data object AuthenticationRequired : PullOutcome
+        data class PermanentFailure(val code: RemoteErrorCode) : PullOutcome
+    }
+
+    private data class PreparedDownload(
+        val reference: RemoteAttachmentReference,
+        val prepared: PreparedRemoteAttachment,
+    )
+
+    private sealed interface RemotePreparation {
+        data class Success(val attachments: Map<String, PreparedDownload>) : RemotePreparation
+        data class Failure(val code: RemoteErrorCode) : RemotePreparation
+    }
 
     private companion object {
         const val DEFAULT_SYNC_SCOPE = "default"

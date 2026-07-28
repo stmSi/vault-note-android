@@ -18,6 +18,7 @@ sealed interface SyncRunResult {
     data class Completed(val processedOperations: Int) : SyncRunResult
     data class RetryRequired(val processedOperations: Int) : SyncRunResult
     data object AuthenticationRequired : SyncRunResult
+    data class PermanentFailure(val code: RemoteErrorCode) : SyncRunResult
 }
 
 interface SyncRepository {
@@ -26,6 +27,10 @@ interface SyncRepository {
     fun observeConflicts(limit: Int = 100): Flow<List<VaultItemSummary>>
 
     suspend fun synchronize(maxOperations: Int = 32): SyncRunResult
+
+    suspend fun prepareForNewRemote(): RepositoryResult<Unit>
+
+    suspend fun resumeAfterAuthentication(): RepositoryResult<Unit>
 
     suspend fun resolveConflict(selectedItemId: String): RepositoryResult<Unit>
 }

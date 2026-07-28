@@ -37,6 +37,19 @@ interface EncryptionService {
         replaceExisting: Boolean,
     ): RepositoryResult<EncryptionEnvelopeInfo>
 
+    /**
+     * Encrypts a known-length producer directly into the device envelope. The producer receives
+     * only an encryption stream, so callers can transform authenticated remote ciphertext without
+     * creating a plaintext temporary file.
+     */
+    suspend fun encryptGeneratedAtomically(
+        plaintextLength: Long,
+        destination: File,
+        context: EncryptionContext,
+        replaceExisting: Boolean,
+        producer: suspend (OutputStream) -> RepositoryResult<Unit>,
+    ): RepositoryResult<EncryptionEnvelopeInfo>
+
     suspend fun inspectAndVerify(
         encryptedFile: File,
         context: EncryptionContext,
@@ -146,6 +159,88 @@ class AesGcmEncryptionService(
         } catch (failure: GeneralSecurityException) {
             RepositoryResult.Failure(AppError.EncryptionFailure(failure))
         } catch (failure: SecurityException) {
+            RepositoryResult.Failure(AppError.EncryptionFailure(failure))
+        } finally {
+            temporary.delete()
+        }
+    }
+
+    override suspend fun encryptGeneratedAtomically(
+        plaintextLength: Long,
+        destination: File,
+        context: EncryptionContext,
+        replaceExisting: Boolean,
+        producer: suspend (OutputStream) -> RepositoryResult<Unit>,
+    ): RepositoryResult<EncryptionEnvelopeInfo> = withContext(dispatchers.io) {
+        val contextBytes = when (val encoded = encodeContext(context)) {
+            is RepositoryResult.Success -> encoded.value
+            is RepositoryResult.Failure -> return@withContext encoded
+        }
+        if (plaintextLength !in 0..MAX_PLAINTEXT_BYTES) {
+            return@withContext RepositoryResult.Failure(AppError.FileTooLarge(MAX_PLAINTEXT_BYTES))
+        }
+        val parent = destination.parentFile
+            ?: return@withContext RepositoryResult.Failure(AppError.EncryptionFailure())
+        if (!parent.isDirectory && !parent.mkdirs()) {
+            return@withContext RepositoryResult.Failure(AppError.InsufficientStorage())
+        }
+        if (!replaceExisting && destination.exists()) {
+            return@withContext RepositoryResult.Failure(
+                AppError.InvalidInput("encrypted_destination", "already_exists"),
+            )
+        }
+        val requiredBytes = safeAdd(
+            safeAdd(plaintextLength, MAX_HEADER_BYTES.toLong() + GCM_TAG_BYTES),
+            minimumFreeSpaceReserveBytes,
+        )
+        if (availableSpaceBytes(parent) < requiredBytes) {
+            return@withContext RepositoryResult.Failure(AppError.InsufficientStorage(requiredBytes))
+        }
+
+        val temporary = File(parent, "$PENDING_PREFIX${UUID.randomUUID()}.tmp")
+        try {
+            currentCoroutineContext().ensureActive()
+            val keyVersion = keyProvider.currentKeyVersion
+            val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, keyProvider.getOrCreateCurrentKey())
+            val nonce = cipher.iv
+            if (nonce.size != GCM_NONCE_BYTES) throw GeneralSecurityException("Unexpected GCM nonce")
+            val header = encodeHeader(keyVersion, nonce, plaintextLength)
+            cipher.updateAAD(header)
+            cipher.updateAAD(contextBytes)
+
+            FileOutputStream(temporary).use { fileOutput ->
+                val buffered = BufferedOutputStream(fileOutput, BUFFER_BYTES)
+                buffered.write(header)
+                val encrypting = GeneratedCipherOutput(buffered, cipher)
+                when (val produced = producer(encrypting)) {
+                    is RepositoryResult.Success -> Unit
+                    is RepositoryResult.Failure -> return@withContext produced
+                }
+                if (encrypting.plaintextBytes != plaintextLength) {
+                    return@withContext RepositoryResult.Failure(AppError.CorruptedFile)
+                }
+                encrypting.finish()
+                buffered.flush()
+                fileOutput.fd.sync()
+            }
+            moveAtomically(temporary, destination, replaceExisting)
+            RepositoryResult.Success(
+                EncryptionEnvelopeInfo(
+                    formatVersion = CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION,
+                    keyVersion = keyVersion,
+                    plaintextLength = plaintextLength,
+                ),
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: IOException) {
+            RepositoryResult.Failure(AppError.EncryptionFailure(failure))
+        } catch (failure: GeneralSecurityException) {
+            RepositoryResult.Failure(AppError.EncryptionFailure(failure))
+        } catch (failure: SecurityException) {
+            RepositoryResult.Failure(AppError.EncryptionFailure(failure))
+        } catch (failure: ArithmeticException) {
             RepositoryResult.Failure(AppError.EncryptionFailure(failure))
         } finally {
             temporary.delete()
@@ -371,6 +466,36 @@ class AesGcmEncryptionService(
         val ciphertextLength: Long,
         val info: EncryptionEnvelopeInfo,
     )
+
+    private class GeneratedCipherOutput(
+        private val destination: OutputStream,
+        private val cipher: Cipher,
+    ) : OutputStream() {
+        var plaintextBytes: Long = 0L
+            private set
+        private var finished = false
+
+        override fun write(value: Int) {
+            write(byteArrayOf(value.toByte()))
+        }
+
+        override fun write(buffer: ByteArray, offset: Int, length: Int) {
+            check(!finished)
+            if (length == 0) return
+            plaintextBytes = Math.addExact(plaintextBytes, length.toLong())
+            cipher.update(buffer, offset, length)?.let(destination::write)
+        }
+
+        override fun flush() {
+            destination.flush()
+        }
+
+        fun finish() {
+            check(!finished)
+            cipher.doFinal()?.let(destination::write)
+            finished = true
+        }
+    }
 
     private companion object {
         val MAGIC: ByteArray = byteArrayOf(0x56, 0x4E, 0x45, 0x31) // VNE1

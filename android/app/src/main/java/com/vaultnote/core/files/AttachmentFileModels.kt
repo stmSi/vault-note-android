@@ -154,6 +154,13 @@ data class PlannedAttachmentPaths(
     val thumbnailRelativePath: String,
 )
 
+data class PreparedRemoteAttachment(
+    val attachmentId: String,
+    val localRelativePath: String,
+    val thumbnailRelativePath: String?,
+    val encryptionFormatVersion: Int,
+)
+
 data class ThumbnailMetadata(
     val width: Int,
     val height: Int,

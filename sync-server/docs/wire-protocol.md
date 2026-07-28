@@ -34,6 +34,11 @@ VaultNote Sync v3 Attachment
 VaultNote Sync v3 Key Check
 ```
 
+The HKDF definition is exact: Extract uses HMAC-SHA256 with 32 zero bytes as salt and the
+32-byte PBKDF2 result as input keying material. Expand uses the UTF-8 label above as `info`,
+appends counter byte `0x01`, and takes the first 32 output bytes. No terminator is included in a
+label.
+
 Clients must clear password and intermediate key material when practical. Platform key protection may wrap a derived key for unlocked-session reuse, but clients must not upload it or store it as plaintext.
 
 The first secure pairing transfers the base URL or discovered vault ID, authentication token, and TLS certificate fingerprint together, for example through a locally generated QR code or manual comparison. An mDNS result alone is not a trust root. After pairing, clients retain the vault ID and certificate fingerprint and may automatically rediscover a changed LAN address.

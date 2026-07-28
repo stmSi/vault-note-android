@@ -23,6 +23,7 @@ import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.OutputStream
 import java.security.MessageDigest
+import java.security.DigestOutputStream
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -34,6 +35,13 @@ interface AttachmentFileManager {
     suspend fun inspect(uri: Uri): RepositoryResult<AttachmentPreview>
 
     suspend fun importAttachment(uri: Uri, attachmentId: String): RepositoryResult<PreparedAttachment>
+
+    suspend fun storeRemoteAttachment(
+        attachmentId: String,
+        plaintextLength: Long,
+        expectedPlaintextSha256: String,
+        plaintextProducer: suspend (OutputStream) -> RepositoryResult<Unit>,
+    ): RepositoryResult<PreparedRemoteAttachment>
 
     suspend fun removePrepared(prepared: PreparedAttachment): RepositoryResult<Unit>
 
@@ -251,6 +259,71 @@ class AndroidAttachmentFileManager(
             thumbnailPlaintext.delete()
             if (!attachmentCommitted) destination.delete()
             if (!attachmentCommitted && thumbnailCreated) thumbnailDestination.delete()
+        }
+    }
+
+    override suspend fun storeRemoteAttachment(
+        attachmentId: String,
+        plaintextLength: Long,
+        expectedPlaintextSha256: String,
+        plaintextProducer: suspend (OutputStream) -> RepositoryResult<Unit>,
+    ): RepositoryResult<PreparedRemoteAttachment> = withContext(dispatchers.io) {
+        if (
+            plaintextLength !in 0..MAX_ATTACHMENT_BYTES ||
+            !SHA256_PATTERN.matches(expectedPlaintextSha256)
+        ) {
+            return@withContext RepositoryResult.Failure(AppError.CorruptedFile)
+        }
+        when (val directories = storage.ensureDirectories()) {
+            is RepositoryResult.Success -> Unit
+            is RepositoryResult.Failure -> return@withContext directories
+        }
+        val relativePath = when (val planned = storage.attachmentRelativePath(attachmentId)) {
+            is RepositoryResult.Success -> planned.value
+            is RepositoryResult.Failure -> return@withContext planned
+        }
+        val destination = when (val resolved = storage.resolveAttachment(relativePath)) {
+            is RepositoryResult.Success -> resolved.value
+            is RepositoryResult.Failure -> return@withContext resolved
+        }
+        if (destination.exists()) {
+            return@withContext RepositoryResult.Failure(
+                AppError.InvalidInput("attachment_id", "already_exists"),
+            )
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+        val encrypted = encryptionService.encryptGeneratedAtomically(
+            plaintextLength = plaintextLength,
+            destination = destination,
+            context = EncryptionContext(attachmentId, EncryptedFilePurpose.ATTACHMENT),
+            replaceExisting = false,
+        ) { output ->
+            val digesting = DigestOutputStream(output, digest)
+            when (val produced = plaintextProducer(digesting)) {
+                is RepositoryResult.Success -> {
+                    digesting.flush()
+                    val actual = digest.digest().joinToString(separator = "") { byte ->
+                        "%02x".format(byte.toInt() and 0xff)
+                    }
+                    if (actual.equals(expectedPlaintextSha256, ignoreCase = true)) {
+                        RepositoryResult.Success(Unit)
+                    } else {
+                        RepositoryResult.Failure(AppError.CorruptedFile)
+                    }
+                }
+                is RepositoryResult.Failure -> produced
+            }
+        }
+        when (encrypted) {
+            is RepositoryResult.Success -> RepositoryResult.Success(
+                PreparedRemoteAttachment(
+                    attachmentId = attachmentId,
+                    localRelativePath = relativePath,
+                    thumbnailRelativePath = null,
+                    encryptionFormatVersion = encrypted.value.formatVersion,
+                ),
+            )
+            is RepositoryResult.Failure -> encrypted
         }
     }
 

@@ -2,7 +2,7 @@
 
 ## Scope and quality boundary
 
-VaultNote combines a secured local foundation with encrypted attachments, offline full-text search and OCR, durable WorkManager synchronization, preserve-both conflict resolution, and manual backup/restore. Backups default to password encryption; explicitly selected plaintext backups are supported with a prominent disclosure. The included remote implementation is an in-memory development fake, not cloud backup. Room note/search/metadata content is still plaintext, so attachment and backup encryption are not presented as whole-vault encryption.
+VaultNote combines a secured local foundation with encrypted attachments, offline full-text search and OCR, durable WorkManager synchronization through an opaque LAN relay, preserve-both conflict resolution, and manual backup/restore. Backups default to password encryption; explicitly selected plaintext backups are supported with a prominent disclosure. Room note/search/metadata content is still plaintext, so local attachment, sync-envelope, and backup encryption are not presented as whole-vault encryption.
 
 The current build has one `:app` module. That keeps startup, ownership, and build configuration straightforward while the product surface is small. Baseline Profile and Macrobenchmark modules remain deferred to Phase 7, after the measured journeys and release behavior are stable enough to make those profiles meaningful.
 
@@ -170,7 +170,7 @@ Queue coalescing does not use SQLite `REPLACE`, because replacement is implement
 
 `WorkManagerSyncScheduler` enqueues one unique immediate job and one unique six-hour periodic job. Both require connected networking; periodic work also requires battery-not-low. Its automatic startup initializer is removed, and the scheduler is first touched after the first unlocked frame. Attachment operations stream and verify ciphertext before the parent item may reference a remote path. Transient failures use bounded exponential backoff; authentication and permanent validation failures do not loop indefinitely.
 
-The in-memory fake implements `SyncApi`, `AuthProvider`, and `RemoteFileStore`. It assigns server revisions/version tokens, honors operation idempotency, emits incremental change pages, hashes streamed ciphertext, and retains no attachment bytes. Its state resets with the process, so it is deliberately not a backup or multi-device service. The stable client contract is documented in [Sync protocol](sync-protocol.md).
+`RelayHttpBackend` implements `SyncApi`, `AuthProvider`, and `RemoteFileStore` against the protocol-3 HTTPS relay. It pins the exact certificate, refuses redirects, persists exact per-operation item envelopes for idempotent replay, streams shared attachment envelopes, resumes ciphertext downloads, and auto-relocates only through mDNS records matching the saved vault ID and fingerprint. Tokens and derived sync keys are Keystore-wrapped. The in-memory implementation remains only as a test fake. The stable contract is documented in [Sync protocol](sync-protocol.md).
 
 Concurrent content uses local revision, last-synchronized revision, server revision, and opaque version token—not device time. A mismatch marks the local version as conflict and creates a linked remote copy. A remote deletion with local edits preserves the local content. The Conflicts screen labels both versions and queues only the version explicitly selected by the user. Sync status exposes pending, running, retry, permanent-failure, conflict, and last-success state without private payloads.
 
@@ -209,7 +209,7 @@ Mitigations already enforced by the architecture include:
 
 - application-private database/files only;
 - no broad storage permission or `MANAGE_EXTERNAL_STORAGE`;
-- no production backend, credentials, or hardcoded secret;
+- no hardcoded backend credential, token, password, or encryption key;
 - no sensitive payload in sync queue diagnostics;
 - no sensitive content in expected logs;
 - local edits and deletion tombstones are durable before any future remote action;
@@ -229,10 +229,10 @@ Known residual risks include:
 - app lock defaults off, and its process-local session is not a per-read Keystore authentication requirement;
 - an explicitly chosen external viewer, share recipient, or save destination receives plaintext and may retain it;
 - key loss or app-data clearing remains unrecoverable without a valid separately stored manual backup and its password;
-- the in-memory fake backend provides neither remote backup nor multi-device durability;
-- note/title/tag/OCR metadata is not end-to-end encrypted for a future production backend;
+- the LAN relay is a single-user opaque store, not a hosted account service, off-site backup, or availability guarantee;
+- relay compromise still exposes traffic metadata and permits deletion, withholding, and rollback that clients cannot independently prove;
 - a forgotten backup password, weak password, deleted/corrupted only backup, or malicious rollback to an older valid backup is not recoverable or externally detectable;
-- no server revision or conflict-resolution implementation has been exercised against a real backend.
+- attachment-set conflicts are not yet duplicated into independent conflict-copy files.
 
 Accordingly, VaultNote should not be represented as whole-vault encryption or the sole copy of irreplaceable material. The detailed boundaries are documented in [Security model](security-model.md), [Attachment encryption format](encryption-format.md), [Backup format](backup-format.md), [Sync protocol](sync-protocol.md), and [Threat model](threat-model.md).
 
@@ -269,7 +269,7 @@ The standard verification commands and required SDK/JDK versions are listed in t
 
 The current boundaries are designed for replacement rather than rewrites:
 
-- the in-memory fake backend can be replaced behind `SyncApi`, `AuthProvider`, and `RemoteFileStore` while WorkManager and the durable queue remain authoritative;
+- the LAN relay can be replaced behind `SyncApi`, `AuthProvider`, and `RemoteFileStore` while WorkManager, the encrypted wire envelope, and the durable queue remain authoritative;
 - remote API, authentication, and file storage implementations sit behind interfaces and write successful results back to Room;
 - versioned Keystore aliases and envelopes permit future key rotation without placing bytes in Room;
 - an OCR processor updates the existing aggregate asynchronously and only for a new checksum;

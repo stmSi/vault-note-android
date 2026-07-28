@@ -25,6 +25,9 @@ interface SyncStateDao {
 
     @Query("SELECT * FROM sync_state WHERE scope = :scope LIMIT 1")
     fun observe(scope: String): Flow<SyncStateEntity?>
+
+    @Query("DELETE FROM sync_state WHERE scope = :scope")
+    suspend fun delete(scope: String): Int
 }
 
 @Dao

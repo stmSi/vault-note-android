@@ -102,6 +102,25 @@ class AttachmentEncryptionMigrationTest {
             )
         }
 
+        override suspend fun encryptGeneratedAtomically(
+            plaintextLength: Long,
+            destination: File,
+            context: EncryptionContext,
+            replaceExisting: Boolean,
+            producer: suspend (OutputStream) -> RepositoryResult<Unit>,
+        ): RepositoryResult<EncryptionEnvelopeInfo> {
+            destination.parentFile?.mkdirs()
+            val produced = destination.outputStream().use { producer(it) }
+            if (produced is RepositoryResult.Failure) return produced
+            return RepositoryResult.Success(
+                EncryptionEnvelopeInfo(
+                    formatVersion = CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION,
+                    keyVersion = 1,
+                    plaintextLength = plaintextLength,
+                ),
+            )
+        }
+
         override suspend fun inspectAndVerify(
             encryptedFile: File,
             context: EncryptionContext,

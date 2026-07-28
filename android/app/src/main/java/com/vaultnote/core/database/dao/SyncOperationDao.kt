@@ -134,6 +134,79 @@ interface SyncOperationDao {
     @Query("DELETE FROM sync_operations WHERE operation_id = :operationId")
     suspend fun deleteById(operationId: String): Int
 
+    @Query("DELETE FROM sync_operations")
+    suspend fun deleteAll(): Int
+
+    @Query(
+        """
+        UPDATE sync_operations
+        SET state = 'PENDING',
+            attempt_count = 0,
+            next_attempt_at = :now,
+            lease_token = NULL,
+            lease_expires_at = NULL,
+            updated_at = :now,
+            last_error_code = NULL
+        WHERE state = 'FAILED_PERMANENT'
+          AND last_error_code = 'authentication_expired'
+        """,
+    )
+    suspend fun resumeAfterAuthentication(now: Long): Int
+
+    @Query(
+        """
+        INSERT INTO sync_operations(
+            operation_id, dedupe_key, item_id, attachment_id, operation_type,
+            target_revision, state, attempt_count, next_attempt_at, lease_token,
+            lease_expires_at, created_at, updated_at, last_error_code
+        )
+        SELECT lower(hex(randomblob(16))),
+               'attachment:' || attachments.id,
+               attachments.parent_item_id,
+               attachments.id,
+               'UPLOAD_ATTACHMENT',
+               vault_items.local_revision,
+               'PENDING',
+               0,
+               :now,
+               NULL,
+               NULL,
+               :now,
+               :now,
+               NULL
+        FROM attachments
+        INNER JOIN vault_items ON vault_items.id = attachments.parent_item_id
+        WHERE vault_items.deleted_at IS NULL
+        """,
+    )
+    suspend fun enqueueAllAttachmentsForNewRelay(now: Long)
+
+    @Query(
+        """
+        INSERT INTO sync_operations(
+            operation_id, dedupe_key, item_id, attachment_id, operation_type,
+            target_revision, state, attempt_count, next_attempt_at, lease_token,
+            lease_expires_at, created_at, updated_at, last_error_code
+        )
+        SELECT lower(hex(randomblob(16))),
+               'item:' || id,
+               id,
+               NULL,
+               CASE WHEN deleted_at IS NULL THEN 'UPSERT_ITEM' ELSE 'DELETE_ITEM' END,
+               local_revision,
+               'PENDING',
+               0,
+               :now,
+               NULL,
+               NULL,
+               :now + 1,
+               :now + 1,
+               NULL
+        FROM vault_items
+        """,
+    )
+    suspend fun enqueueAllItemsForNewRelay(now: Long)
+
     @Query("DELETE FROM sync_operations WHERE item_id = :itemId")
     suspend fun deleteForItem(itemId: String): Int
 
