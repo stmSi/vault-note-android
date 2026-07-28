@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
 
 #[derive(Clone)]
@@ -311,6 +311,49 @@ fn migrate(connection: &mut Connection) -> Result<(), AppError> {
             "#,
         )?;
     }
+    if version < 7 {
+        transaction.execute_batch(
+            r#"
+            ALTER TABLE vault_items ADD COLUMN sort_position INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE attachments ADD COLUMN remote_path TEXT;
+            ALTER TABLE attachments ADD COLUMN upload_status TEXT NOT NULL DEFAULT 'PENDING'
+                CHECK(upload_status IN ('PENDING', 'UPLOADING', 'UPLOADED', 'FAILED_RETRYABLE', 'FAILED_PERMANENT'));
+
+            CREATE TABLE sync_state (
+                scope TEXT NOT NULL PRIMARY KEY,
+                incremental_cursor TEXT,
+                server_revision INTEGER,
+                last_attempt_at INTEGER,
+                last_success_at INTEGER
+            );
+
+            CREATE TABLE attachment_tombstones (
+                attachment_id TEXT NOT NULL PRIMARY KEY,
+                operation_id TEXT NOT NULL UNIQUE,
+                remote_path TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at INTEGER NOT NULL,
+                last_error_code TEXT
+            );
+            CREATE INDEX index_attachment_tombstones_ready
+                ON attachment_tombstones(next_attempt_at, created_at, attachment_id);
+
+            CREATE TABLE deferred_remote_items (
+                item_id TEXT NOT NULL PRIMARY KEY,
+                server_revision INTEGER NOT NULL,
+                version_token TEXT NOT NULL,
+                deleted INTEGER NOT NULL CHECK(deleted IN (0, 1)),
+                encrypted_payload TEXT,
+                ciphertext_sha256 TEXT,
+                CHECK(
+                    (deleted = 1 AND encrypted_payload IS NULL AND ciphertext_sha256 IS NULL) OR
+                    (deleted = 0 AND encrypted_payload IS NOT NULL AND ciphertext_sha256 IS NOT NULL)
+                )
+            );
+            "#,
+        )?;
+    }
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
@@ -473,6 +516,9 @@ mod tests {
                 CREATE TABLE vault_items (
                     id TEXT NOT NULL PRIMARY KEY,
                     body TEXT NOT NULL
+                );
+                CREATE TABLE attachments (
+                    id TEXT NOT NULL PRIMARY KEY
                 );
                 INSERT INTO vault_items(id, body) VALUES ('legacy-note', 'kept');
                 "#,

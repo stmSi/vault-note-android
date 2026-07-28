@@ -3,10 +3,14 @@ import type {
   AppCommandError,
   AgendaEntry,
   AuthStatus,
+  BackupInspection,
   BackupSummary,
+  DiscoveredRelay,
+  PairRelayInput,
   SearchResult,
+  SyncConnectionStatus,
   SyncQueueStatus,
-  SyncReport,
+  SyncRunReport,
   RestoreSummary,
   DatedEntryDraft,
   NoteBodyDocument,
@@ -104,8 +108,28 @@ export function getSyncQueueStatus(): Promise<SyncQueueStatus> {
   return invoke('sync_queue_status');
 }
 
-export function runFakeSync(): Promise<SyncReport> {
-  return invoke('run_fake_sync');
+export function getSyncConnectionStatus(): Promise<SyncConnectionStatus> {
+  return invoke('sync_connection_status');
+}
+
+export function discoverRelays(): Promise<DiscoveredRelay[]> {
+  return invoke('discover_relays');
+}
+
+export function pairRelay(request: PairRelayInput): Promise<SyncConnectionStatus> {
+  return invoke('pair_relay', { request });
+}
+
+export function unlockSync(password: string): Promise<SyncConnectionStatus> {
+  return invoke('unlock_sync', { request: { password } });
+}
+
+export function disconnectRelay(): Promise<SyncConnectionStatus> {
+  return invoke('disconnect_relay');
+}
+
+export function runSync(): Promise<SyncRunReport> {
+  return invoke('run_sync');
 }
 
 export function getAuthStatus(): Promise<AuthStatus> {
@@ -136,6 +160,10 @@ export function importAttachment(id: string): Promise<VaultAttachment | null> {
   return invoke('import_attachment', { request: { id } });
 }
 
+export function importAttachmentPath(id: string, path: string): Promise<VaultAttachment> {
+  return invoke('import_attachment_path', { request: { id, path } });
+}
+
 export function exportAttachment(id: string): Promise<boolean> {
   return invoke('export_attachment', { request: { id } });
 }
@@ -150,6 +178,28 @@ export function exportBackup(password: string): Promise<BackupSummary | null> {
 
 export function restoreBackup(password: string): Promise<RestoreSummary | null> {
   return invoke('restore_backup', { request: { password } });
+}
+
+export function exportPlaintextBackup(): Promise<BackupSummary | null> {
+  return invoke('export_plaintext_backup');
+}
+
+export function restorePlaintextBackup(): Promise<RestoreSummary | null> {
+  return invoke('restore_plaintext_backup');
+}
+
+export function inspectBackupPath(path: string): Promise<BackupInspection> {
+  return invoke('inspect_backup_path', { request: { path } });
+}
+
+export function restoreBackupPath(
+  path: string,
+  password: string | null,
+  plaintextConfirmed: boolean,
+): Promise<RestoreSummary> {
+  return invoke('restore_backup_path', {
+    request: { path, password, plaintextConfirmed },
+  });
 }
 
 export function commandError(error: unknown): AppCommandError {

@@ -142,13 +142,6 @@ pub struct SyncQueueStatus {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct SyncReport {
-    pub processed_count: usize,
-    pub completed_count: usize,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct AuthStatus {
     pub setup_required: bool,
     pub unlocked: bool,
@@ -192,6 +185,7 @@ pub struct PortableItem {
     pub is_pinned: bool,
     pub is_favorite: bool,
     pub is_archived: bool,
+    pub sort_position: i64,
     pub created_at: i64,
     pub updated_at: i64,
     pub local_revision: i64,

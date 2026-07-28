@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::path::PathBuf;
 use tauri::State;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -6,10 +7,11 @@ use crate::{
     error::CommandError,
     models::{
         AgendaEntry, AuthStatus, BackupSummary, DatedEntryDraft, NoteBodyDocument, RestoreSummary,
-        ScheduledAlert, SearchResult, SyncQueueStatus, SyncReport, VaultAttachment,
-        VaultItemSummary, VaultNote,
+        ScheduledAlert, SearchResult, SyncQueueStatus, VaultAttachment, VaultItemSummary,
+        VaultNote,
     },
     runtime::RuntimeState,
+    sync_engine::{PairRelayParameters, SyncConnectionStatus, SyncRunReport},
     validation::{validate_id, validate_password},
 };
 
@@ -81,6 +83,40 @@ pub struct SearchNotesRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PasswordRequest {
     password: String,
+}
+
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PairRelayRequest {
+    host_address: String,
+    port: u16,
+    certificate_sha256: String,
+    authentication_token: String,
+    sync_password: String,
+    expected_vault_id: Option<String>,
+    fingerprint_confirmed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImportAttachmentPathRequest {
+    id: String,
+    path: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BackupPathRequest {
+    path: PathBuf,
+}
+
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RestoreBackupPathRequest {
+    #[zeroize(skip)]
+    path: PathBuf,
+    password: Option<String>,
+    plaintext_confirmed: bool,
 }
 
 #[tauri::command]
@@ -299,10 +335,73 @@ pub fn sync_queue_status(state: State<'_, RuntimeState>) -> Result<SyncQueueStat
 }
 
 #[tauri::command]
-pub fn run_fake_sync(state: State<'_, RuntimeState>) -> Result<SyncReport, CommandError> {
+pub fn sync_connection_status(
+    state: State<'_, RuntimeState>,
+) -> Result<SyncConnectionStatus, CommandError> {
     state
-        .with_services(|services| services.sync.run_once())
+        .with_services(|services| services.sync.status())
         .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn discover_relays(
+    state: State<'_, RuntimeState>,
+) -> Result<Vec<crate::lan_discovery::DiscoveredRelay>, CommandError> {
+    let service = state
+        .with_services(|services| Ok(services.sync.clone()))
+        .map_err(CommandError::from)?;
+    service.discover().await.map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn pair_relay(
+    state: State<'_, RuntimeState>,
+    mut request: PairRelayRequest,
+) -> Result<SyncConnectionStatus, CommandError> {
+    let service = state
+        .with_services(|services| Ok(services.sync.clone()))
+        .map_err(CommandError::from)?;
+    let parameters = PairRelayParameters {
+        host_address: request.host_address.clone(),
+        port: request.port,
+        certificate_sha256: request.certificate_sha256.clone(),
+        authentication_token: request.authentication_token.clone(),
+        sync_password: request.sync_password.clone(),
+        expected_vault_id: request.expected_vault_id.clone(),
+        fingerprint_confirmed: request.fingerprint_confirmed,
+    };
+    request.authentication_token.zeroize();
+    request.sync_password.zeroize();
+    service.pair(parameters).await.map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn unlock_sync(
+    state: State<'_, RuntimeState>,
+    mut request: PasswordRequest,
+) -> Result<SyncConnectionStatus, CommandError> {
+    let result = state
+        .with_services(|services| services.sync.unlock_sync(&request.password))
+        .map_err(CommandError::from);
+    request.password.zeroize();
+    result
+}
+
+#[tauri::command]
+pub fn disconnect_relay(
+    state: State<'_, RuntimeState>,
+) -> Result<SyncConnectionStatus, CommandError> {
+    state
+        .with_services(|services| services.sync.disconnect())
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn run_sync(state: State<'_, RuntimeState>) -> Result<SyncRunReport, CommandError> {
+    let service = state
+        .with_services(|services| Ok(services.sync.clone()))
+        .map_err(CommandError::from)?;
+    service.run_once().await.map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -362,13 +461,6 @@ pub async fn import_attachment(
     validate_id(&request.id).map_err(CommandError::from)?;
     let selected = rfd::AsyncFileDialog::new()
         .set_title("Add attachment")
-        .add_filter(
-            "Supported files",
-            &[
-                "txt", "md", "pdf", "png", "jpg", "jpeg", "gif", "webp", "json", "csv", "docx",
-                "xlsx", "pptx",
-            ],
-        )
         .pick_file()
         .await;
     let Some(selected) = selected else {
@@ -378,6 +470,25 @@ pub async fn import_attachment(
     state
         .with_services(|services| services.attachments.import_from(&request.id, &source))
         .map(Some)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn import_attachment_path(
+    state: State<'_, RuntimeState>,
+    request: ImportAttachmentPathRequest,
+) -> Result<VaultAttachment, CommandError> {
+    validate_id(&request.id).map_err(CommandError::from)?;
+    let service = state
+        .with_services(|services| Ok(services.attachments.clone()))
+        .map_err(CommandError::from)?;
+    tokio::task::spawn_blocking(move || service.import_from(&request.id, &request.path))
+        .await
+        .map_err(|_| {
+            CommandError::from(crate::error::AppError::Storage(std::io::Error::other(
+                "attachment import task failed",
+            )))
+        })?
         .map_err(CommandError::from)
 }
 
@@ -468,4 +579,89 @@ pub async fn restore_backup(
         .map_err(CommandError::from);
     request.password.zeroize();
     result
+}
+
+#[tauri::command]
+pub async fn export_plaintext_backup(
+    state: State<'_, RuntimeState>,
+) -> Result<Option<BackupSummary>, CommandError> {
+    let selected = rfd::AsyncFileDialog::new()
+        .set_title("Export readable VaultNote backup")
+        .add_filter("VaultNote backup", &["vnb"])
+        .set_file_name("VaultNote-plaintext.vnb")
+        .save_file()
+        .await;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let destination = selected.path().to_owned();
+    state
+        .with_services(|services| {
+            crate::services::now_epoch_millis()
+                .and_then(|now| services.backup.export_plaintext_to(now, destination))
+        })
+        .map(Some)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn restore_plaintext_backup(
+    state: State<'_, RuntimeState>,
+) -> Result<Option<RestoreSummary>, CommandError> {
+    let selected = rfd::AsyncFileDialog::new()
+        .set_title("Restore readable VaultNote backup")
+        .add_filter("VaultNote backup", &["vnb"])
+        .pick_file()
+        .await;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let source = selected.path().to_owned();
+    state
+        .with_services(|services| services.backup.restore_auto(None, &source))
+        .map(Some)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn inspect_backup_path(
+    state: State<'_, RuntimeState>,
+    request: BackupPathRequest,
+) -> Result<crate::backup::BackupInspection, CommandError> {
+    let service = state
+        .with_services(|services| Ok(services.backup.clone()))
+        .map_err(CommandError::from)?;
+    tokio::task::spawn_blocking(move || service.inspect(&request.path))
+        .await
+        .map_err(|_| CommandError::from(crate::error::AppError::InvalidBackup))?
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn restore_backup_path(
+    state: State<'_, RuntimeState>,
+    mut request: RestoreBackupPathRequest,
+) -> Result<RestoreSummary, CommandError> {
+    let service = state
+        .with_services(|services| Ok(services.backup.clone()))
+        .map_err(CommandError::from)?;
+    let source = request.path.clone();
+    let password = request.password.clone().map(zeroize::Zeroizing::new);
+    let plaintext_confirmed = request.plaintext_confirmed;
+    request.password.zeroize();
+    tokio::task::spawn_blocking(move || {
+        let inspection = service.inspect(&source)?;
+        if inspection.protection == crate::backup::BackupProtection::Plaintext
+            && !plaintext_confirmed
+        {
+            return Err(crate::error::AppError::InvalidInput {
+                field: "backup",
+                reason: "plaintext backup confirmation is required".to_owned(),
+            });
+        }
+        service.restore_auto(password.as_deref().map(String::as_str), &source)
+    })
+    .await
+    .map_err(|_| CommandError::from(crate::error::AppError::InvalidBackup))?
+    .map_err(CommandError::from)
 }

@@ -3,11 +3,18 @@ mod commands;
 mod crypto;
 mod database;
 mod error;
+mod lan_discovery;
 mod models;
+mod relay_client;
 mod repository;
 mod runtime;
 mod services;
 mod storage;
+mod sync_credentials;
+mod sync_crypto;
+mod sync_engine;
+mod sync_store;
+mod sync_wire;
 mod validation;
 mod vault_key;
 
@@ -43,7 +50,12 @@ pub fn run() {
             commands::restore,
             commands::search_notes,
             commands::sync_queue_status,
-            commands::run_fake_sync,
+            commands::sync_connection_status,
+            commands::discover_relays,
+            commands::pair_relay,
+            commands::unlock_sync,
+            commands::disconnect_relay,
+            commands::run_sync,
             commands::auth_status,
             commands::initialize_vault,
             commands::initialize_unencrypted_vault,
@@ -51,10 +63,15 @@ pub fn run() {
             commands::lock,
             commands::list_attachments,
             commands::import_attachment,
+            commands::import_attachment_path,
             commands::export_attachment,
             commands::delete_attachment,
             commands::export_backup,
             commands::restore_backup,
+            commands::export_plaintext_backup,
+            commands::restore_plaintext_backup,
+            commands::inspect_backup_path,
+            commands::restore_backup_path,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|_| {

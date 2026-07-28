@@ -12,9 +12,10 @@ use crate::{
     error::AppError,
     models::{
         AgendaEntry, AttachmentRecord, DatedEntryDraft, NoteBodyDocument, ScheduledAlert,
-        SearchResult, SyncQueueStatus, SyncReport, VaultAttachment, VaultItemSummary, VaultNote,
+        SearchResult, SyncQueueStatus, VaultAttachment, VaultItemSummary, VaultNote,
     },
     repository::VaultRepository,
+    sync_engine::LanSyncService,
     validation::{
         compile_search_query, parse_section, validate_dated_entry, validate_id, validate_limit,
         validate_note, validate_note_document,
@@ -181,33 +182,22 @@ impl VaultService {
     }
 }
 
-#[derive(Clone)]
-pub struct FakeSyncService {
-    repository: Arc<dyn VaultRepository>,
-}
-
-impl FakeSyncService {
-    pub fn new(repository: Arc<dyn VaultRepository>) -> Self {
-        Self { repository }
-    }
-
-    pub fn run_once(&self) -> Result<SyncReport, AppError> {
-        self.repository.process_fake_sync(now_epoch_millis()?, 100)
-    }
-}
-
 pub struct AppState {
     pub vault: VaultService,
-    pub sync: FakeSyncService,
+    pub sync: LanSyncService,
     pub attachments: AttachmentService,
     pub backup: BackupService,
 }
 
 impl AppState {
-    pub fn new(repository: Arc<dyn VaultRepository>, attachment_crypto: AttachmentCrypto) -> Self {
+    pub fn new(
+        repository: Arc<dyn VaultRepository>,
+        attachment_crypto: AttachmentCrypto,
+        sync: LanSyncService,
+    ) -> Self {
         Self {
             vault: VaultService::new(Arc::clone(&repository)),
-            sync: FakeSyncService::new(Arc::clone(&repository)),
+            sync,
             attachments: AttachmentService::new(Arc::clone(&repository), attachment_crypto.clone()),
             backup: BackupService::new(repository, attachment_crypto),
         }

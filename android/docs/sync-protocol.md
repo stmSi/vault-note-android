@@ -2,7 +2,7 @@
 
 ## Status and compatibility
 
-This document defines the protocol-3 client implemented by Android and the opaque HTTPS relay under `sync-server/`. The older in-memory implementation remains only as a deterministic unit-test fake. The relay persists revisions, encrypted item envelopes, encrypted attachment envelopes, tombstones, idempotency receipts, and the incremental cursor; it never receives decrypted vault metadata or files.
+This document defines the protocol-3 clients implemented by Android and VaultNote Desktop and the opaque HTTPS relay under `sync-server/`. The relay persists revisions, encrypted item envelopes, encrypted attachment envelopes, tombstones, idempotency receipts, and the incremental cursor; it never receives decrypted vault metadata or files.
 
 Protocol implementations negotiate integer version `3`. The encrypted item JSON schema is independently versioned as `3`; unknown required fields or an incompatible protocol version fail as `unsupported_protocol`. The normative HTTP and binary contract is [the relay wire protocol](../../sync-server/docs/wire-protocol.md).
 
@@ -11,6 +11,8 @@ Protocol implementations negotiate integer version `3`. The encrypted item JSON 
 Pairing requires the relay address, bearer token, a manually compared SHA-256 TLS certificate fingerprint, and a separate shared sync password. The token is sent only after exact certificate pin validation. The password is never sent; PBKDF2-HMAC-SHA256 derives the master key and an encrypted key-check proves that clients used the same password.
 
 Android stores the token and derived master key only inside an AES-GCM credential envelope whose non-exportable wrapping key is held by Android Keystore. It stores neither the sync password nor plaintext credentials. An expired or replaced token stops work without an automatic retry loop. Pairing the same vault again reactivates authentication-stopped queue rows and schedules unique work.
+
+Desktop stores the same secrets in an authenticated credential envelope. An encrypted desktop vault wraps it with a vault-derived subkey; an unencrypted desktop vault deliberately requires the separate sync password again after restart. Desktop also stores neither the sync password nor plaintext credentials.
 
 ## Item schema
 

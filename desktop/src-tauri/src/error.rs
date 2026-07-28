@@ -41,6 +41,22 @@ pub enum AppError {
     UnsupportedBackup,
     #[error("backup exceeds desktop safety limits")]
     BackupTooLarge,
+    #[error("LAN synchronization is not configured")]
+    SyncNotConfigured,
+    #[error("LAN synchronization password is required")]
+    SyncLocked,
+    #[error("LAN synchronization network is unavailable")]
+    NetworkUnavailable,
+    #[error("LAN relay authentication failed")]
+    RelayAuthentication,
+    #[error("LAN relay identity validation failed")]
+    RelayIdentity,
+    #[error("LAN relay protocol is unsupported")]
+    UnsupportedProtocol,
+    #[error("LAN synchronization data is corrupted")]
+    CorruptedSync,
+    #[error("local data changed while synchronization was in progress")]
+    SyncChangedLocally,
 }
 
 #[derive(Debug, Serialize)]
@@ -148,6 +164,46 @@ impl From<AppError> for CommandError {
                 code: "backup_too_large",
                 message: "The backup exceeds this desktop client's safety limit.",
                 retryable: false,
+            },
+            AppError::SyncNotConfigured => Self {
+                code: "sync_not_configured",
+                message: "Pair VaultNote with a LAN relay before synchronizing.",
+                retryable: false,
+            },
+            AppError::SyncLocked => Self {
+                code: "sync_locked",
+                message: "Enter the sync password to unlock LAN synchronization.",
+                retryable: false,
+            },
+            AppError::NetworkUnavailable => Self {
+                code: "network_unavailable",
+                message: "The paired VaultNote relay is unavailable on this network.",
+                retryable: true,
+            },
+            AppError::RelayAuthentication => Self {
+                code: "relay_authentication",
+                message: "The relay token is invalid or has expired. Pair the relay again.",
+                retryable: false,
+            },
+            AppError::RelayIdentity => Self {
+                code: "relay_identity",
+                message: "The relay certificate or vault identity did not match.",
+                retryable: false,
+            },
+            AppError::UnsupportedProtocol => Self {
+                code: "unsupported_sync_protocol",
+                message: "The relay protocol is incompatible with this VaultNote version.",
+                retryable: false,
+            },
+            AppError::CorruptedSync => Self {
+                code: "corrupted_sync",
+                message: "Synchronized data failed integrity validation.",
+                retryable: false,
+            },
+            AppError::SyncChangedLocally => Self {
+                code: "sync_changed_locally",
+                message: "The item changed during synchronization. VaultNote will retry safely.",
+                retryable: true,
             },
         }
     }

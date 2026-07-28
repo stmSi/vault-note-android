@@ -35,11 +35,15 @@ use crate::{
 const MAGIC: &str = "VaultNoteBackup";
 const FORMAT_VERSION: u32 = 1;
 const MINIMUM_READER_VERSION: u32 = 1;
-const DATABASE_SCHEMA_VERSION: u32 = 2;
+const PLAINTEXT_FORMAT_VERSION: u32 = 2;
+const PLAINTEXT_MINIMUM_READER_VERSION: u32 = 2;
+const DATABASE_SCHEMA_VERSION: u32 = 3;
 const MINIMUM_DATABASE_SCHEMA_VERSION: u32 = 1;
 const MANIFEST_PATH: &str = "manifest.json";
 const CHECKSUMS_PATH: &str = "checksums.json.enc";
 const DATABASE_PATH: &str = "database.json.enc";
+const PLAINTEXT_CHECKSUMS_PATH: &str = "checksums.json";
+const PLAINTEXT_DATABASE_PATH: &str = "database.json";
 const KDF_ALGORITHM: &str = "PBKDF2-HMAC-SHA256";
 const CIPHER_ALGORITHM: &str = "AES-256-GCM";
 const KDF_ITERATIONS: u32 = 600_000;
@@ -49,6 +53,29 @@ const MAX_DATABASE_BYTES: usize = 128 * 1024 * 1024;
 const MAX_ATTACHMENTS: usize = 100_000;
 const MAX_ITEMS: usize = 1_000_000;
 const ENTRY_HEADER_BYTES: usize = 18;
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum BackupProtection {
+    Encrypted,
+    Plaintext,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupInspection {
+    pub protection: BackupProtection,
+    pub created_at_epoch_millis: i64,
+}
+
+#[derive(Clone, Copy)]
+enum RestoreEntryProtection<'a> {
+    Encrypted {
+        key: &'a Zeroizing<[u8; 32]>,
+        binding: &'a [u8],
+    },
+    Plaintext,
+}
 
 #[derive(Clone)]
 pub struct BackupService {
@@ -94,6 +121,81 @@ impl BackupService {
             return Err(AppError::BackupTooLarge);
         }
         self.restore_archive(source, password)
+    }
+
+    pub fn export_plaintext_to(
+        &self,
+        now: i64,
+        mut destination: std::path::PathBuf,
+    ) -> Result<BackupSummary, AppError> {
+        if destination.extension().is_none() {
+            destination.set_extension("vnb");
+        }
+        if destination.exists() {
+            return Err(AppError::InvalidState);
+        }
+        let snapshot = self.repository.portable_snapshot()?;
+        if snapshot.items.len() > MAX_ITEMS || snapshot.attachments.len() > MAX_ATTACHMENTS {
+            return Err(AppError::BackupTooLarge);
+        }
+        let summary = BackupSummary {
+            item_count: snapshot.items.len(),
+            attachment_count: snapshot.attachments.len(),
+            created_at_epoch_millis: now,
+        };
+        self.write_plaintext_archive(&destination, now, snapshot)?;
+        Ok(summary)
+    }
+
+    pub fn inspect(&self, source: &Path) -> Result<BackupInspection, AppError> {
+        let metadata = source.metadata()?;
+        if !metadata.is_file() || metadata.len() > MAX_ARCHIVE_BYTES {
+            return Err(AppError::BackupTooLarge);
+        }
+        let mut archive = ZipArchive::new(File::open(source)?).map_err(zip_invalid)?;
+        validate_zip_entries(&mut archive)?;
+        let bytes = read_zip_entry(&mut archive, MANIFEST_PATH, 16 * 1024)?;
+        let probe: ManifestProbe =
+            serde_json::from_slice(&bytes).map_err(|_| AppError::InvalidBackup)?;
+        if probe.magic != MAGIC {
+            return Err(AppError::InvalidBackup);
+        }
+        match probe.format_version {
+            FORMAT_VERSION => {
+                let manifest: Manifest =
+                    serde_json::from_slice(&bytes).map_err(|_| AppError::InvalidBackup)?;
+                validate_manifest(&manifest)?;
+                Ok(BackupInspection {
+                    protection: BackupProtection::Encrypted,
+                    created_at_epoch_millis: manifest.created_at_epoch_millis,
+                })
+            }
+            PLAINTEXT_FORMAT_VERSION => {
+                let manifest: PlaintextManifest =
+                    serde_json::from_slice(&bytes).map_err(|_| AppError::InvalidBackup)?;
+                validate_plaintext_manifest(&manifest)?;
+                Ok(BackupInspection {
+                    protection: BackupProtection::Plaintext,
+                    created_at_epoch_millis: manifest.created_at_epoch_millis,
+                })
+            }
+            _ => Err(AppError::UnsupportedBackup),
+        }
+    }
+
+    pub fn restore_auto(
+        &self,
+        password: Option<&str>,
+        source: &Path,
+    ) -> Result<RestoreSummary, AppError> {
+        match self.inspect(source)?.protection {
+            BackupProtection::Encrypted => {
+                let password = password.ok_or(AppError::InvalidCredentials)?;
+                validate_password(password)?;
+                self.restore_archive(source, password)
+            }
+            BackupProtection::Plaintext => self.restore_plaintext_archive(source),
+        }
     }
 
     fn write_archive(
@@ -177,7 +279,80 @@ impl BackupService {
             },
         };
         let manifest_bytes = serde_json::to_vec(&manifest).map_err(|_| AppError::InvalidBackup)?;
-        write_zip_atomically(destination, &manifest_bytes, &encrypted_checksums, &entries)
+        write_zip_atomically(
+            destination,
+            &manifest_bytes,
+            CHECKSUMS_PATH,
+            &encrypted_checksums,
+            &entries,
+        )
+    }
+
+    fn write_plaintext_archive(
+        &self,
+        destination: &Path,
+        created_at: i64,
+        snapshot: PortableSnapshot,
+    ) -> Result<(), AppError> {
+        let database = database_from_snapshot(&snapshot)?;
+        let database_bytes =
+            Zeroizing::new(serde_json::to_vec(&database).map_err(|_| AppError::InvalidBackup)?);
+        if database_bytes.len() > MAX_DATABASE_BYTES {
+            return Err(AppError::BackupTooLarge);
+        }
+        let mut entries = Vec::with_capacity(snapshot.attachments.len() + 1);
+        entries.push(EncryptedEntry::new(
+            PLAINTEXT_DATABASE_PATH,
+            database_bytes.to_vec(),
+        ));
+        for (index, attachment) in snapshot.attachments.iter().enumerate() {
+            let path = attachment_path(index + 1);
+            let plaintext = self.crypto.decrypt_bytes(
+                &attachment.record.encrypted_relative_path,
+                &attachment.record.attachment.id,
+            )?;
+            if plaintext.len() as i64 != attachment.record.attachment.file_size
+                || sha256_hex(&plaintext) != attachment.record.attachment.sha256
+            {
+                return Err(AppError::Cryptography);
+            }
+            entries.push(EncryptedEntry::new(&path, plaintext.to_vec()));
+        }
+        let checksums = PlaintextChecksumIndex {
+            format_version: PLAINTEXT_FORMAT_VERSION,
+            entries: entries
+                .iter()
+                .map(|entry| PlaintextEntryChecksum {
+                    path: entry.path.clone(),
+                    size: entry.bytes.len() as u64,
+                    sha256: sha256_hex(&entry.bytes),
+                })
+                .collect(),
+        };
+        let checksum_bytes = serde_json::to_vec(&checksums).map_err(|_| AppError::InvalidBackup)?;
+        let mut archive_id = [0_u8; 16];
+        OsRng.fill_bytes(&mut archive_id);
+        let manifest = PlaintextManifest {
+            magic: MAGIC.to_owned(),
+            format_version: PLAINTEXT_FORMAT_VERSION,
+            minimum_reader_version: PLAINTEXT_MINIMUM_READER_VERSION,
+            created_at_epoch_millis: created_at,
+            archive_id: BASE64.encode(archive_id),
+            protection: "NONE".to_owned(),
+            checksums: PlaintextManifestChecksums {
+                path: PLAINTEXT_CHECKSUMS_PATH.to_owned(),
+                size: checksum_bytes.len() as u64,
+                sha256: sha256_hex(&checksum_bytes),
+            },
+        };
+        let manifest_bytes = serde_json::to_vec(&manifest).map_err(|_| AppError::InvalidBackup)?;
+        write_zip_atomically(
+            destination,
+            &manifest_bytes,
+            PLAINTEXT_CHECKSUMS_PATH,
+            &checksum_bytes,
+            &entries,
+        )
     }
 
     fn restore_archive(&self, source: &Path, password: &str) -> Result<RestoreSummary, AppError> {
@@ -238,7 +413,14 @@ impl BackupService {
             serde_json::from_slice(&database_plaintext).map_err(|_| AppError::InvalidBackup)?;
         validate_database(&database)?;
         let now = crate::services::now_epoch_millis()?;
-        let portable = self.prepare_restore(database, encrypted_entries, &key, &binding)?;
+        let portable = self.prepare_restore(
+            database,
+            encrypted_entries,
+            RestoreEntryProtection::Encrypted {
+                key: &key,
+                binding: &binding,
+            },
+        )?;
         let summary = RestoreSummary {
             restored_item_count: portable.items.len(),
             restored_attachment_count: portable.attachments.len(),
@@ -262,12 +444,73 @@ impl BackupService {
         Ok(summary)
     }
 
+    fn restore_plaintext_archive(&self, source: &Path) -> Result<RestoreSummary, AppError> {
+        let mut archive = ZipArchive::new(File::open(source)?).map_err(zip_invalid)?;
+        let entry_names = validate_zip_entries(&mut archive)?;
+        let manifest_bytes = read_zip_entry(&mut archive, MANIFEST_PATH, 16 * 1024)?;
+        let manifest: PlaintextManifest =
+            serde_json::from_slice(&manifest_bytes).map_err(|_| AppError::InvalidBackup)?;
+        validate_plaintext_manifest(&manifest)?;
+        let checksum_bytes =
+            read_zip_entry(&mut archive, PLAINTEXT_CHECKSUMS_PATH, MAX_DATABASE_BYTES)?;
+        if checksum_bytes.len() as u64 != manifest.checksums.size
+            || sha256_hex(&checksum_bytes) != manifest.checksums.sha256
+        {
+            return Err(AppError::InvalidBackup);
+        }
+        let checksums: PlaintextChecksumIndex =
+            serde_json::from_slice(&checksum_bytes).map_err(|_| AppError::InvalidBackup)?;
+        validate_plaintext_checksum_index(&checksums, &entry_names)?;
+        let mut entries = HashMap::new();
+        for checksum in &checksums.entries {
+            let bytes = read_zip_entry(&mut archive, &checksum.path, MAX_ENTRY_BYTES as usize)?;
+            if bytes.len() as u64 != checksum.size || sha256_hex(&bytes) != checksum.sha256 {
+                return Err(AppError::InvalidBackup);
+            }
+            entries.insert(checksum.path.clone(), bytes);
+        }
+        let database_bytes = entries
+            .remove(PLAINTEXT_DATABASE_PATH)
+            .ok_or(AppError::InvalidBackup)?;
+        if database_bytes.len() > MAX_DATABASE_BYTES {
+            return Err(AppError::BackupTooLarge);
+        }
+        let database: DatabaseSnapshot =
+            serde_json::from_slice(&database_bytes).map_err(|_| AppError::InvalidBackup)?;
+        validate_database(&database)?;
+        let portable =
+            self.prepare_restore(database, entries, RestoreEntryProtection::Plaintext)?;
+        let summary = RestoreSummary {
+            restored_item_count: portable.items.len(),
+            restored_attachment_count: portable.attachments.len(),
+        };
+        let encrypted_files: Vec<(String, String)> = portable
+            .attachments
+            .iter()
+            .map(|item| {
+                (
+                    item.record.encrypted_relative_path.clone(),
+                    item.record.attachment.id.clone(),
+                )
+            })
+            .collect();
+        if let Err(error) = self
+            .repository
+            .restore_portable_snapshot(&portable, crate::services::now_epoch_millis()?)
+        {
+            for (path, id) in encrypted_files {
+                let _ = self.crypto.remove(&path, &id);
+            }
+            return Err(error);
+        }
+        Ok(summary)
+    }
+
     fn prepare_restore(
         &self,
         database: DatabaseSnapshot,
         mut encrypted_entries: HashMap<String, Vec<u8>>,
-        key: &Zeroizing<[u8; 32]>,
-        binding: &[u8],
+        protection: RestoreEntryProtection<'_>,
     ) -> Result<PortableSnapshot, AppError> {
         let item_ids: HashMap<String, String> = database
             .items
@@ -297,6 +540,7 @@ impl BackupService {
                     is_pinned: item.pinned,
                     is_favorite: item.favorite,
                     is_archived: item.archived,
+                    sort_position: item.sort_position,
                     created_at: item.created_at,
                     updated_at: item.updated_at,
                     local_revision: item.local_revision,
@@ -331,7 +575,12 @@ impl BackupService {
                 let bytes = encrypted_entries
                     .remove(&attachment.content_entry)
                     .ok_or(AppError::InvalidBackup)?;
-                let plaintext = decrypt_entry(key, binding, &attachment.content_entry, &bytes)?;
+                let plaintext = match protection {
+                    RestoreEntryProtection::Encrypted { key, binding } => {
+                        decrypt_entry(key, binding, &attachment.content_entry, &bytes)?
+                    }
+                    RestoreEntryProtection::Plaintext => Zeroizing::new(bytes),
+                };
                 if plaintext.len() as i64 != expected_file_size
                     || sha256_hex(&plaintext) != attachment.sha256
                 {
@@ -384,6 +633,13 @@ impl BackupService {
             }
             attachments.push(prepared);
         }
+        let mut alerts_by_entry: HashMap<String, Vec<DatabaseDatedEntryAlert>> = HashMap::new();
+        for alert in database.dated_entry_alerts {
+            alerts_by_entry
+                .entry(alert.entry_id.clone())
+                .or_default()
+                .push(alert);
+        }
         let dated_entries = database
             .dated_entries
             .into_iter()
@@ -408,10 +664,19 @@ impl BackupService {
                         updated_at_epoch_millis: entry.updated_at,
                         alerts: entry
                             .alerts
+                            .unwrap_or_default()
                             .into_iter()
-                            .map(|alert| DatedEntryAlert {
+                            .map(|alert| (alert.id, alert.lead_time_minutes))
+                            .chain(
+                                alerts_by_entry
+                                    .remove(&entry.id)
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .map(|alert| (alert.id, alert.lead_time_minutes)),
+                            )
+                            .map(|(_id, lead_time_minutes)| DatedEntryAlert {
                                 id: new_id(),
-                                lead_time_minutes: alert.lead_time_minutes,
+                                lead_time_minutes,
                                 snoozed_until_epoch_millis: None,
                             })
                             .collect(),
@@ -419,6 +684,10 @@ impl BackupService {
                 })
             })
             .collect::<Result<Vec<_>, AppError>>()?;
+        if !alerts_by_entry.is_empty() {
+            cleanup_attachments(&self.crypto, &attachments);
+            return Err(AppError::InvalidBackup);
+        }
         if !encrypted_entries.is_empty() {
             cleanup_attachments(&self.crypto, &attachments);
             return Err(AppError::InvalidBackup);
@@ -453,6 +722,33 @@ struct Manifest {
     kdf: ManifestKdf,
     cipher: String,
     checksums: ManifestChecksums,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ManifestProbe {
+    magic: String,
+    format_version: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PlaintextManifest {
+    magic: String,
+    format_version: u32,
+    minimum_reader_version: u32,
+    created_at_epoch_millis: i64,
+    archive_id: String,
+    protection: String,
+    checksums: PlaintextManifestChecksums,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PlaintextManifestChecksums {
+    path: String,
+    size: u64,
+    sha256: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -502,6 +798,21 @@ struct ChecksumIndex {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PlaintextChecksumIndex {
+    format_version: u32,
+    entries: Vec<PlaintextEntryChecksum>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PlaintextEntryChecksum {
+    path: String,
+    size: u64,
+    sha256: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct EntryChecksum {
     path: String,
     ciphertext_size: u64,
@@ -531,9 +842,11 @@ struct DatabaseSnapshot {
     items: Vec<DatabaseItem>,
     tags: Vec<DatabaseTag>,
     item_tags: Vec<DatabaseItemTag>,
-    attachments: Vec<DatabaseAttachment>,
     #[serde(default)]
     dated_entries: Vec<DatabaseDatedEntry>,
+    #[serde(default)]
+    dated_entry_alerts: Vec<DatabaseDatedEntryAlert>,
+    attachments: Vec<DatabaseAttachment>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -545,17 +858,19 @@ struct DatabaseItem {
     color: String,
     title: String,
     body: String,
+    #[serde(default)]
+    body_document: Option<String>,
     ocr_text: String,
     pinned: bool,
     favorite: bool,
     archived: bool,
+    #[serde(default)]
+    sort_position: i64,
     created_at: i64,
     updated_at: i64,
     local_revision: i64,
     deleted_at: Option<i64>,
     conflict_origin_id: Option<String>,
-    #[serde(default)]
-    body_document: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -611,12 +926,22 @@ struct DatabaseDatedEntry {
     completed_at: Option<i64>,
     created_at: i64,
     updated_at: i64,
-    alerts: Vec<DatabaseDatedEntryAlert>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    alerts: Option<Vec<LegacyDatedEntryAlert>>,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DatabaseDatedEntryAlert {
+    id: String,
+    entry_id: String,
+    lead_time_minutes: i64,
+    created_at: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyDatedEntryAlert {
     id: String,
     lead_time_minutes: i64,
 }
@@ -635,6 +960,7 @@ fn database_from_snapshot(snapshot: &PortableSnapshot) -> Result<DatabaseSnapsho
             pinned: item.is_pinned,
             favorite: item.is_favorite,
             archived: item.is_archived,
+            sort_position: item.sort_position,
             created_at: item.created_at,
             updated_at: item.updated_at,
             local_revision: item.local_revision,
@@ -702,15 +1028,24 @@ fn database_from_snapshot(snapshot: &PortableSnapshot) -> Result<DatabaseSnapsho
                 completed_at: entry.completed_at_epoch_millis,
                 created_at: entry.created_at_epoch_millis,
                 updated_at: entry.updated_at_epoch_millis,
-                alerts: entry
-                    .alerts
-                    .iter()
-                    .map(|alert| DatabaseDatedEntryAlert {
-                        id: alert.id.clone(),
-                        lead_time_minutes: alert.lead_time_minutes,
-                    })
-                    .collect(),
+                alerts: None,
             }
+        })
+        .collect();
+    let dated_entry_alerts = snapshot
+        .dated_entries
+        .iter()
+        .flat_map(|portable| {
+            portable
+                .entry
+                .alerts
+                .iter()
+                .map(|alert| DatabaseDatedEntryAlert {
+                    id: alert.id.clone(),
+                    entry_id: portable.entry.id.clone(),
+                    lead_time_minutes: alert.lead_time_minutes,
+                    created_at: portable.entry.created_at_epoch_millis,
+                })
         })
         .collect();
     Ok(DatabaseSnapshot {
@@ -720,8 +1055,9 @@ fn database_from_snapshot(snapshot: &PortableSnapshot) -> Result<DatabaseSnapsho
         items,
         tags,
         item_tags,
-        attachments,
         dated_entries,
+        dated_entry_alerts,
+        attachments,
     })
 }
 
@@ -742,6 +1078,22 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), AppError> {
     }
     decode_fixed::<16>(&manifest.archive_id)?;
     decode_fixed::<32>(&manifest.kdf.salt)?;
+    Ok(())
+}
+
+fn validate_plaintext_manifest(manifest: &PlaintextManifest) -> Result<(), AppError> {
+    if manifest.magic != MAGIC
+        || manifest.format_version != PLAINTEXT_FORMAT_VERSION
+        || manifest.minimum_reader_version != PLAINTEXT_MINIMUM_READER_VERSION
+        || manifest.created_at_epoch_millis < 0
+        || manifest.protection != "NONE"
+        || manifest.checksums.path != PLAINTEXT_CHECKSUMS_PATH
+        || manifest.checksums.size == 0
+        || !is_sha256(&manifest.checksums.sha256)
+    {
+        return Err(AppError::UnsupportedBackup);
+    }
+    decode_fixed::<16>(&manifest.archive_id)?;
     Ok(())
 }
 
@@ -857,6 +1209,7 @@ fn validate_database(database: &DatabaseSnapshot) -> Result<(), AppError> {
     }
     let mut dated_entry_ids = HashSet::new();
     let mut alert_ids = HashSet::new();
+    let mut lead_times_by_entry: HashMap<&str, HashSet<i64>> = HashMap::new();
     for entry in &database.dated_entries {
         let recurrence_valid = match (&entry.recurrence_unit, entry.recurrence_interval) {
             (None, None) => true,
@@ -881,19 +1234,34 @@ fn validate_database(database: &DatabaseSnapshot) -> Result<(), AppError> {
             || entry.completed_at.is_some_and(|value| value < 0)
             || entry.created_at < 0
             || entry.updated_at < 0
-            || entry.alerts.len() > 5
         {
             return Err(AppError::InvalidBackup);
         }
-        let mut lead_times = HashSet::new();
-        for alert in &entry.alerts {
+        for alert in entry.alerts.as_deref().unwrap_or_default() {
+            let lead_times = lead_times_by_entry.entry(&entry.id).or_default();
             if !is_safe_id(&alert.id)
                 || !alert_ids.insert(alert.id.as_str())
                 || !lead_times.insert(alert.lead_time_minutes)
                 || !(0..=5_256_000).contains(&alert.lead_time_minutes)
+                || lead_times.len() > 5
             {
                 return Err(AppError::InvalidBackup);
             }
+        }
+    }
+    for alert in &database.dated_entry_alerts {
+        let lead_times = lead_times_by_entry
+            .entry(alert.entry_id.as_str())
+            .or_default();
+        if !is_safe_id(&alert.id)
+            || !alert_ids.insert(alert.id.as_str())
+            || !dated_entry_ids.contains(alert.entry_id.as_str())
+            || !lead_times.insert(alert.lead_time_minutes)
+            || !(0..=5_256_000).contains(&alert.lead_time_minutes)
+            || alert.created_at < 0
+            || lead_times.len() > 5
+        {
+            return Err(AppError::InvalidBackup);
         }
     }
     Ok(())
@@ -924,6 +1292,36 @@ fn validate_checksum_index(
     Ok(())
 }
 
+fn validate_plaintext_checksum_index(
+    checksums: &PlaintextChecksumIndex,
+    zip_names: &HashSet<String>,
+) -> Result<(), AppError> {
+    if checksums.format_version != PLAINTEXT_FORMAT_VERSION {
+        return Err(AppError::UnsupportedBackup);
+    }
+    let mut expected = HashSet::from([
+        MANIFEST_PATH.to_owned(),
+        PLAINTEXT_CHECKSUMS_PATH.to_owned(),
+    ]);
+    let mut paths = HashSet::new();
+    let mut saw_database = false;
+    for entry in &checksums.entries {
+        if !(entry.path == PLAINTEXT_DATABASE_PATH || is_attachment_path(&entry.path))
+            || !paths.insert(entry.path.clone())
+            || entry.size > MAX_ENTRY_BYTES
+            || !is_sha256(&entry.sha256)
+        {
+            return Err(AppError::InvalidBackup);
+        }
+        saw_database |= entry.path == PLAINTEXT_DATABASE_PATH;
+        expected.insert(entry.path.clone());
+    }
+    if !saw_database || &expected != zip_names {
+        return Err(AppError::InvalidBackup);
+    }
+    Ok(())
+}
+
 fn validate_zip_entries(archive: &mut ZipArchive<File>) -> Result<HashSet<String>, AppError> {
     if archive.len() > MAX_ATTACHMENTS + 3 {
         return Err(AppError::BackupTooLarge);
@@ -942,6 +1340,8 @@ fn validate_zip_entries(archive: &mut ZipArchive<File>) -> Result<HashSet<String
             || !(name == MANIFEST_PATH
                 || name == CHECKSUMS_PATH
                 || name == DATABASE_PATH
+                || name == PLAINTEXT_CHECKSUMS_PATH
+                || name == PLAINTEXT_DATABASE_PATH
                 || is_attachment_path(name))
             || !names.insert(name.to_owned())
         {
@@ -973,7 +1373,8 @@ fn read_zip_entry(
     entry
         .by_ref()
         .take(maximum as u64 + 1)
-        .read_to_end(&mut bytes)?;
+        .read_to_end(&mut bytes)
+        .map_err(|_| AppError::InvalidBackup)?;
     if bytes.len() > maximum {
         return Err(AppError::BackupTooLarge);
     }
@@ -983,6 +1384,7 @@ fn read_zip_entry(
 fn write_zip_atomically(
     destination: &Path,
     manifest: &[u8],
+    checksum_path: &str,
     checksums: &[u8],
     entries: &[EncryptedEntry],
 ) -> Result<(), AppError> {
@@ -1002,7 +1404,7 @@ fn write_zip_atomically(
         zip.start_file(MANIFEST_PATH, options)
             .map_err(zip_invalid)?;
         zip.write_all(manifest)?;
-        zip.start_file(CHECKSUMS_PATH, options)
+        zip.start_file(checksum_path, options)
             .map_err(zip_invalid)?;
         zip.write_all(checksums)?;
         for entry in entries {
@@ -1189,6 +1591,62 @@ fn sync_directory(_path: &Path) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        database::Database,
+        models::{AttachmentRecord, VaultAttachment, VaultSection},
+        repository::{SqliteVaultRepository, VaultRepository},
+        vault_key::MasterKey,
+    };
+    use tempfile::{TempDir, tempdir};
+
+    const TEST_PASSWORD: &str = "correct horse battery staple";
+
+    fn populated_service() -> (
+        TempDir,
+        Arc<SqliteVaultRepository>,
+        AttachmentCrypto,
+        BackupService,
+        String,
+    ) {
+        let directory = tempdir().expect("temporary directory should exist");
+        let repository = Arc::new(SqliteVaultRepository::new(
+            Database::open_in_memory().expect("database should open"),
+        ));
+        let item_id = repository
+            .create_note("Cross-platform", "Android and desktop", 1_000)
+            .expect("note should be created");
+        let crypto = AttachmentCrypto::new(Arc::new(MasterKey::for_tests()), directory.path())
+            .expect("attachment crypto should initialize");
+        let attachment_id = Uuid::new_v4().hyphenated().to_string();
+        let plaintext = b"portable attachment payload";
+        let encrypted = crypto
+            .encrypt_restored(
+                plaintext,
+                "travel-plan.pdf",
+                "application/pdf",
+                &attachment_id,
+            )
+            .expect("attachment should be encrypted locally");
+        repository
+            .add_attachment(
+                &AttachmentRecord {
+                    attachment: VaultAttachment {
+                        id: attachment_id,
+                        parent_item_id: item_id.clone(),
+                        display_name: encrypted.display_name,
+                        mime_type: encrypted.mime_type,
+                        file_size: encrypted.plaintext_size,
+                        sha256: encrypted.sha256,
+                        created_at_epoch_millis: 1_001,
+                    },
+                    encrypted_relative_path: encrypted.relative_path,
+                },
+                1_001,
+            )
+            .expect("attachment metadata should be stored");
+        let service = BackupService::new(repository.clone(), crypto.clone());
+        (directory, repository, crypto, service, item_id)
+    }
 
     #[test]
     fn encrypted_entry_binds_manifest_and_path() {
@@ -1220,5 +1678,143 @@ mod tests {
                 0x8c, 0xac, 0xfa, 0x65,
             ]
         );
+    }
+
+    #[test]
+    fn encrypted_backup_rejects_wrong_password_then_restores_attachment() {
+        let (directory, repository, crypto, service, original_id) = populated_service();
+        let backup = directory.path().join("encrypted.vnb");
+        let summary = service
+            .export_to(TEST_PASSWORD, 2_000, backup.clone())
+            .expect("encrypted backup should export");
+        assert_eq!(summary.item_count, 1);
+        assert_eq!(summary.attachment_count, 1);
+        assert_eq!(
+            service
+                .inspect(&backup)
+                .expect("backup should inspect")
+                .protection,
+            BackupProtection::Encrypted
+        );
+        assert!(
+            service
+                .restore_auto(Some("incorrect password value"), &backup)
+                .is_err()
+        );
+        assert_eq!(
+            repository
+                .list_items(VaultSection::Active, 100)
+                .expect("notes should list")
+                .len(),
+            1
+        );
+
+        let restored = service
+            .restore_auto(Some(TEST_PASSWORD), &backup)
+            .expect("correct password should restore");
+        assert_eq!(restored.restored_item_count, 1);
+        assert_eq!(restored.restored_attachment_count, 1);
+        let restored_item = repository
+            .list_items(VaultSection::Active, 100)
+            .expect("notes should list")
+            .into_iter()
+            .find(|item| item.id != original_id)
+            .expect("restored copy should exist");
+        let attachment = repository
+            .attachment_record(
+                &repository
+                    .list_attachments(&restored_item.id)
+                    .expect("attachments should list")[0]
+                    .id,
+            )
+            .expect("restored attachment should load");
+        assert_eq!(
+            crypto
+                .decrypt_bytes(
+                    &attachment.encrypted_relative_path,
+                    &attachment.attachment.id,
+                )
+                .expect("attachment should authenticate")
+                .as_slice(),
+            b"portable attachment payload"
+        );
+    }
+
+    #[test]
+    fn plaintext_backup_is_explicit_and_detects_tampered_content() {
+        let (directory, repository, _crypto, service, _original_id) = populated_service();
+        let backup = directory.path().join("readable.vnb");
+        service
+            .export_plaintext_to(3_000, backup.clone())
+            .expect("plaintext backup should export");
+        assert_eq!(
+            service
+                .inspect(&backup)
+                .expect("backup should inspect")
+                .protection,
+            BackupProtection::Plaintext
+        );
+        let restored = service
+            .restore_auto(None, &backup)
+            .expect("confirmed plaintext backup should restore");
+        assert_eq!(restored.restored_item_count, 1);
+        assert_eq!(restored.restored_attachment_count, 1);
+
+        let mut archive_bytes = fs::read(&backup).expect("backup should be readable");
+        let needle = b"portable attachment payload";
+        let offset = archive_bytes
+            .windows(needle.len())
+            .position(|window| window == needle)
+            .expect("stored plaintext attachment should be present");
+        archive_bytes[offset] ^= 0x40;
+        fs::write(&backup, archive_bytes).expect("tampered fixture should be written");
+
+        assert!(service.restore_auto(None, &backup).is_err());
+        assert_eq!(
+            repository
+                .list_items(VaultSection::Active, 100)
+                .expect("notes should list")
+                .len(),
+            2,
+            "validation failure must not partially restore notes"
+        );
+    }
+
+    #[test]
+    fn database_json_field_order_matches_android_streaming_reader() {
+        let (_directory, repository, _crypto, _service, _original_id) = populated_service();
+        let database = database_from_snapshot(
+            &repository
+                .portable_snapshot()
+                .expect("snapshot should be available"),
+        )
+        .expect("database model should be created");
+        let json = serde_json::to_string(&database).expect("database should serialize");
+        let ordered_fields = [
+            "\"schemaVersion\"",
+            "\"itemCount\"",
+            "\"attachmentCount\"",
+            "\"items\"",
+            "\"tags\"",
+            "\"itemTags\"",
+            "\"datedEntries\"",
+            "\"datedEntryAlerts\"",
+            "\"attachments\"",
+        ];
+        let mut previous = 0;
+        for field in ordered_fields {
+            let position = json[previous..]
+                .find(field)
+                .map(|offset| previous + offset)
+                .expect("Android field should be present");
+            assert!(position >= previous);
+            previous = position + field.len();
+        }
+        let body = json.find("\"body\"").expect("body should exist");
+        let body_document = json
+            .find("\"bodyDocument\"")
+            .expect("body document should exist");
+        let ocr = json.find("\"ocrText\"").expect("OCR should exist");
+        assert!(body < body_document && body_document < ocr);
     }
 }

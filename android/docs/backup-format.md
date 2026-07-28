@@ -2,7 +2,7 @@
 
 ## Scope
 
-VaultNote backups are portable ZIP archives with the `.vnb` extension. Version `1` is password-encrypted and remains the default. Version `2` is an explicitly selected unencrypted format. Both contain every local vault item, including archived items, soft-deletion tombstones and conflict copies, plus tags, tag memberships, attachment metadata, OCR text and original attachment bytes.
+VaultNote backups are portable ZIP archives with the `.vnb` extension and are shared by the Android and desktop clients. Version `1` is password-encrypted and remains the default. Version `2` is an explicitly selected unencrypted format. Both contain every local vault item, including archived items, soft-deletion tombstones and conflict copies, plus tags, tag memberships, dated entries, attachment metadata, OCR text and original attachment bytes.
 
 The format is independent of the Android Keystore. During export, an attachment is authenticated and decrypted from its device-bound envelope, then immediately streamed into a password-encrypted backup entry. During restore, it is authenticated with the backup password, validated against its stored content checksum and format, and encrypted under the destination installation's current Keystore key. Keystore key bytes are never exported.
 
@@ -109,7 +109,7 @@ Remote revisions, last-synchronized revisions, server tokens, remote paths, uplo
 
 The exporter reads each table through keyset-paged DAO queries inside one Room transaction, so metadata is a consistent snapshot without loading the whole vault into memory. Attachments are streamed separately and checked against the snapshot's plaintext size and SHA-256.
 
-The nested database snapshot schema is version `2`. Readers also accept schema `1`; those older snapshots have no manual position and receive a deterministic position derived from their prior updated-time ordering. The outer encrypted/plaintext archive versions remain unchanged.
+The nested database snapshot schema is version `3`. Schema `3` adds structured note bodies and dated entries/alerts; schema `2` added manual sort position. Readers also accept schemas `1` and `2`, applying deterministic defaults for fields that did not yet exist. The outer encrypted/plaintext archive versions remain unchanged.
 
 ## Export protocol
 
@@ -157,3 +157,4 @@ The reader accepts encrypted version `1` and unencrypted version `2`. Unknown fo
 - A rooted device, compromised OS or compromised VaultNote process can observe passwords or plaintext during an operation.
 - The selected document provider controls the exported copy after it leaves VaultNote's private storage.
 - Version `2` intentionally provides no confidentiality or cryptographic authenticity. It should be used only when the destination's access controls are independently trusted.
+- Android streams large exports and restores through private staging. The current desktop implementation applies a stricter 512 MiB archive limit and may hold one or more bounded attachment entries in memory during manual backup; this does not affect the portable format but should be considered for unusually large desktop vaults.

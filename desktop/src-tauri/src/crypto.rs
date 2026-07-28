@@ -13,7 +13,7 @@ use hkdf::Hkdf;
 use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{error::AppError, vault_key::MasterKey};
 
@@ -191,6 +191,29 @@ impl AttachmentCrypto {
         result
     }
 
+    pub fn write_plaintext_to(
+        &self,
+        relative_path: &str,
+        attachment_id: &str,
+        destination: &mut dyn Write,
+    ) -> Result<(), AppError> {
+        self.validate_relative_path(relative_path, attachment_id)?;
+        let mut source = File::open(self.directory.join(relative_path))?;
+        if let Some(master_key) = &self.master_key {
+            decrypt_pass(&mut source, attachment_id, master_key.as_bytes(), None)?;
+            source.seek(SeekFrom::Start(0))?;
+            decrypt_pass(
+                &mut source,
+                attachment_id,
+                master_key.as_bytes(),
+                Some(destination),
+            )
+        } else {
+            copy_bounded(&mut source, destination, MAX_FILE_BYTES)?;
+            Ok(())
+        }
+    }
+
     pub fn decrypt_bytes(
         &self,
         relative_path: &str,
@@ -260,9 +283,84 @@ impl AttachmentCrypto {
         Ok(attachment)
     }
 
+    pub fn import_remote_from_producer(
+        &self,
+        attachment_id: &str,
+        display_name: &str,
+        mime_type: &str,
+        plaintext_size: u64,
+        expected_sha256: &str,
+        producer: impl FnOnce(&mut dyn Write) -> Result<(), AppError>,
+    ) -> Result<EncryptedAttachment, AppError> {
+        let display_name = validated_display_name(display_name)?;
+        if !crate::sync_wire::valid_id(attachment_id)
+            || plaintext_size > MAX_FILE_BYTES
+            || !crate::sync_wire::lower_hex_sha256(expected_sha256)
+            || mime_type.is_empty()
+            || mime_type.len() > 256
+            || mime_type.chars().any(char::is_control)
+        {
+            return Err(AppError::CorruptedSync);
+        }
+        let final_name = self.relative_name(attachment_id);
+        let final_path = self.directory.join(&final_name);
+        if final_path.exists() {
+            return Err(AppError::InvalidState);
+        }
+        let pending_path = self
+            .directory
+            .join(format!(".pending-{}.tmp", Uuid::new_v4().hyphenated()));
+        let result = (|| {
+            let mut writer = PendingLocalWriter::new(
+                self.master_key.as_deref(),
+                &pending_path,
+                attachment_id,
+                plaintext_size,
+            )?;
+            producer(&mut writer)?;
+            let actual_sha256 = writer.finish()?;
+            if actual_sha256 != expected_sha256 {
+                return Err(AppError::CorruptedSync);
+            }
+            fs::rename(&pending_path, &final_path)?;
+            sync_directory(&self.directory)?;
+            harden_file(&final_path)?;
+            Ok(EncryptedAttachment {
+                relative_path: final_name,
+                display_name,
+                mime_type: mime_type.to_owned(),
+                plaintext_size: i64::try_from(plaintext_size)
+                    .map_err(|_| AppError::FileTooLarge)?,
+                sha256: actual_sha256,
+            })
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&pending_path);
+        }
+        result
+    }
+
     pub fn remove(&self, relative_path: &str, attachment_id: &str) -> Result<(), AppError> {
         self.validate_relative_path(relative_path, attachment_id)?;
         let path = self.directory.join(relative_path);
+        match fs::remove_file(path) {
+            Ok(()) => sync_directory(&self.directory),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(AppError::Storage(error)),
+        }
+    }
+
+    pub fn contains(&self, relative_path: &str, attachment_id: &str) -> bool {
+        self.validate_relative_path(relative_path, attachment_id)
+            .is_ok()
+            && self.directory.join(relative_path).is_file()
+    }
+
+    pub fn remove_orphan(&self, attachment_id: &str) -> Result<(), AppError> {
+        if !crate::sync_wire::valid_id(attachment_id) {
+            return Err(AppError::CorruptedSync);
+        }
+        let path = self.directory.join(self.relative_name(attachment_id));
         match fs::remove_file(path) {
             Ok(()) => sync_directory(&self.directory),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -415,6 +513,204 @@ struct PendingAttachment<'a> {
     display_name: String,
     mime_type: String,
     relative_path: String,
+}
+
+enum PendingLocalWriter {
+    Encrypted(Box<EncryptedPendingWriter>),
+    Plain(PlainPendingWriter),
+}
+
+impl PendingLocalWriter {
+    fn new(
+        master_key: Option<&MasterKey>,
+        pending: &Path,
+        attachment_id: &str,
+        plaintext_size: u64,
+    ) -> Result<Self, AppError> {
+        let output = File::options().write(true).create_new(true).open(pending)?;
+        if let Some(master_key) = master_key {
+            let key = derive_attachment_key(master_key.as_bytes(), attachment_id)?;
+            let cipher =
+                Aes256Gcm::new_from_slice(key.as_slice()).map_err(|_| AppError::Cryptography)?;
+            let mut nonce_prefix = [0_u8; 8];
+            OsRng.fill_bytes(&mut nonce_prefix);
+            let header = header(plaintext_size, nonce_prefix);
+            let mut writer = EncryptedPendingWriter {
+                output,
+                cipher,
+                attachment_id: attachment_id.to_owned(),
+                plaintext_size,
+                nonce_prefix,
+                header,
+                chunks: chunk_count(plaintext_size),
+                next_chunk: 0,
+                received: 0,
+                buffer: Vec::with_capacity(CHUNK_BYTES),
+                digest: Sha256::new(),
+            };
+            writer.output.write_all(&header)?;
+            Ok(Self::Encrypted(Box::new(writer)))
+        } else {
+            Ok(Self::Plain(PlainPendingWriter {
+                output,
+                plaintext_size,
+                received: 0,
+                digest: Sha256::new(),
+            }))
+        }
+    }
+
+    fn finish(self) -> Result<String, AppError> {
+        match self {
+            Self::Encrypted(writer) => writer.finish(),
+            Self::Plain(writer) => writer.finish(),
+        }
+    }
+}
+
+impl Write for PendingLocalWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Encrypted(writer) => writer.write(buffer),
+            Self::Plain(writer) => writer.write(buffer),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Encrypted(writer) => writer.flush(),
+            Self::Plain(writer) => writer.flush(),
+        }
+    }
+}
+
+struct EncryptedPendingWriter {
+    output: File,
+    cipher: Aes256Gcm,
+    attachment_id: String,
+    plaintext_size: u64,
+    nonce_prefix: [u8; 8],
+    header: [u8; HEADER_BYTES],
+    chunks: u64,
+    next_chunk: u64,
+    received: u64,
+    buffer: Vec<u8>,
+    digest: Sha256,
+}
+
+impl EncryptedPendingWriter {
+    fn process_chunk(&mut self) -> Result<(), AppError> {
+        if self.next_chunk >= self.chunks {
+            return Err(AppError::CorruptedSync);
+        }
+        let expected = chunk_plaintext_size(self.plaintext_size, self.next_chunk, self.chunks);
+        if self.buffer.len() != expected {
+            return Err(AppError::CorruptedSync);
+        }
+        self.digest.update(&self.buffer);
+        let nonce_bytes = nonce(self.nonce_prefix, self.next_chunk)?;
+        let aad = additional_data(
+            &self.header,
+            &self.attachment_id,
+            self.next_chunk,
+            self.next_chunk + 1 == self.chunks,
+        );
+        let tag = self
+            .cipher
+            .encrypt_in_place_detached(Nonce::from_slice(&nonce_bytes), &aad, &mut self.buffer)
+            .map_err(|_| AppError::Cryptography)?;
+        self.output.write_all(&self.buffer)?;
+        self.output.write_all(tag.as_slice())?;
+        self.buffer.zeroize();
+        self.buffer.clear();
+        self.next_chunk += 1;
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<String, AppError> {
+        while self.next_chunk < self.chunks {
+            let expected = chunk_plaintext_size(self.plaintext_size, self.next_chunk, self.chunks);
+            if self.buffer.len() != expected {
+                return Err(AppError::CorruptedSync);
+            }
+            self.process_chunk()?;
+        }
+        if self.received != self.plaintext_size {
+            return Err(AppError::CorruptedSync);
+        }
+        self.output.flush()?;
+        self.output.sync_all()?;
+        Ok(hex_digest(self.digest.finalize().as_slice()))
+    }
+}
+
+impl Write for EncryptedPendingWriter {
+    fn write(&mut self, mut input: &[u8]) -> std::io::Result<usize> {
+        let original = input.len();
+        while !input.is_empty() {
+            if self.next_chunk >= self.chunks {
+                return Err(std::io::Error::other("attachment exceeds declared size"));
+            }
+            let expected = chunk_plaintext_size(self.plaintext_size, self.next_chunk, self.chunks);
+            if expected == 0 {
+                self.process_chunk().map_err(std::io::Error::other)?;
+                continue;
+            }
+            let available = expected.saturating_sub(self.buffer.len());
+            let take = available.min(input.len());
+            self.buffer.extend_from_slice(&input[..take]);
+            self.received = self
+                .received
+                .checked_add(take as u64)
+                .ok_or_else(|| std::io::Error::other("attachment exceeds size limit"))?;
+            input = &input[take..];
+            if self.buffer.len() == expected {
+                self.process_chunk().map_err(std::io::Error::other)?;
+            }
+        }
+        Ok(original)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.output.flush()
+    }
+}
+
+struct PlainPendingWriter {
+    output: File,
+    plaintext_size: u64,
+    received: u64,
+    digest: Sha256,
+}
+
+impl PlainPendingWriter {
+    fn finish(mut self) -> Result<String, AppError> {
+        if self.received != self.plaintext_size {
+            return Err(AppError::CorruptedSync);
+        }
+        self.output.flush()?;
+        self.output.sync_all()?;
+        Ok(hex_digest(self.digest.finalize().as_slice()))
+    }
+}
+
+impl Write for PlainPendingWriter {
+    fn write(&mut self, input: &[u8]) -> std::io::Result<usize> {
+        self.received = self
+            .received
+            .checked_add(input.len() as u64)
+            .ok_or_else(|| std::io::Error::other("attachment exceeds size limit"))?;
+        if self.received > self.plaintext_size {
+            return Err(std::io::Error::other("attachment exceeds declared size"));
+        }
+        self.digest.update(input);
+        self.output.write_all(input)?;
+        Ok(input.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.output.flush()
+    }
 }
 
 fn decrypt_pass(
@@ -574,7 +870,7 @@ fn mime_for_filename(filename: &str) -> Result<String, AppError> {
         .extension()
         .and_then(|value| value.to_str())
         .map(str::to_ascii_lowercase)
-        .ok_or(AppError::UnsupportedFile)?;
+        .unwrap_or_default();
     let mime = match extension.as_str() {
         "txt" | "md" => "text/plain",
         "pdf" => "application/pdf",
@@ -587,14 +883,20 @@ fn mime_for_filename(filename: &str) -> Result<String, AppError> {
         "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        _ => return Err(AppError::UnsupportedFile),
+        "doc" => "application/msword",
+        "xls" => "application/vnd.ms-excel",
+        "ppt" => "application/vnd.ms-powerpoint",
+        "zip" => "application/zip",
+        "mp3" => "audio/mpeg",
+        "mp4" => "video/mp4",
+        _ => "application/octet-stream",
     };
     Ok(mime.to_owned())
 }
 
 fn copy_bounded(
     source: &mut impl Read,
-    destination: &mut impl Write,
+    destination: &mut (impl Write + ?Sized),
     maximum: u64,
 ) -> Result<u64, AppError> {
     let mut copied = 0_u64;

@@ -120,9 +120,49 @@ export interface SyncQueueStatus {
   failedCount: number;
 }
 
-export interface SyncReport {
-  processedCount: number;
-  completedCount: number;
+export interface DiscoveredRelay {
+  instanceName: string;
+  hostAddress: string;
+  port: number;
+  vaultId: string;
+  certificateSha256: string;
+}
+
+export interface PairRelayInput {
+  hostAddress: string;
+  port: number;
+  certificateSha256: string;
+  authenticationToken: string;
+  syncPassword: string;
+  expectedVaultId: string | null;
+  fingerprintConfirmed: boolean;
+}
+
+export interface SyncConnectionStatus {
+  configured: boolean;
+  unlocked: boolean;
+  requiresPassword: boolean;
+  protection: 'LOCAL_VAULT' | 'SYNC_PASSWORD' | null;
+  hostAddress: string | null;
+  port: number | null;
+  vaultId: string | null;
+  certificateSha256: string | null;
+  pendingCount: number;
+  runningCount: number;
+  retryCount: number;
+  failedCount: number;
+  serverRevision: number | null;
+  lastAttemptAtEpochMillis: number | null;
+  lastSuccessAtEpochMillis: number | null;
+}
+
+export interface SyncRunReport {
+  uploadedItems: number;
+  uploadedAttachments: number;
+  pulledChanges: number;
+  conflictCopies: number;
+  deferredItems: number;
+  deletedAttachments: number;
 }
 
 export interface AuthStatus {
@@ -144,6 +184,11 @@ export interface VaultAttachment {
 export interface BackupSummary {
   itemCount: number;
   attachmentCount: number;
+  createdAtEpochMillis: number;
+}
+
+export interface BackupInspection {
+  protection: 'ENCRYPTED' | 'PLAINTEXT';
   createdAtEpochMillis: number;
 }
 

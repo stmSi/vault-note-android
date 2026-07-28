@@ -11,6 +11,9 @@ use crate::{
     repository::{SqliteVaultRepository, VaultRepository},
     services::AppState,
     storage,
+    sync_credentials::SyncCredentialStore,
+    sync_engine::LanSyncService,
+    sync_store::SyncStore,
     vault_key::{MasterKey, PlaintextVaultStore, VaultKeyStore},
 };
 
@@ -119,16 +122,33 @@ impl RuntimeState {
         storage::harden_database_file(&self.database_path)?;
         let attachment_crypto =
             AttachmentCrypto::new(Arc::clone(&master_key), &self.app_data_directory)?;
+        let credentials = Arc::new(SyncCredentialStore::new(
+            &self.app_data_directory,
+            Some(master_key),
+        )?);
+        let sync = LanSyncService::new(
+            SyncStore::new(database.clone()),
+            credentials,
+            attachment_crypto.clone(),
+            &self.app_data_directory,
+        )?;
         let repository: Arc<dyn VaultRepository> = Arc::new(SqliteVaultRepository::new(database));
-        Ok(AppState::new(repository, attachment_crypto))
+        Ok(AppState::new(repository, attachment_crypto, sync))
     }
 
     fn open_unencrypted_services(&self) -> Result<AppState, AppError> {
         let database = Database::open_unencrypted(&self.database_path)?;
         storage::harden_database_file(&self.database_path)?;
         let attachment_storage = AttachmentCrypto::new_unencrypted(&self.app_data_directory)?;
+        let credentials = Arc::new(SyncCredentialStore::new(&self.app_data_directory, None)?);
+        let sync = LanSyncService::new(
+            SyncStore::new(database.clone()),
+            credentials,
+            attachment_storage.clone(),
+            &self.app_data_directory,
+        )?;
         let repository: Arc<dyn VaultRepository> = Arc::new(SqliteVaultRepository::new(database));
-        Ok(AppState::new(repository, attachment_storage))
+        Ok(AppState::new(repository, attachment_storage, sync))
     }
 
     fn configured_mode(&self) -> Result<VaultEncryptionMode, AppError> {

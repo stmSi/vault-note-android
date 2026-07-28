@@ -11,7 +11,7 @@ use crate::{
     models::{
         AgendaEntry, AttachmentRecord, DatedEntry, DatedEntryAlert, DatedEntryDraft,
         PortableAttachment, PortableDatedEntry, PortableItem, PortableItemTag, PortableSnapshot,
-        PortableTag, ScheduledAlert, SearchResult, SyncQueueStatus, SyncReport, VaultAttachment,
+        PortableTag, ScheduledAlert, SearchResult, SyncQueueStatus, VaultAttachment,
         VaultItemSummary, VaultNote, VaultSection,
     },
 };
@@ -56,7 +56,6 @@ pub trait VaultRepository: Send + Sync {
     fn restore(&self, id: &str, now: i64) -> Result<bool, AppError>;
     fn search(&self, expression: &str, limit: usize) -> Result<Vec<SearchResult>, AppError>;
     fn sync_queue_status(&self) -> Result<SyncQueueStatus, AppError>;
-    fn process_fake_sync(&self, now: i64, limit: usize) -> Result<SyncReport, AppError>;
     fn list_attachments(&self, parent_item_id: &str) -> Result<Vec<VaultAttachment>, AppError>;
     fn add_attachment(
         &self,
@@ -616,87 +615,6 @@ impl VaultRepository for SqliteVaultRepository {
         })
     }
 
-    fn process_fake_sync(&self, now: i64, limit: usize) -> Result<SyncReport, AppError> {
-        self.database.with_connection(|connection| {
-            let transaction = connection.transaction()?;
-            let operations = {
-                let mut statement = transaction.prepare_cached(
-                    r#"
-                    SELECT operation_id, item_id, operation_type, target_revision
-                    FROM sync_operations
-                    WHERE state IN ('PENDING', 'RETRY_WAIT') AND next_attempt_at <= ?1
-                    ORDER BY created_at ASC, operation_id ASC
-                    LIMIT ?2
-                    "#,
-                )?;
-                statement
-                    .query_map(params![now, limit as i64], |row| {
-                        Ok(PendingOperation {
-                            operation_id: row.get(0)?,
-                            item_id: row.get(1)?,
-                            operation_type: row.get(2)?,
-                            target_revision: row.get(3)?,
-                        })
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?
-            };
-
-            let mut completed_count = 0;
-            for operation in &operations {
-                let lease_token = Uuid::new_v4().hyphenated().to_string();
-                ensure_single_change(transaction.execute(
-                    r#"
-                    UPDATE sync_operations
-                    SET state = 'RUNNING', attempt_count = attempt_count + 1,
-                        lease_token = ?1, lease_expires_at = ?2, updated_at = ?3,
-                        last_error_code = NULL
-                    WHERE operation_id = ?4
-                    "#,
-                    params![
-                        lease_token,
-                        now.saturating_add(60_000),
-                        now,
-                        operation.operation_id
-                    ],
-                )?)?;
-
-                let expected_deleted = operation.operation_type == "DELETE_ITEM";
-                let token = format!("fake:{}", operation.target_revision);
-                transaction.execute(
-                    r#"
-                    UPDATE vault_items
-                    SET remote_revision = ?1, last_synced_revision = ?1,
-                        server_version_token = ?2, sync_status = 'SYNCED'
-                    WHERE id = ?3 AND local_revision = ?1
-                      AND ((?4 = 1 AND deleted_at IS NOT NULL)
-                           OR (?4 = 0 AND deleted_at IS NULL))
-                    "#,
-                    params![
-                        operation.target_revision,
-                        token,
-                        operation.item_id,
-                        i64::from(expected_deleted)
-                    ],
-                )?;
-                ensure_single_change(transaction.execute(
-                    r#"
-                    UPDATE sync_operations
-                    SET state = 'COMPLETED', lease_token = NULL, lease_expires_at = NULL,
-                        updated_at = ?1, last_error_code = NULL
-                    WHERE operation_id = ?2
-                    "#,
-                    params![now, operation.operation_id],
-                )?)?;
-                completed_count += 1;
-            }
-            transaction.commit()?;
-            Ok(SyncReport {
-                processed_count: operations.len(),
-                completed_count,
-            })
-        })
-    }
-
     fn list_attachments(&self, parent_item_id: &str) -> Result<Vec<VaultAttachment>, AppError> {
         self.database.with_connection(|connection| {
             let mut statement = connection.prepare_cached(
@@ -782,15 +700,20 @@ impl VaultRepository for SqliteVaultRepository {
     fn delete_attachment(&self, id: &str, now: i64) -> Result<AttachmentRecord, AppError> {
         self.database.with_connection(|connection| {
             let transaction = connection.transaction()?;
-            let record = transaction
+            let (record, remote_path) = transaction
                 .query_row(
                     r#"
                     SELECT id, parent_item_id, display_name, mime_type, file_size, sha256,
-                           created_at, encrypted_relative_path
+                           created_at, encrypted_relative_path, remote_path
                     FROM attachments WHERE id = ?1 LIMIT 1
                     "#,
                     [id],
-                    map_attachment_record,
+                    |row| {
+                        Ok((
+                            map_attachment_record(row)?,
+                            row.get::<_, Option<String>>(8)?,
+                        ))
+                    },
                 )
                 .optional()?
                 .ok_or(AppError::NotFound)?;
@@ -801,6 +724,25 @@ impl VaultRepository for SqliteVaultRepository {
             ensure_single_change(
                 transaction.execute("DELETE FROM attachments WHERE id = ?1", [id])?,
             )?;
+            if let Some(remote_path) =
+                remote_path.filter(|path| path == &format!("/v1/attachments/{id}"))
+            {
+                transaction.execute(
+                    r#"
+                    INSERT INTO attachment_tombstones (
+                        attachment_id, operation_id, remote_path, created_at,
+                        attempt_count, next_attempt_at, last_error_code
+                    ) VALUES (?1, ?2, ?3, ?4, 0, ?4, NULL)
+                    ON CONFLICT(attachment_id) DO NOTHING
+                    "#,
+                    params![
+                        id,
+                        format!("delete_attachment_{}", Uuid::new_v4().simple()),
+                        remote_path,
+                        now,
+                    ],
+                )?;
+            }
             advance_parent_revision(
                 &transaction,
                 &record.attachment.parent_item_id,
@@ -826,7 +768,7 @@ impl VaultRepository for SqliteVaultRepository {
                 let mut statement = connection.prepare_cached(
                     r#"
                     SELECT id, type, color, title, body, ocr_text, is_pinned, is_favorite,
-                           is_archived, created_at, updated_at, local_revision, deleted_at,
+                           is_archived, sort_position, created_at, updated_at, local_revision, deleted_at,
                            conflict_origin_id, body_document_json
                     FROM vault_items ORDER BY id
                     "#,
@@ -843,12 +785,13 @@ impl VaultRepository for SqliteVaultRepository {
                             is_pinned: row.get::<_, i64>(6)? != 0,
                             is_favorite: row.get::<_, i64>(7)? != 0,
                             is_archived: row.get::<_, i64>(8)? != 0,
-                            created_at: row.get(9)?,
-                            updated_at: row.get(10)?,
-                            local_revision: row.get(11)?,
-                            deleted_at: row.get(12)?,
-                            conflict_origin_id: row.get(13)?,
-                            body_document_json: row.get(14)?,
+                            sort_position: row.get(9)?,
+                            created_at: row.get(10)?,
+                            updated_at: row.get(11)?,
+                            local_revision: row.get(12)?,
+                            deleted_at: row.get(13)?,
+                            conflict_origin_id: row.get(14)?,
+                            body_document_json: row.get(15)?,
                         })
                     })?
                     .collect::<Result<Vec<_>, _>>()?
@@ -935,9 +878,9 @@ impl VaultRepository for SqliteVaultRepository {
                         id, type, color, title, body, ocr_text, is_pinned, is_favorite,
                         is_archived, created_at, updated_at, local_revision, remote_revision,
                         last_synced_revision, server_version_token, sync_status, deleted_at,
-                        conflict_origin_id, body_document_json
+                        conflict_origin_id, body_document_json, sort_position
                     ) VALUES (?1, 'NOTE', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
-                              NULL, NULL, NULL, 'PENDING', ?12, ?13, ?14)
+                              NULL, NULL, NULL, 'PENDING', ?12, ?13, ?14, ?15)
                     "#,
                     params![
                         item.id,
@@ -954,6 +897,7 @@ impl VaultRepository for SqliteVaultRepository {
                         item.deleted_at,
                         item.conflict_origin_id,
                         item.body_document_json,
+                        item.sort_position,
                     ],
                 )?;
             }
@@ -1089,14 +1033,6 @@ struct CurrentItem {
     updated_at: i64,
     local_revision: i64,
     deleted_at: Option<i64>,
-}
-
-#[derive(Debug)]
-struct PendingOperation {
-    operation_id: String,
-    item_id: String,
-    operation_type: String,
-    target_revision: i64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1783,24 +1719,6 @@ mod tests {
     }
 
     #[test]
-    fn fake_sync_completes_persistent_operation_and_marks_item_synced() {
-        let repository = repository();
-        let id = repository
-            .create_note("Queued", "Locally durable", 4_000)
-            .expect("create should work");
-        let report = repository
-            .process_fake_sync(4_001, 100)
-            .expect("sync should work");
-        let note = repository.get_note(&id).expect("note should exist");
-        let queue = repository.sync_queue_status().expect("queue should load");
-        assert_eq!(report.processed_count, 1);
-        assert_eq!(report.completed_count, 1);
-        assert_eq!(note.sync_status, "SYNCED");
-        assert_eq!(note.last_synced_revision, Some(1));
-        assert_eq!(queue.pending_count, 0);
-    }
-
-    #[test]
     fn portable_restore_commits_metadata_fts_and_sync_intent_atomically() {
         let repository = repository();
         let item_id = "00000000-0000-0000-0000-000000000101".to_owned();
@@ -1817,6 +1735,7 @@ mod tests {
                 is_pinned: true,
                 is_favorite: false,
                 is_archived: false,
+                sort_position: 7,
                 created_at: 5_000,
                 updated_at: 5_001,
                 local_revision: 3,

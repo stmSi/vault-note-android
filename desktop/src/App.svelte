@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { getCurrentWebview } from '@tauri-apps/api/webview';
+  import type { UnlistenFn } from '@tauri-apps/api/event';
   import { onDestroy, onMount } from 'svelte';
   import AgendaPanel from './AgendaPanel.svelte';
   import DateDialog from './DateDialog.svelte';
@@ -10,13 +12,18 @@
     createNote,
     deleteDatedEntry,
     deleteAttachment,
+    disconnectRelay,
+    discoverRelays,
     exportCalendarEntry,
     exportAttachment,
     exportBackup,
+    exportPlaintextBackup,
     getNote,
     getAuthStatus,
+    getSyncConnectionStatus,
     getSyncQueueStatus,
     importAttachment,
+    importAttachmentPath,
     initializeUnencryptedVault,
     initializeVault,
     listAgenda,
@@ -25,9 +32,12 @@
     listAttachments,
     lock,
     moveToTrash,
+    pairRelay,
     restore,
     restoreBackup,
-    runFakeSync,
+    restoreBackupPath,
+    restorePlaintextBackup,
+    runSync,
     saveDatedEntry,
     saveStructuredNote,
     searchNotes,
@@ -36,6 +46,8 @@
     setPinned,
     snoozeDatedEntry,
     unlock,
+    unlockSync,
+    inspectBackupPath,
   } from './lib/api';
   import { DebouncedAutosaver, type AutosaveStatus } from './lib/autosave';
   import { derivePlainText, documentFromPlainText } from './lib/noteBody';
@@ -44,10 +56,13 @@
     AgendaEntry,
     AppCommandError,
     AuthStatus,
+    BackupInspection,
     DatedEntry,
     DatedEntryDraft,
+    DiscoveredRelay,
     NoteBodyDocument,
     SyncQueueStatus,
+    SyncConnectionStatus,
     VaultItemSummary,
     VaultAttachment,
     VaultNote,
@@ -70,6 +85,8 @@
     | { kind: 'empty' }
     | { kind: 'content'; items: DisplayItem[] }
     | { kind: 'error'; error: AppCommandError };
+
+  type ThemePreference = 'system' | 'light' | 'dark' | 'aurora';
 
   const emptyQueue: SyncQueueStatus = {
     pendingCount: 0,
@@ -112,12 +129,68 @@
   let backupPassword = '';
   let backupBusy = false;
   let backupMessage = '';
+  let droppedBackup: { path: string; inspection: BackupInspection } | null = null;
+  let droppedBackupPassword = '';
+  let droppedPlaintextConfirmed = false;
+  let dropActive = false;
+  let dropBusy = false;
+  let feedbackMessage = '';
+  let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
+  let dragDropUnlisten: UnlistenFn | undefined;
+  let componentDestroyed = false;
+  let searchInput: HTMLInputElement;
+  let titleInput: HTMLInputElement;
+  let themePreference: ThemePreference = 'system';
+  let syncConnection: SyncConnectionStatus | null = null;
+  let discoveredRelays: DiscoveredRelay[] = [];
+  let relayHostAddress = '';
+  let relayPort = 8787;
+  let relayVaultId = '';
+  let relayFingerprint = '';
+  let relayToken = '';
+  let relayPassword = '';
+  let relayFingerprintConfirmed = false;
+  let relayBusy = false;
+  let syncMessage = '';
+  let automaticSyncTimer: ReturnType<typeof setInterval> | undefined;
 
   onMount(() => {
+    themePreference = storedThemePreference();
+    applyTheme(themePreference);
     void initializeAuthentication();
+    window.addEventListener('keydown', handleGlobalShortcut);
+    void getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const payload = event.payload;
+        if (payload.type === 'enter' || payload.type === 'over') {
+          dropActive = authentication?.unlocked === true;
+        } else if (payload.type === 'leave') {
+          dropActive = false;
+        } else {
+          dropActive = false;
+          if (authentication?.unlocked) {
+            void handleDroppedPaths(payload.paths);
+          }
+        }
+      })
+      .then((unlisten) => {
+        if (componentDestroyed) {
+          unlisten();
+        } else {
+          dragDropUnlisten = unlisten;
+        }
+      })
+      .catch((error: unknown) => {
+        actionError = commandError(error);
+      });
     reminderRefreshTimer = setInterval(() => {
       void refreshReminderSchedule(false);
     }, 60_000);
+    automaticSyncTimer = setInterval(() => {
+      if (authentication?.unlocked && syncConnection?.unlocked && !syncRunning) {
+        void synchronize(false);
+      }
+    }, 45_000);
   });
 
   async function initializeAuthentication(): Promise<void> {
@@ -127,6 +200,7 @@
         await Promise.all([
           loadVisibleItems(),
           refreshQueueStatus(),
+          refreshSyncConnection(),
           refreshReminderSchedule(false),
         ]);
       }
@@ -144,6 +218,7 @@
       await Promise.all([
         loadVisibleItems(),
         refreshQueueStatus(),
+        refreshSyncConnection(),
         refreshReminderSchedule(false),
       ]);
     } catch (error) {
@@ -168,6 +243,9 @@
       metadataPanel = null;
       listState = { kind: 'loading' };
       securityPanelOpen = false;
+      syncConnection = null;
+      relayPassword = '';
+      relayToken = '';
     } catch (error) {
       actionError = commandError(error);
     }
@@ -190,6 +268,7 @@
       await Promise.all([
         loadVisibleItems(),
         refreshQueueStatus(),
+        refreshSyncConnection(),
         refreshReminderSchedule(false),
       ]);
     } catch (error) {
@@ -214,6 +293,7 @@
       await Promise.all([
         loadVisibleItems(),
         refreshQueueStatus(),
+        refreshSyncConnection(),
         refreshReminderSchedule(false),
       ]);
     } catch (error) {
@@ -236,6 +316,7 @@
       const result = await exportBackup(backupPassword);
       if (result !== null) {
         backupMessage = `Encrypted backup created: ${result.itemCount} notes and ${result.attachmentCount} files.`;
+        showFeedback('Encrypted backup exported');
       }
     } catch (error) {
       actionError = commandError(error);
@@ -252,14 +333,7 @@
     try {
       const result = await restoreBackup(backupPassword);
       if (result !== null) {
-        selected = null;
-        autosaver = null;
-        backupMessage = `Restored ${result.restoredItemCount} notes and ${result.restoredAttachmentCount} files as new local copies.`;
-        await Promise.all([
-          loadVisibleItems(),
-          refreshQueueStatus(),
-          refreshReminderSchedule(false),
-        ]);
+        await finishRestore(result);
       }
     } catch (error) {
       actionError = commandError(error);
@@ -269,12 +343,283 @@
     }
   }
 
+  async function createPlaintextBackup(): Promise<void> {
+    if (
+      !window.confirm(
+        'Export a readable backup? Anyone with this file can read every note and attachment.',
+      ) ||
+      !(await flushEditor())
+    ) {
+      return;
+    }
+    backupBusy = true;
+    backupMessage = '';
+    try {
+      const result = await exportPlaintextBackup();
+      if (result !== null) {
+        backupMessage = `Readable backup created: ${result.itemCount} notes and ${result.attachmentCount} files.`;
+        showFeedback('Readable backup exported');
+      }
+    } catch (error) {
+      actionError = commandError(error);
+    } finally {
+      backupBusy = false;
+    }
+  }
+
+  async function importPlaintextBackup(): Promise<void> {
+    if (
+      !window.confirm(
+        'Restore a readable backup? Validate that the file came from a source you trust.',
+      ) ||
+      !(await flushEditor())
+    ) {
+      return;
+    }
+    backupBusy = true;
+    backupMessage = '';
+    try {
+      const result = await restorePlaintextBackup();
+      if (result !== null) {
+        await finishRestore(result);
+      }
+    } catch (error) {
+      actionError = commandError(error);
+    } finally {
+      backupBusy = false;
+    }
+  }
+
+  function storedThemePreference(): ThemePreference {
+    const stored = window.localStorage.getItem('vaultnote.theme');
+    return stored === 'light' || stored === 'dark' || stored === 'aurora'
+      ? stored
+      : 'system';
+  }
+
+  function applyTheme(theme: ThemePreference): void {
+    themePreference = theme;
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem('vaultnote.theme', theme);
+  }
+
+  function showFeedback(message: string): void {
+    feedbackMessage = message;
+    if (feedbackTimer !== undefined) {
+      clearTimeout(feedbackTimer);
+    }
+    feedbackTimer = setTimeout(() => {
+      feedbackMessage = '';
+      feedbackTimer = undefined;
+    }, 2_800);
+  }
+
+  function handleGlobalShortcut(event: KeyboardEvent): void {
+    if (!authentication?.unlocked) {
+      return;
+    }
+    const modifier = event.ctrlKey || event.metaKey;
+    if (modifier && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      searchInput?.focus();
+      searchInput?.select();
+      return;
+    }
+    if (modifier && event.key.toLowerCase() === 'n') {
+      event.preventDefault();
+      void newNote();
+      return;
+    }
+    if (modifier && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      if (event.shiftKey) {
+        void synchronize(true);
+      } else {
+        void flushEditor();
+      }
+      return;
+    }
+    if (event.key === 'Escape') {
+      if (droppedBackup !== null) {
+        closeDroppedBackup();
+      } else if (agendaOpen) {
+        agendaOpen = false;
+      } else if (metadataPanel !== null) {
+        metadataPanel = null;
+      } else if (securityPanelOpen) {
+        securityPanelOpen = false;
+      }
+    }
+  }
+
+  function filenameFromPath(path: string): string {
+    const candidate = path.split(/[\\/]/).pop()?.trim() ?? '';
+    return candidate || 'Dropped file';
+  }
+
+  function titleFromPath(path: string): string {
+    const filename = filenameFromPath(path);
+    const withoutExtension = filename.replace(/\.[^.]{1,16}$/u, '').trim();
+    return (withoutExtension || filename).slice(0, 500);
+  }
+
+  async function handleDroppedPaths(paths: string[]): Promise<void> {
+    if (dropBusy || paths.length === 0) {
+      return;
+    }
+    const backups = paths.filter((path) => path.toLocaleLowerCase().endsWith('.vnb'));
+    if (backups.length > 0) {
+      if (paths.length !== 1) {
+        actionError = {
+          code: 'mixed_backup_drop',
+          message: 'Drop one VaultNote backup at a time, without other files.',
+          retryable: false,
+        };
+        return;
+      }
+      dropBusy = true;
+      try {
+        droppedBackup = {
+          path: backups[0],
+          inspection: await inspectBackupPath(backups[0]),
+        };
+        droppedBackupPassword = '';
+        droppedPlaintextConfirmed = false;
+      } catch (error) {
+        actionError = commandError(error);
+      } finally {
+        dropBusy = false;
+      }
+      return;
+    }
+
+    if (!(await flushEditor())) {
+      return;
+    }
+    dropBusy = true;
+    attachmentBusy = true;
+    actionError = null;
+    try {
+      let target = selected;
+      if (target === null || target.deletedAtEpochMillis !== null) {
+        searchQuery = '';
+        section = 'active';
+        const created = await createNote();
+        const titled = await saveStructuredNote(
+          created.id,
+          titleFromPath(paths[0]),
+          created.bodyDocument ?? documentFromPlainText(created.body),
+        );
+        installNote(titled);
+        target = titled;
+      }
+
+      let importedCount = 0;
+      let lastFailure: AppCommandError | null = null;
+      for (const path of paths) {
+        try {
+          await importAttachmentPath(target.id, path);
+          importedCount += 1;
+        } catch (error) {
+          lastFailure = commandError(error);
+        }
+      }
+
+      installNote(await getNote(target.id));
+      await Promise.all([
+        loadNoteAttachments(target.id),
+        loadVisibleItems(false),
+        refreshQueueStatus(),
+      ]);
+      if (importedCount > 0) {
+        showFeedback(
+          `${importedCount} ${importedCount === 1 ? 'file' : 'files'} added to ${
+            target.title || 'Untitled note'
+          }`,
+        );
+      }
+      if (lastFailure !== null) {
+        actionError = {
+          ...lastFailure,
+          message:
+            importedCount > 0
+              ? `${importedCount} file${importedCount === 1 ? '' : 's'} imported, but another file could not be added. ${lastFailure.message}`
+              : lastFailure.message,
+        };
+      }
+    } catch (error) {
+      actionError = commandError(error);
+    } finally {
+      attachmentBusy = false;
+      dropBusy = false;
+    }
+  }
+
+  function closeDroppedBackup(): void {
+    droppedBackup = null;
+    droppedBackupPassword = '';
+    droppedPlaintextConfirmed = false;
+  }
+
+  async function restoreDroppedBackup(): Promise<void> {
+    if (droppedBackup === null || !(await flushEditor())) {
+      return;
+    }
+    const encrypted = droppedBackup.inspection.protection === 'ENCRYPTED';
+    if (encrypted && droppedBackupPassword.length < 12) {
+      return;
+    }
+    if (!encrypted && !droppedPlaintextConfirmed) {
+      return;
+    }
+    backupBusy = true;
+    actionError = null;
+    try {
+      const result = await restoreBackupPath(
+        droppedBackup.path,
+        encrypted ? droppedBackupPassword : null,
+        droppedPlaintextConfirmed,
+      );
+      closeDroppedBackup();
+      await finishRestore(result);
+    } catch (error) {
+      droppedBackupPassword = '';
+      actionError = commandError(error);
+    } finally {
+      backupBusy = false;
+    }
+  }
+
+  async function finishRestore(result: {
+    restoredItemCount: number;
+    restoredAttachmentCount: number;
+  }): Promise<void> {
+    selected = null;
+    autosaver = null;
+    backupMessage = `Restored ${result.restoredItemCount} notes and ${result.restoredAttachmentCount} files as new local copies.`;
+    showFeedback('Backup restored and validated');
+    await Promise.all([
+      loadVisibleItems(),
+      refreshQueueStatus(),
+      refreshReminderSchedule(false),
+    ]);
+  }
+
   onDestroy(() => {
+    componentDestroyed = true;
+    dragDropUnlisten?.();
+    window.removeEventListener('keydown', handleGlobalShortcut);
     if (searchTimer !== undefined) {
       clearTimeout(searchTimer);
     }
     if (reminderRefreshTimer !== undefined) {
       clearInterval(reminderRefreshTimer);
+    }
+    if (automaticSyncTimer !== undefined) {
+      clearInterval(automaticSyncTimer);
+    }
+    if (feedbackTimer !== undefined) {
+      clearTimeout(feedbackTimer);
     }
     void autosaver?.flush();
   });
@@ -308,6 +653,112 @@
       queueStatus = await getSyncQueueStatus();
     } catch (error) {
       actionError = commandError(error);
+    }
+  }
+
+  async function refreshSyncConnection(): Promise<void> {
+    try {
+      syncConnection = await getSyncConnectionStatus();
+      if (syncConnection.configured) {
+        relayHostAddress ||= syncConnection.hostAddress ?? '';
+        relayPort = syncConnection.port ?? relayPort;
+        relayVaultId ||= syncConnection.vaultId ?? '';
+        relayFingerprint ||= syncConnection.certificateSha256 ?? '';
+      }
+    } catch (error) {
+      actionError = commandError(error);
+    }
+  }
+
+  async function findRelays(): Promise<void> {
+    relayBusy = true;
+    syncMessage = 'Looking for VaultNote relays on this network…';
+    try {
+      discoveredRelays = await discoverRelays();
+      syncMessage =
+        discoveredRelays.length === 0
+          ? 'No relay was discovered. You can enter its address manually.'
+          : `${discoveredRelays.length} relay${discoveredRelays.length === 1 ? '' : 's'} found.`;
+      if (discoveredRelays.length === 1) {
+        selectRelay(discoveredRelays[0]);
+      }
+    } catch (error) {
+      actionError = commandError(error);
+      syncMessage = '';
+    } finally {
+      relayBusy = false;
+    }
+  }
+
+  function selectRelay(relay: DiscoveredRelay): void {
+    relayHostAddress = relay.hostAddress;
+    relayPort = relay.port;
+    relayVaultId = relay.vaultId;
+    relayFingerprint = relay.certificateSha256;
+    relayFingerprintConfirmed = false;
+  }
+
+  async function connectRelay(): Promise<void> {
+    relayBusy = true;
+    actionError = null;
+    syncMessage = 'Verifying the relay and encrypted vault key…';
+    try {
+      syncConnection = await pairRelay({
+        hostAddress: relayHostAddress.trim(),
+        port: relayPort,
+        certificateSha256: relayFingerprint.trim().toLowerCase(),
+        authenticationToken: relayToken,
+        syncPassword: relayPassword,
+        expectedVaultId: relayVaultId.trim() || null,
+        fingerprintConfirmed: relayFingerprintConfirmed,
+      });
+      relayToken = '';
+      relayPassword = '';
+      syncMessage = 'Relay paired. Changes remain end-to-end encrypted through the relay.';
+      await synchronize(true);
+    } catch (error) {
+      relayToken = '';
+      relayPassword = '';
+      actionError = commandError(error);
+      syncMessage = '';
+    } finally {
+      relayBusy = false;
+    }
+  }
+
+  async function unlockRelayConnection(): Promise<void> {
+    relayBusy = true;
+    actionError = null;
+    try {
+      syncConnection = await unlockSync(relayPassword);
+      relayPassword = '';
+      syncMessage = 'LAN sync unlocked for this session.';
+      await synchronize(true);
+    } catch (error) {
+      relayPassword = '';
+      actionError = commandError(error);
+    } finally {
+      relayBusy = false;
+    }
+  }
+
+  async function forgetRelay(): Promise<void> {
+    if (!window.confirm('Disconnect this relay? Local notes and files will remain on this computer.')) {
+      return;
+    }
+    relayBusy = true;
+    try {
+      syncConnection = await disconnectRelay();
+      discoveredRelays = [];
+      relayToken = '';
+      relayPassword = '';
+      relayFingerprintConfirmed = false;
+      syncMessage = 'Relay disconnected. Local content was not removed.';
+      await Promise.all([loadVisibleItems(false), refreshQueueStatus()]);
+    } catch (error) {
+      actionError = commandError(error);
+    } finally {
+      relayBusy = false;
     }
   }
 
@@ -393,6 +844,7 @@
           refreshQueueStatus(),
         ]);
         installNote(await getNote(selected.id));
+        showFeedback('File added securely');
       }
     } catch (error) {
       actionError = commandError(error);
@@ -466,6 +918,8 @@
         refreshQueueStatus(),
         refreshReminderSchedule(false),
       ]);
+      requestAnimationFrame(() => titleInput?.focus());
+      showFeedback('New note ready');
     } catch (error) {
       actionError = commandError(error);
     }
@@ -536,20 +990,39 @@
     }
   }
 
-  async function synchronize(): Promise<void> {
+  async function synchronize(interactive = true): Promise<void> {
+    if (!syncConnection?.unlocked) {
+      if (interactive) {
+        securityPanelOpen = true;
+        syncMessage = syncConnection?.requiresPassword
+          ? 'Enter the sync password to continue.'
+          : 'Pair a LAN relay to sync with Android.';
+      }
+      return;
+    }
     if (!(await flushEditor())) {
       return;
     }
     syncRunning = true;
     actionError = null;
     try {
-      await runFakeSync();
+      const report = await runSync();
+      syncMessage =
+        `Sync complete: ${report.uploadedItems} items sent, ${report.pulledChanges} changes received` +
+        (report.conflictCopies > 0 ? `, ${report.conflictCopies} conflict copies preserved.` : '.');
+      showFeedback('Vault synchronized');
       if (selected !== null) {
         installNote(await getNote(selected.id));
       }
-      await Promise.all([loadVisibleItems(false), refreshQueueStatus()]);
+      await Promise.all([
+        loadVisibleItems(false),
+        refreshQueueStatus(),
+        refreshSyncConnection(),
+      ]);
     } catch (error) {
-      actionError = commandError(error);
+      if (interactive) {
+        actionError = commandError(error);
+      }
     } finally {
       syncRunning = false;
     }
@@ -730,13 +1203,18 @@
       <span class="queue-label">
         {queueStatus.pendingCount + queueStatus.retryCount} queued
       </span>
-      <button class="secondary-button" disabled={syncRunning} onclick={synchronize}>
-        {syncRunning ? 'Syncing…' : 'Run fake sync'}
+      <button
+        class="secondary-button"
+        title="Sync now (Ctrl+Shift+S)"
+        disabled={syncRunning || !authentication?.unlocked}
+        onclick={() => void synchronize(true)}
+      >
+        {syncRunning ? 'Syncing…' : syncConnection?.configured ? 'Sync now' : 'LAN sync'}
       </button>
       {#if authentication?.unlocked}
         <button class="secondary-button" onclick={showAgenda}>Calendar</button>
         <button class="secondary-button" onclick={() => (securityPanelOpen = !securityPanelOpen)}>
-          Security
+          Settings
         </button>
         {#if authentication.encryptionMode === 'PASSWORD'}
           <button class="secondary-button" onclick={lockVault}>Lock</button>
@@ -747,20 +1225,205 @@
 
   {#if securityPanelOpen && authentication?.unlocked}
     <section class="security-panel" aria-label="Vault security">
-      <div class="security-group">
+      <div class="security-group appearance-controls">
+        <div>
+          <strong>Appearance</strong>
+          <p>Choose a calm workspace or follow your system.</p>
+        </div>
+        <label>
+          <span>Theme</span>
+          <select
+            value={themePreference}
+            onchange={(event) => applyTheme(event.currentTarget.value as ThemePreference)}
+          >
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+            <option value="aurora">Aurora gradient</option>
+          </select>
+        </label>
+      </div>
+      <div class="security-group vault-protection">
         {#if authentication.encryptionMode === 'PASSWORD'}
-          <p>Your password derives the SQLCipher and attachment key in Rust. It is required after every launch and cannot be recovered.</p>
+          <p><strong>Local encryption is on.</strong> Your password protects the database and files and is never recoverable.</p>
         {:else}
-          <p><strong>Encryption is disabled.</strong> The SQLite database and attachments are stored as readable plaintext files.</p>
+          <p><strong>Encryption is off.</strong> Other programs with filesystem access can read this vault.</p>
         {/if}
       </div>
+      <div class="security-group relay-controls">
+        <div class="section-heading">
+          <div>
+            <strong>Android ↔ desktop LAN sync</strong>
+            <p>Relay data is encrypted before it leaves either VaultNote client.</p>
+          </div>
+          <span class:connected={syncConnection?.unlocked} class="connection-badge">
+            {syncConnection?.unlocked
+              ? 'Connected'
+              : syncConnection?.configured
+                ? 'Locked'
+                : 'Not paired'}
+          </span>
+        </div>
+
+        {#if syncConnection?.configured}
+          <div class="relay-summary">
+            <span><strong>Vault</strong> {syncConnection.vaultId}</span>
+            <span><strong>Relay</strong> {syncConnection.hostAddress}:{syncConnection.port}</span>
+            <span class="fingerprint-line">
+              <strong>Certificate</strong>
+              <code>{syncConnection.certificateSha256}</code>
+            </span>
+            {#if syncConnection.lastSuccessAtEpochMillis !== null}
+              <span><strong>Last sync</strong> {formattedDate(syncConnection.lastSuccessAtEpochMillis)}</span>
+            {/if}
+            {#if syncConnection.serverRevision !== null}
+              <span><strong>Relay revision</strong> {syncConnection.serverRevision}</span>
+            {/if}
+          </div>
+          {#if syncConnection.requiresPassword}
+            <form
+              class="inline-secret-form"
+              onsubmit={(event) => {
+                event.preventDefault();
+                void unlockRelayConnection();
+              }}
+            >
+              <label>
+                <span>Sync password</span>
+                <input
+                  type="password"
+                  minlength="8"
+                  maxlength="1024"
+                  autocomplete="current-password"
+                  bind:value={relayPassword}
+                />
+              </label>
+              <button disabled={relayBusy || relayPassword.length < 8}>
+                {relayBusy ? 'Unlocking…' : 'Unlock sync'}
+              </button>
+            </form>
+          {:else if syncConnection.unlocked}
+            <div class="relay-actions">
+              <button disabled={syncRunning} onclick={() => void synchronize(true)}>
+                {syncRunning ? 'Syncing…' : 'Sync now'}
+              </button>
+              <button class="danger-button" disabled={relayBusy} onclick={forgetRelay}>
+                Disconnect
+              </button>
+            </div>
+          {:else}
+            <p role="alert">The saved pairing could not be unlocked. Pair this relay again.</p>
+            <button class="danger-button" disabled={relayBusy} onclick={forgetRelay}>
+              Clear saved pairing
+            </button>
+          {/if}
+        {:else}
+          <div class="relay-discovery">
+            <button class="secondary-button" disabled={relayBusy} onclick={findRelays}>
+              {relayBusy ? 'Discovering…' : 'Find relays automatically'}
+            </button>
+            {#if discoveredRelays.length > 0}
+              <div class="relay-results" aria-label="Discovered relays">
+                {#each discoveredRelays as relay (`${relay.vaultId}-${relay.hostAddress}-${relay.port}`)}
+                  <button type="button" onclick={() => selectRelay(relay)}>
+                    <strong>{relay.instanceName}</strong>
+                    <span>{relay.hostAddress}:{relay.port} · {relay.vaultId}</span>
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+          <form
+            class="relay-pair-form"
+            onsubmit={(event) => {
+              event.preventDefault();
+              void connectRelay();
+            }}
+          >
+            <label>
+              <span>Relay address</span>
+              <input
+                required
+                maxlength="253"
+                autocomplete="off"
+                placeholder="192.168.1.20"
+                bind:value={relayHostAddress}
+              />
+            </label>
+            <label>
+              <span>Port</span>
+              <input required type="number" min="1" max="65535" bind:value={relayPort} />
+            </label>
+            <label>
+              <span>Vault ID</span>
+              <input maxlength="128" autocomplete="off" bind:value={relayVaultId} />
+            </label>
+            <label class="wide-field">
+              <span>Certificate SHA-256 fingerprint</span>
+              <input
+                required
+                minlength="64"
+                maxlength="64"
+                spellcheck="false"
+                autocomplete="off"
+                bind:value={relayFingerprint}
+              />
+            </label>
+            <label class="wide-field">
+              <span>Relay token</span>
+              <input
+                required
+                type="password"
+                maxlength="128"
+                autocomplete="off"
+                bind:value={relayToken}
+              />
+            </label>
+            <label class="wide-field">
+              <span>Sync password</span>
+              <input
+                required
+                type="password"
+                minlength="8"
+                maxlength="1024"
+                autocomplete="new-password"
+                bind:value={relayPassword}
+              />
+            </label>
+            <label class="fingerprint-confirm wide-field">
+              <input type="checkbox" bind:checked={relayFingerprintConfirmed} />
+              <span>I compared and trust this relay certificate fingerprint.</span>
+            </label>
+            <button
+              class="wide-field"
+              disabled={relayBusy ||
+                relayHostAddress.trim().length === 0 ||
+                relayFingerprint.trim().length !== 64 ||
+                relayToken.length === 0 ||
+                relayPassword.length < 8 ||
+                !relayFingerprintConfirmed}
+            >
+              {relayBusy ? 'Verifying…' : 'Pair securely'}
+            </button>
+          </form>
+        {/if}
+        {#if syncMessage}<p class="sync-message" role="status">{syncMessage}</p>{/if}
+      </div>
       <div class="security-group backup-controls">
-        <label>
-          <span>Backup password (12–128 characters)</span>
-          <input type="password" minlength="12" maxlength="128" autocomplete="new-password" bind:value={backupPassword} />
-        </label>
-        <button disabled={backupBusy || backupPassword.length < 12} onclick={createBackup}>Export .vnb</button>
-        <button disabled={backupBusy || backupPassword.length < 12} onclick={importBackup}>Restore .vnb</button>
+        <div class="backup-heading">
+          <strong>Portable backups</strong>
+          <span>Encrypted is recommended. You can also drop a .vnb anywhere.</span>
+        </div>
+        <div class="backup-actions">
+          <label>
+            <span>Backup password (12–128 characters)</span>
+            <input type="password" minlength="12" maxlength="128" autocomplete="new-password" bind:value={backupPassword} />
+          </label>
+          <button disabled={backupBusy || backupPassword.length < 12} onclick={createBackup}>Export encrypted</button>
+          <button disabled={backupBusy || backupPassword.length < 12} onclick={importBackup}>Restore encrypted</button>
+          <button class="warning-button" disabled={backupBusy} onclick={createPlaintextBackup}>Export readable</button>
+          <button class="warning-button" disabled={backupBusy} onclick={importPlaintextBackup}>Restore readable</button>
+        </div>
         {#if backupMessage}<p role="status">{backupMessage}</p>{/if}
       </div>
     </section>
@@ -784,7 +1447,9 @@
 
   <main class="workspace">
     <aside class="sidebar" aria-label="Vault navigation">
-      <button class="new-note-button" onclick={newNote}>+ New note</button>
+      <button class="new-note-button" title="New note (Ctrl+N)" onclick={newNote}>
+        <span>+ New note</span><kbd>Ctrl N</kbd>
+      </button>
 
       <nav class="section-tabs" aria-label="Note sections">
         <button class:active={section === 'active'} onclick={() => chooseSection('active')}>
@@ -801,8 +1466,9 @@
       <label class="search-field">
         <span class="visually-hidden">Search notes</span>
         <input
+          bind:this={searchInput}
           type="search"
-          placeholder="Search notes"
+          placeholder="Search notes  ·  Ctrl K"
           maxlength="200"
           bind:value={searchQuery}
           oninput={searchChanged}
@@ -887,7 +1553,11 @@
               </button>
             {/if}
           </div>
-          <span class:save-error={autosaveStatus === 'error'} class="save-status">
+          <span
+            class:save-error={autosaveStatus === 'error'}
+            class:saving={autosaveStatus === 'saving'}
+            class="save-status"
+          >
             {autosaveStatus === 'saved'
               ? 'Saved locally'
               : autosaveStatus === 'dirty'
@@ -900,6 +1570,7 @@
 
         <div class="editor-content">
           <input
+            bind:this={titleInput}
             class="title-input"
             aria-label="Note title"
             placeholder="Untitled note"
@@ -929,7 +1600,7 @@
             </header>
             <div class="attachment-list">
               {#if attachments.length === 0}
-                <p>No attachments yet.</p>
+                <p>Drop files anywhere to add them here.</p>
               {/if}
               {#each attachments as attachment (attachment.id)}
                 <div class="attachment-row">
@@ -985,6 +1656,100 @@
       {/if}
     </section>
   </main>
+
+  {#if dropActive}
+    <div class="drop-overlay" aria-hidden="true">
+      <div>
+        <span class="drop-glyph">↓</span>
+        <strong>Drop to add files</strong>
+        <p>A .vnb opens secure restore; other files attach to this note.</p>
+      </div>
+    </div>
+  {/if}
+
+  {#if feedbackMessage}
+    <div class="feedback-toast" role="status">
+      <span aria-hidden="true">✓</span>
+      {feedbackMessage}
+    </div>
+  {/if}
+
+  {#if droppedBackup !== null}
+    <div
+      class="dialog-backdrop backup-dialog-backdrop"
+      role="presentation"
+      onclick={(event) => {
+        if (event.currentTarget === event.target && !backupBusy) closeDroppedBackup();
+      }}
+    >
+      <div
+        class="backup-drop-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="backup-drop-title"
+      >
+        <header>
+          <div class="backup-dialog-icon" class:readable={droppedBackup.inspection.protection === 'PLAINTEXT'}>
+            {droppedBackup.inspection.protection === 'ENCRYPTED' ? '◇' : '!'}
+          </div>
+          <div>
+            <p class="eyebrow">
+              {droppedBackup.inspection.protection === 'ENCRYPTED'
+                ? 'Encrypted VaultNote backup'
+                : 'Readable VaultNote backup'}
+            </p>
+            <h2 id="backup-drop-title">Restore this vault?</h2>
+          </div>
+          <button
+            class="icon-button"
+            aria-label="Close backup restore"
+            disabled={backupBusy}
+            onclick={closeDroppedBackup}
+          >×</button>
+        </header>
+        <p class="backup-file-name" title={droppedBackup.path}>
+          {filenameFromPath(droppedBackup.path)}
+        </p>
+        <p>
+          Created {formattedDate(droppedBackup.inspection.createdAtEpochMillis)}. Restore is validated
+          in a staging area and imported as new local copies.
+        </p>
+        {#if droppedBackup.inspection.protection === 'ENCRYPTED'}
+          <label>
+            <span>Backup password</span>
+            <input
+              type="password"
+              minlength="12"
+              maxlength="128"
+              autocomplete="current-password"
+              bind:value={droppedBackupPassword}
+            />
+          </label>
+        {:else}
+          <div class="plaintext-warning">
+            <strong>This backup is not encrypted.</strong>
+            <span>Anyone with the file can read its notes and attachments.</span>
+          </div>
+          <label class="plaintext-confirm">
+            <input type="checkbox" bind:checked={droppedPlaintextConfirmed} />
+            <span>I trust this readable backup and want to restore it.</span>
+          </label>
+        {/if}
+        <footer>
+          <button class="secondary-action" disabled={backupBusy} onclick={closeDroppedBackup}>Cancel</button>
+          <button
+            disabled={backupBusy ||
+              (droppedBackup.inspection.protection === 'ENCRYPTED'
+                ? droppedBackupPassword.length < 12
+                : !droppedPlaintextConfirmed)}
+            onclick={restoreDroppedBackup}
+          >
+            {backupBusy ? 'Validating…' : 'Validate and restore'}
+          </button>
+        </footer>
+      </div>
+    </div>
+  {/if}
 
   {#if dateDialogOpen}
     <DateDialog
