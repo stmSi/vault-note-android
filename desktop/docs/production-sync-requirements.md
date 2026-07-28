@@ -1,14 +1,15 @@
-# Production synchronization inputs required
+# Production synchronization integration status
 
-The desktop client deliberately retains the persistent fake-sync implementation until the real backend contract is supplied. Inventing an endpoint or token flow would create an incompatible and potentially insecure protocol.
+The repository now includes a versioned opaque relay contract and implementation under `sync-server/`. The exact HTTPS endpoints, persistent cursor/revision rules, idempotency behavior, encrypted envelope, attachment streaming, error model, certificate pinning, and DNS-SD advertisement are documented in `sync-server/docs/wire-protocol.md`.
 
-Implementation requires these decisions and fixtures:
+The desktop client deliberately retains its persistent fake-sync implementation until its protocol-3 client is complete. It must not mark local rows synchronized merely because the fake accepted them. Integration still requires:
 
-1. The production HTTPS base URL, supported environments, minimum TLS policy, and whether certificate pinning is required.
-2. The authentication flow: provider, authorization/token endpoints, client registration, redirect URI, scopes, refresh/rotation behavior, logout/revocation, and server clock-skew rules.
-3. Exact request/response schemas for item upsert, tombstone delete, incremental pull, attachment upload/delete/download, and remote acknowledgements.
-4. Pagination/cursor rules, idempotency keys, maximum payload sizes, attachment chunking, content checksums, and retryable versus permanent HTTP/application errors.
-5. Conflict semantics for local revision, remote revision, version token, deleted records, attachment changes, and retention of conflict copies.
-6. Compatibility fixtures or a staging server covering first sync, offline edits, concurrent edits, token expiry, retries, tombstones, replay, and corrupted attachment transfer.
+1. A locked-vault state that releases neither the relay token nor derived content keys.
+2. Protocol-3 PBKDF2/HKDF and AES-256-GCM envelope code with shared compatibility fixtures.
+3. Secure first pairing and retained vault-ID/certificate-pin validation.
+4. DNS-SD discovery for already paired LAN or hotspot relays plus manual-address fallback.
+5. Streamed, resumable attachment download and restartable upload without plaintext staging.
+6. Transactional application of incremental pages and durable conflict copies.
+7. End-to-end tests against the real relay for first sync, offline edits, concurrent edits, token rotation, retries, tombstones, replay, corruption, and process restart.
 
-Once supplied, tokens and HTTP logic must remain in Rust. Refresh tokens should be encrypted under a vault-derived subkey and remain unavailable while the vault is locked; command responses must expose only non-sensitive sync status, and the existing SQLite operation table should remain the durable source of pending work.
+Tokens and HTTP logic must remain in Rust. The relay token should be encrypted under a vault-derived subkey and remain unavailable while the vault is locked; command responses must expose only non-sensitive sync status, and the existing SQLite operation table remains the durable source of pending work.

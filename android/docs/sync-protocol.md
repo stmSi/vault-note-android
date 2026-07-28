@@ -4,6 +4,8 @@
 
 This document defines the client-facing protocol boundary implemented in Phase 5. The Android app currently connects it to an in-memory fake backend; that fake is for deterministic development and is not a remote backup. A production service or future PC client must implement the same revision, idempotency, attachment-ordering, pagination, and error rules.
 
+The repository now also contains a production-oriented opaque protocol-3 relay under `sync-server/`, including HTTPS, persistent revisions, encrypted-envelope storage, attachment transfer, and LAN discovery. Android is not wired to protocol 3 yet: it still uses this protocol-2 fake, and its current Keystore attachment envelope remains device-bound. Cross-device synchronization must not be presented as active until the Android client implements the protocol-3 envelope and pairing contract in `sync-server/docs/wire-protocol.md`.
+
 Protocol implementations negotiate an integer protocol version. Version `2` is described here. Version `2` adds the signed 64-bit `sortPosition` field; a version-1 item is imported with a deterministic position derived from its existing order. Unknown required fields or a higher incompatible protocol version must fail as `unsupported_protocol`; clients must not guess at semantics.
 
 ## Authentication
