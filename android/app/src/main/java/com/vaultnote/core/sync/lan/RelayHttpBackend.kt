@@ -47,6 +47,7 @@ import javax.net.ssl.SSLPeerUnverifiedException
 import javax.net.ssl.X509TrustManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -61,6 +62,8 @@ import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import org.json.JSONObject
+import org.json.JSONException
 
 data class ProvisionalRelayAccess(
     val hostAddress: String,
@@ -81,6 +84,19 @@ sealed interface RelayKeyCheckResult {
     data class Failure(val code: RemoteErrorCode) : RelayKeyCheckResult
 }
 
+internal sealed interface NearbyPairingStartResult {
+    data class Started(val session: NearbyPairingSession) : NearbyPairingStartResult
+    data object Unsupported : NearbyPairingStartResult
+    data class Failure(val code: RemoteErrorCode) : NearbyPairingStartResult
+}
+
+internal sealed interface NearbyPairingCompletionResult {
+    data class Approved(val payload: NearbyPairingPayload) : NearbyPairingCompletionResult
+    data object Rejected : NearbyPairingCompletionResult
+    data object Expired : NearbyPairingCompletionResult
+    data class Failure(val code: RemoteErrorCode) : NearbyPairingCompletionResult
+}
+
 /**
  * Protocol-3 HTTPS backend. It pins the exact relay certificate before sending credentials,
  * refuses redirects, streams files, and retries a failed stored address once after authenticated
@@ -98,6 +114,7 @@ class RelayHttpBackend(
     private val transferRoot = File(applicationContext.filesDir, "sync-transfers")
     private val clients = ConcurrentHashMap<String, OkHttpClient>()
     private val transferMutex = Mutex()
+    private val nearbyPairingCrypto = NearbyPairingCrypto()
 
     override suspend fun authenticationState(): AuthenticationState =
         when (val result = credentialStore.load()) {
@@ -149,6 +166,157 @@ class RelayHttpBackend(
                 RelayProbeResult.Failure(RemoteErrorCode.INVALID_REQUEST)
             }
         }
+
+    internal suspend fun beginNearbyPairing(
+        candidate: LanRelayCandidate,
+        deviceName: String,
+    ): NearbyPairingStartResult = withContext(dispatchers.io) {
+        val initiator = try {
+            nearbyPairingCrypto.createInitiator()
+        } catch (_: GeneralSecurityException) {
+            return@withContext NearbyPairingStartResult.Failure(RemoteErrorCode.INVALID_REQUEST)
+        }
+        try {
+            val body = JSONObject()
+                .put("version", NearbyPairingCrypto.PAIRING_VERSION)
+                .put("deviceName", deviceName.take(64))
+                .put(
+                    "clientPublicKey",
+                    nearbyPairingCrypto.encodeBase64Url(initiator.clientPublicKey),
+                )
+                .toString()
+                .jsonBody()
+            val response = execute(
+                candidate.hostAddress,
+                candidate.port,
+                candidate.certificateSha256,
+                publicRequest(
+                    candidate.hostAddress,
+                    candidate.port,
+                    NEARBY_PAIRING_PATH,
+                    "POST",
+                    body,
+                ),
+            )
+            response.use {
+                if (it.code == 404 || it.code == 405) {
+                    return@withContext NearbyPairingStartResult.Unsupported
+                }
+                if (!it.isSuccessful) {
+                    return@withContext NearbyPairingStartResult.Failure(mapStatus(it.code))
+                }
+                val json = JSONObject(it.readBounded(MAX_PAIRING_RESPONSE_BYTES))
+                if (
+                    json.length() != 6 ||
+                    json.getInt("version") != NearbyPairingCrypto.PAIRING_VERSION
+                ) {
+                    return@withContext NearbyPairingStartResult.Failure(
+                        RemoteErrorCode.INVALID_REQUEST,
+                    )
+                }
+                val session = nearbyPairingCrypto.completeHandshake(
+                    initiator = initiator,
+                    candidate = candidate,
+                    requestId = json.getString("requestId"),
+                    serverPublicKeyBase64Url = json.getString("serverPublicKey"),
+                    expiresAtEpochMillis = json.getLong("expiresAtEpochMillis"),
+                    responseVaultId = json.getString("vaultId"),
+                    responseCertificateSha256 = json.getString("certificateSha256"),
+                )
+                NearbyPairingStartResult.Started(session)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: IOException) {
+            NearbyPairingStartResult.Failure(mapIo(failure))
+        } catch (_: GeneralSecurityException) {
+            NearbyPairingStartResult.Failure(RemoteErrorCode.INVALID_REQUEST)
+        } catch (_: JSONException) {
+            NearbyPairingStartResult.Failure(RemoteErrorCode.INVALID_REQUEST)
+        } catch (_: IllegalArgumentException) {
+            NearbyPairingStartResult.Failure(RemoteErrorCode.INVALID_REQUEST)
+        } finally {
+            initiator.clientPublicKey.fill(0)
+        }
+    }
+
+    internal suspend fun awaitNearbyPairing(
+        session: NearbyPairingSession,
+    ): NearbyPairingCompletionResult = withContext(dispatchers.io) {
+        val path = "$NEARBY_PAIRING_PATH/${session.requestId}"
+        while (System.currentTimeMillis() < session.expiresAtEpochMillis) {
+            currentCoroutineContext().ensureActive()
+            delay(PAIRING_POLL_MILLIS)
+            try {
+                val response = execute(
+                    session.hostAddress,
+                    session.port,
+                    session.certificateSha256,
+                    publicRequest(session.hostAddress, session.port, path),
+                )
+                response.use {
+                    if (it.code == 410 || it.code == 404) {
+                        return@withContext NearbyPairingCompletionResult.Expired
+                    }
+                    if (!it.isSuccessful) {
+                        val code = mapStatus(it.code)
+                        if (code == RemoteErrorCode.SERVER_UNAVAILABLE) {
+                            return@withContext NearbyPairingCompletionResult.Failure(code)
+                        }
+                        return@withContext NearbyPairingCompletionResult.Failure(code)
+                    }
+                    val json = JSONObject(it.readBounded(MAX_PAIRING_RESPONSE_BYTES))
+                    if (
+                        json.getInt("version") != NearbyPairingCrypto.PAIRING_VERSION ||
+                        json.length() != 4
+                    ) {
+                        return@withContext NearbyPairingCompletionResult.Failure(
+                            RemoteErrorCode.INVALID_REQUEST,
+                        )
+                    }
+                    when (json.getString("status")) {
+                        "PENDING" -> Unit
+                        "REJECTED" -> {
+                            return@withContext NearbyPairingCompletionResult.Rejected
+                        }
+                        "APPROVED" -> {
+                            val payload = nearbyPairingCrypto.decryptApprovedPayload(
+                                session,
+                                json.getString("nonce"),
+                                json.getString("encryptedPayload"),
+                            )
+                            return@withContext NearbyPairingCompletionResult.Approved(payload)
+                        }
+                        else -> {
+                            return@withContext NearbyPairingCompletionResult.Failure(
+                                RemoteErrorCode.INVALID_REQUEST,
+                            )
+                        }
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: IOException) {
+                val code = mapIo(failure)
+                if (code != RemoteErrorCode.NETWORK_UNAVAILABLE) {
+                    return@withContext NearbyPairingCompletionResult.Failure(code)
+                }
+            } catch (_: GeneralSecurityException) {
+                return@withContext NearbyPairingCompletionResult.Failure(
+                    RemoteErrorCode.INVALID_REQUEST,
+                )
+            } catch (_: JSONException) {
+                return@withContext NearbyPairingCompletionResult.Failure(
+                    RemoteErrorCode.INVALID_REQUEST,
+                )
+            } catch (_: IllegalArgumentException) {
+                return@withContext NearbyPairingCompletionResult.Failure(
+                    RemoteErrorCode.INVALID_REQUEST,
+                )
+            }
+        }
+        NearbyPairingCompletionResult.Expired
+    }
 
     suspend fun getKeyCheck(access: ProvisionalRelayAccess): RelayKeyCheckResult =
         withContext(dispatchers.io) {
@@ -916,6 +1084,29 @@ class RelayHttpBackend(
         }
         .build()
 
+    private fun publicRequest(
+        host: String,
+        port: Int,
+        path: String,
+        method: String = "GET",
+        body: RequestBody? = null,
+    ): Request {
+        val base = HttpUrl.Builder()
+            .scheme("https")
+            .host(host)
+            .port(port)
+            .build()
+        val url = base.resolve(path) ?: throw IllegalArgumentException("Invalid pairing path")
+        if (url.host != base.host || url.port != base.port || url.scheme != "https") {
+            throw IllegalArgumentException("Pairing path escaped endpoint")
+        }
+        return Request.Builder()
+            .url(url)
+            .header(PROTOCOL_HEADER, PROTOCOL_VERSION.toString())
+            .method(method, body)
+            .build()
+    }
+
     private fun requestBuilder(
         host: String,
         port: Int,
@@ -1104,6 +1295,9 @@ class RelayHttpBackend(
         private const val OPERATION_HEADER = "X-VaultNote-Operation-Id"
         private const val CIPHERTEXT_SHA256_HEADER = "X-VaultNote-Ciphertext-SHA256"
         private const val ATTACHMENT_PATH_PREFIX = "/v1/attachments/"
+        private const val NEARBY_PAIRING_PATH = "/v1/nearby-pairing/requests"
+        private const val PAIRING_POLL_MILLIS = 650L
+        private const val MAX_PAIRING_RESPONSE_BYTES = 16 * 1024
         private const val MAX_CONTROL_BYTES = 64 * 1024
         private const val MAX_ITEM_RESPONSE_BYTES = 3 * 1024 * 1024
         private const val MAX_CHANGE_PAGE_BYTES = 64 * 1024 * 1024

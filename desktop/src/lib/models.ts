@@ -178,6 +178,13 @@ export interface EmbeddedRelayPairingDetails {
   authenticationToken: string;
 }
 
+export interface PendingNearbyPairing {
+  requestId: string;
+  deviceName: string;
+  verificationCode: string;
+  expiresAtEpochMillis: number;
+}
+
 export interface AuthStatus {
   setupRequired: boolean;
   unlocked: boolean;

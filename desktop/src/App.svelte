@@ -8,6 +8,7 @@
   import NoteBlockEditor from './NoteBlockEditor.svelte';
   import {
     commandError,
+    approveNearbyPairing,
     completeDatedEntry,
     createNote,
     deleteDatedEntry,
@@ -23,6 +24,7 @@
     getAuthStatus,
     getEmbeddedRelayPairingDetails,
     getEmbeddedRelayStatus,
+    getPendingNearbyPairings,
     getSyncConnectionStatus,
     getSyncQueueStatus,
     importAttachment,
@@ -41,6 +43,7 @@
     restoreBackupPath,
     restorePlaintextBackup,
     resetEmbeddedRelayAccess,
+    rejectNearbyPairing,
     runSync,
     saveDatedEntry,
     saveStructuredNote,
@@ -66,6 +69,7 @@
     DiscoveredRelay,
     EmbeddedRelayPairingDetails,
     EmbeddedRelayStatus,
+    PendingNearbyPairing,
     NoteBodyDocument,
     SyncQueueStatus,
     SyncConnectionStatus,
@@ -164,6 +168,10 @@
   let embeddedPassword = '';
   let embeddedBusy = false;
   let embeddedPairingTimer: ReturnType<typeof setTimeout> | undefined;
+  let nearbyPairingTimer: ReturnType<typeof setInterval> | undefined;
+  let pendingNearbyPairings: PendingNearbyPairing[] = [];
+  let nearbyPairingBusy = '';
+  let nearbyPairingPolling = false;
 
   onMount(() => {
     themePreference = storedThemePreference();
@@ -202,6 +210,11 @@
         void synchronize(false);
       }
     }, 45_000);
+    nearbyPairingTimer = setInterval(() => {
+      if (authentication?.unlocked && embeddedRelay?.running) {
+        void refreshNearbyPairings();
+      }
+    }, 1_200);
   });
 
   async function initializeAuthentication(): Promise<void> {
@@ -258,6 +271,7 @@
       securityPanelOpen = false;
       syncConnection = null;
       embeddedPairing = null;
+      pendingNearbyPairings = [];
       embeddedPassword = '';
       relayPassword = '';
       relayToken = '';
@@ -638,6 +652,9 @@
     if (automaticSyncTimer !== undefined) {
       clearInterval(automaticSyncTimer);
     }
+    if (nearbyPairingTimer !== undefined) {
+      clearInterval(nearbyPairingTimer);
+    }
     if (feedbackTimer !== undefined) {
       clearTimeout(feedbackTimer);
     }
@@ -693,8 +710,81 @@
   async function refreshEmbeddedRelay(): Promise<void> {
     try {
       embeddedRelay = await getEmbeddedRelayStatus();
+      if (embeddedRelay.running) {
+        await refreshNearbyPairings();
+      }
     } catch (error) {
       actionError = commandError(error);
+    }
+  }
+
+  async function refreshNearbyPairings(): Promise<void> {
+    if (nearbyPairingPolling || !authentication?.unlocked || !embeddedRelay?.running) {
+      return;
+    }
+    nearbyPairingPolling = true;
+    try {
+      const requests = await getPendingNearbyPairings();
+      const hadNoRequests = pendingNearbyPairings.length === 0;
+      pendingNearbyPairings = requests;
+      if (hadNoRequests && requests.length > 0) {
+        securityPanelOpen = true;
+      }
+    } catch (error) {
+      actionError = commandError(error);
+    } finally {
+      nearbyPairingPolling = false;
+    }
+  }
+
+  async function approvePhonePairing(requestId: string): Promise<void> {
+    if (nearbyPairingBusy !== '') {
+      return;
+    }
+    if (syncConnection?.requiresPassword && embeddedPassword.length < 8) {
+      actionError = {
+        code: 'sync_password_required',
+        message: 'Enter the sync password above before approving this phone.',
+        retryable: true,
+      };
+      return;
+    }
+    nearbyPairingBusy = requestId;
+    actionError = null;
+    try {
+      if (syncConnection?.requiresPassword) {
+        syncConnection = await unlockSync(embeddedPassword);
+        embeddedPassword = '';
+      }
+      await approveNearbyPairing(requestId);
+      pendingNearbyPairings = pendingNearbyPairings.filter(
+        (request) => request.requestId !== requestId,
+      );
+      syncMessage = 'Android approved. It will finish pairing and start encrypted sync automatically.';
+      showFeedback('Android paired securely');
+    } catch (error) {
+      actionError = commandError(error);
+      await refreshNearbyPairings();
+    } finally {
+      nearbyPairingBusy = '';
+    }
+  }
+
+  async function rejectPhonePairing(requestId: string): Promise<void> {
+    if (nearbyPairingBusy !== '') {
+      return;
+    }
+    nearbyPairingBusy = requestId;
+    try {
+      await rejectNearbyPairing(requestId);
+      pendingNearbyPairings = pendingNearbyPairings.filter(
+        (request) => request.requestId !== requestId,
+      );
+      showFeedback('Pairing request rejected');
+    } catch (error) {
+      actionError = commandError(error);
+    } finally {
+      nearbyPairingBusy = '';
     }
   }
 
@@ -717,11 +807,11 @@
     actionError = null;
     syncMessage = 'Starting private sync hosting on this computer…';
     try {
-      const details = await enableEmbeddedRelay(embeddedPassword);
+      const status = await enableEmbeddedRelay(embeddedPassword);
       embeddedPassword = '';
-      embeddedRelay = details.status;
-      retainEmbeddedPairing(details);
-      syncMessage = 'Local sync is ready. On Android, tap Find VaultNote Desktop and use the details below.';
+      embeddedRelay = status;
+      embeddedPairing = null;
+      syncMessage = 'Local sync is ready. On Android, tap Find VaultNote Desktop, then approve the matching code here.';
       await synchronize(true);
     } catch (error) {
       embeddedPassword = '';
@@ -1421,7 +1511,7 @@
               <strong>{embeddedRelay.running ? 'This computer is discoverable' : 'Local sync host is unavailable'}</strong>
               <p>
                 {embeddedRelay.running
-                  ? `Android can find VaultNote Desktop on port ${embeddedRelay.port}. Hosting continues while this app is open, even when the vault is locked.`
+                  ? `On Android, tap Find VaultNote Desktop. A matching code appears on both devices; approve it here. Nothing needs to be copied or typed on the phone. Hosting continues while this app is open, even when the vault is locked.`
                   : 'Retry starting the host, and allow VaultNote through the desktop firewall if prompted.'}
               </p>
             </div>
@@ -1438,45 +1528,80 @@
               </label>
             {/if}
             <div class="embedded-host-buttons">
-              <button
-                disabled={embeddedBusy ||
-                  !embeddedRelay.running ||
-                  (syncConnection?.requiresPassword === true && embeddedPassword.length < 8)}
-                onclick={() => void revealEmbeddedPairing()}
-              >
-                {embeddedBusy ? 'Loading…' : 'Show phone details'}
-              </button>
-              <details class="reset-phone-access">
-                <summary>Replace phone access</summary>
-                <p>This disconnects previously paired phones.</p>
-                <label>
-                  <span>Sync password</span>
-                  <input
-                    type="password"
-                    minlength="8"
-                    maxlength="1024"
-                    autocomplete="current-password"
-                    bind:value={embeddedPassword}
-                  />
-                </label>
+              <details class="manual-phone-access">
+                <summary>Manual pairing and recovery</summary>
+                <p>Use this only when nearby approval is unavailable on the network.</p>
                 <button
-                  class="danger-button"
-                  disabled={embeddedBusy || embeddedPassword.length < 8}
-                  onclick={() => void resetEmbeddedAccess()}
+                  disabled={embeddedBusy ||
+                    !embeddedRelay.running ||
+                    (syncConnection?.requiresPassword === true && embeddedPassword.length < 8)}
+                  onclick={() => void revealEmbeddedPairing()}
                 >
-                  Replace token
+                  {embeddedBusy ? 'Loading…' : 'Show manual details'}
                 </button>
+                <details class="reset-phone-access">
+                  <summary>Replace phone access</summary>
+                  <p>This disconnects previously paired phones.</p>
+                  <label>
+                    <span>Sync password</span>
+                    <input
+                      type="password"
+                      minlength="8"
+                      maxlength="1024"
+                      autocomplete="current-password"
+                      bind:value={embeddedPassword}
+                    />
+                  </label>
+                  <button
+                    class="danger-button"
+                    disabled={embeddedBusy || embeddedPassword.length < 8}
+                    onclick={() => void resetEmbeddedAccess()}
+                  >
+                    Replace token
+                  </button>
+                </details>
               </details>
             </div>
           {/if}
         </div>
 
+        {#if pendingNearbyPairings.length > 0}
+          <div class="nearby-pairing-requests" aria-live="assertive">
+            {#each pendingNearbyPairings as request (request.requestId)}
+              <article class="nearby-pairing-request">
+                <div>
+                  <span class="eyebrow">Nearby pairing request</span>
+                  <strong>{request.deviceName}</strong>
+                  <p>Check that this same code is visible on Android, then approve.</p>
+                </div>
+                <code class="nearby-pairing-code">{request.verificationCode}</code>
+                <div class="nearby-pairing-actions">
+                  <button
+                    class="secondary-button"
+                    disabled={nearbyPairingBusy !== ''}
+                    onclick={() => void rejectPhonePairing(request.requestId)}
+                  >
+                    Not my phone
+                  </button>
+                  <button
+                    disabled={nearbyPairingBusy !== '' ||
+                      (syncConnection?.requiresPassword === true && embeddedPassword.length < 8)}
+                    onclick={() => void approvePhonePairing(request.requestId)}
+                  >
+                    {nearbyPairingBusy === request.requestId ? 'Approving…' : 'Approve phone'}
+                  </button>
+                </div>
+              </article>
+            {/each}
+          </div>
+        {/if}
+
         {#if embeddedPairing !== null}
           <div class="phone-pairing-details" role="status">
             <div>
-              <strong>Connect Android</strong>
+              <strong>Manual connection details</strong>
               <ol>
-                <li>Open VaultNote → Sync and tap <b>Find VaultNote Desktop</b>.</li>
+                <li>Open VaultNote → Sync and open manual pairing.</li>
                 <li>Confirm this certificate fingerprint matches the phone.</li>
                 <li>Paste the token and enter the same sync password.</li>
               </ol>

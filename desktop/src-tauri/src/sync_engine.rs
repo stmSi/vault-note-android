@@ -19,6 +19,7 @@ use crate::{
     crypto::AttachmentCrypto,
     error::AppError,
     lan_discovery::{self, DiscoveredRelay},
+    nearby_pairing::NearbyPairingSecret,
     relay_client::{KeyCheckResult, ProvisionalRelayAccess, RelayClient},
     services::now_epoch_millis,
     sync_credentials::{
@@ -172,6 +173,23 @@ impl LanSyncService {
             return Err(AppError::RelayIdentity);
         }
         Ok(Zeroizing::new(secrets.authentication_token.to_string()))
+    }
+
+    pub fn nearby_pairing_secret_for(
+        &self,
+        vault_id: &str,
+        certificate_sha256: &str,
+    ) -> Result<NearbyPairingSecret, AppError> {
+        let secrets = self.inner.credentials.active()?;
+        if secrets.public.vault_id != vault_id
+            || secrets.public.certificate_sha256 != certificate_sha256
+        {
+            return Err(AppError::RelayIdentity);
+        }
+        Ok(NearbyPairingSecret {
+            authentication_token: Zeroizing::new(secrets.authentication_token.to_string()),
+            master_key: Zeroizing::new(*secrets.master_key.as_bytes()),
+        })
     }
 
     pub async fn discover(&self) -> Result<Vec<DiscoveredRelay>, AppError> {

@@ -18,6 +18,9 @@ use vaultnote_sync_server::{
 use zeroize::Zeroizing;
 
 use crate::error::AppError;
+use crate::nearby_pairing::{
+    NearbyPairingBroker, NearbyPairingSecret, PairingRelayIdentity, PendingNearbyPairing,
+};
 
 const RELAY_DIRECTORY: &str = "embedded-relay";
 const PROCESS_LOCK_FILENAME: &str = "host.lock";
@@ -50,6 +53,7 @@ struct EmbeddedRelayInner {
     advertise: bool,
     operation: Mutex<()>,
     running: StdMutex<Option<RunningRelay>>,
+    pairing: NearbyPairingBroker,
 }
 
 struct RunningRelay {
@@ -76,6 +80,7 @@ impl EmbeddedRelayHost {
                 advertise,
                 operation: Mutex::new(()),
                 running: StdMutex::new(None),
+                pairing: NearbyPairingBroker::default(),
             }),
         })
     }
@@ -114,6 +119,26 @@ impl EmbeddedRelayHost {
         let mut started = self.start_locked(false).await?;
         started.authentication_token = Some(token);
         Ok(started)
+    }
+
+    pub async fn pending_pairings(&self) -> Result<Vec<PendingNearbyPairing>, AppError> {
+        self.inner.pairing.pending().await
+    }
+
+    pub async fn approve_pairing(
+        &self,
+        request_id: &str,
+        secret: &NearbyPairingSecret,
+    ) -> Result<(), AppError> {
+        let identity = self.running_identity()?;
+        self.inner
+            .pairing
+            .approve(request_id, &identity, secret)
+            .await
+    }
+
+    pub async fn reject_pairing(&self, request_id: &str) -> Result<(), AppError> {
+        self.inner.pairing.reject(request_id).await
     }
 
     async fn start_locked(&self, initialize: bool) -> Result<EmbeddedRelayStart, AppError> {
@@ -182,10 +207,15 @@ impl EmbeddedRelayHost {
             None
         };
         let handle: Handle<SocketAddr> = Handle::new();
+        let pairing_identity = PairingRelayIdentity {
+            vault_id: config.vault_id.clone(),
+            certificate_sha256: config.tls.certificate_sha256.clone(),
+        };
+        let router = relay_router(relay_state).merge(self.inner.pairing.router(pairing_identity));
         let server = axum_server::from_tcp_rustls(listener, tls)
             .map_err(|_| AppError::EmbeddedRelayUnavailable)?
             .handle(handle.clone())
-            .serve(relay_router(relay_state).into_make_service());
+            .serve(router.into_make_service());
         let task = tokio::spawn(async move {
             let _ = server.await;
         });
@@ -214,6 +244,7 @@ impl EmbeddedRelayHost {
     }
 
     async fn stop_locked(&self) -> Result<(), AppError> {
+        self.inner.pairing.clear().await;
         let running = self
             .inner
             .running
@@ -231,6 +262,18 @@ impl EmbeddedRelayHost {
             running.task.abort();
         }
         Ok(())
+    }
+
+    fn running_identity(&self) -> Result<PairingRelayIdentity, AppError> {
+        let running = self.inner.running.lock().map_err(|_| AppError::StateLock)?;
+        let relay = running
+            .as_ref()
+            .filter(|value| !value.task.is_finished())
+            .ok_or(AppError::EmbeddedRelayUnavailable)?;
+        Ok(PairingRelayIdentity {
+            vault_id: relay.config.vault_id.clone(),
+            certificate_sha256: relay.config.tls.certificate_sha256.clone(),
+        })
     }
 
     #[cfg(test)]

@@ -55,6 +55,84 @@
                 android:minHeight="@dimen/touch_target"
                 android:text="@string/discover_lan_relay" />
 
+            <TextView
+                android:id="@+id/nearby_pairing_instructions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_s"
+                android:text="@string/nearby_pairing_instructions"
+                android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/nearby_pairing_card"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_m"
+                android:visibility="gone"
+                app:cardBackgroundColor="?attr/colorSecondaryContainer"
+                app:cardCornerRadius="@dimen/space_m"
+                app:strokeColor="?attr/colorSecondary"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="@dimen/space_m">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/nearby_pairing_check_desktop"
+                        android:textAppearance="?attr/textAppearanceTitleSmall" />
+
+                    <TextView
+                        android:id="@+id/nearby_pairing_code"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/space_s"
+                        android:accessibilityLiveRegion="polite"
+                        android:fontFamily="monospace"
+                        android:gravity="center"
+                        android:letterSpacing="0.12"
+                        android:textAppearance="?attr/textAppearanceHeadlineMedium"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/space_s"
+                        android:gravity="center"
+                        android:text="@string/nearby_pairing_waiting"
+                        android:textAppearance="?attr/textAppearanceBodySmall" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/cancel_nearby_pairing_button"
+                        style="@style/Widget.Material3.Button.TextButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/space_xs"
+                        android:minHeight="@dimen/touch_target"
+                        android:text="@android:string/cancel" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/manual_pairing_toggle"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_s"
+                android:minHeight="@dimen/touch_target"
+                android:text="@string/manual_pairing_show" />
+
+            <LinearLayout
+                android:id="@+id/manual_pairing_fields"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
             <com.google.android.material.textfield.TextInputLayout
                 android:id="@+id/relay_host_container"
                 style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
@@ -186,6 +264,8 @@
                 android:layout_marginTop="@dimen/space_m"
                 android:minHeight="@dimen/touch_target"
                 android:text="@string/pair_lan_relay" />
+
+            </LinearLayout>
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/disconnect_relay_button"

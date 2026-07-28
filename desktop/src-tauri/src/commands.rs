@@ -11,6 +11,7 @@ use crate::{
         ScheduledAlert, SearchResult, SyncQueueStatus, VaultAttachment, VaultItemSummary,
         VaultNote,
     },
+    nearby_pairing::PendingNearbyPairing,
     runtime::RuntimeState,
     sync_engine::{PairRelayParameters, SyncConnectionStatus, SyncRunReport},
     validation::{validate_id, validate_password},
@@ -124,6 +125,12 @@ pub struct RestoreBackupPathRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EmbeddedRelayAccessRequest {
     password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NearbyPairingRequest {
+    request_id: String,
 }
 
 #[derive(serde::Serialize, Zeroize, ZeroizeOnDrop)]
@@ -434,11 +441,13 @@ pub async fn embedded_relay_status(
 pub async fn enable_embedded_relay(
     state: State<'_, RuntimeState>,
     mut request: EmbeddedRelayAccessRequest,
-) -> Result<EmbeddedRelayPairingDetails, CommandError> {
+) -> Result<EmbeddedRelayStatus, CommandError> {
     let result = async {
         validate_sync_password(&request.password)?;
         let started = state.embedded_relay().enable().await?;
-        pair_with_embedded_relay(&state, started, &request.password).await
+        pair_with_embedded_relay(&state, started, &request.password)
+            .await
+            .map(|details| details.status.clone())
     }
     .await
     .map_err(CommandError::from);
@@ -483,6 +492,58 @@ pub async fn reset_embedded_relay_access(
     .map_err(CommandError::from);
     request.password.zeroize();
     result
+}
+
+#[tauri::command]
+pub async fn pending_nearby_pairings(
+    state: State<'_, RuntimeState>,
+) -> Result<Vec<PendingNearbyPairing>, CommandError> {
+    state
+        .embedded_relay()
+        .pending_pairings()
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn approve_nearby_pairing(
+    state: State<'_, RuntimeState>,
+    request: NearbyPairingRequest,
+) -> Result<(), CommandError> {
+    let host = state.embedded_relay();
+    let status = host.start_if_enabled().await.map_err(CommandError::from)?;
+    let vault_id = status
+        .vault_id
+        .as_deref()
+        .ok_or(crate::error::AppError::EmbeddedRelayUnavailable)
+        .map_err(CommandError::from)?;
+    let fingerprint = status
+        .certificate_sha256
+        .as_deref()
+        .ok_or(crate::error::AppError::EmbeddedRelayUnavailable)
+        .map_err(CommandError::from)?;
+    let secret = state
+        .with_services(|services| {
+            services
+                .sync
+                .nearby_pairing_secret_for(vault_id, fingerprint)
+        })
+        .map_err(CommandError::from)?;
+    host.approve_pairing(&request.request_id, &secret)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn reject_nearby_pairing(
+    state: State<'_, RuntimeState>,
+    request: NearbyPairingRequest,
+) -> Result<(), CommandError> {
+    state
+        .embedded_relay()
+        .reject_pairing(&request.request_id)
+        .await
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]

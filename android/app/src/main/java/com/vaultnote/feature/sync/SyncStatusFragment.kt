@@ -41,6 +41,8 @@ class SyncStatusFragment : Fragment() {
     private var binding: FragmentSyncStatusBinding? = null
     private var pendingLanAction: PendingLanAction? = null
     private var renderedConnection: RelayConnectionSummary? = null
+    private var renderedNearbyCode: String? = null
+    private var manualPairingVisible = false
     private val requestLocalNetworkPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -71,6 +73,8 @@ class SyncStatusFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         val current = requireNotNull(binding)
+        manualPairingVisible =
+            savedInstanceState?.getBoolean(STATE_MANUAL_PAIRING_VISIBLE) == true
         current.toolbar.setNavigationOnClickListener { (activity as? MainNavigator)?.navigateBack() }
         current.syncNowButton.setOnClickListener { viewModel.syncNow() }
         current.relayFingerprintInput.doAfterTextChanged {
@@ -78,6 +82,13 @@ class SyncStatusFragment : Fragment() {
         }
         current.discoverRelayButton.setOnClickListener {
             runWithLocalNetworkPermission(PendingLanAction.Discover)
+        }
+        current.manualPairingToggle.setOnClickListener {
+            manualPairingVisible = !manualPairingVisible
+            renderManualPairing(current)
+        }
+        current.cancelNearbyPairingButton.setOnClickListener {
+            viewModel.cancelNearbyPairing()
         }
         current.pairRelayButton.setOnClickListener {
             if (!current.fingerprintVerifiedCheckbox.isChecked) {
@@ -109,9 +120,15 @@ class SyncStatusFragment : Fragment() {
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(STATE_MANUAL_PAIRING_VISIBLE, manualPairingVisible)
+        super.onSaveInstanceState(outState)
+    }
+
     override fun onDestroyView() {
         pendingLanAction = null
         renderedConnection = null
+        renderedNearbyCode = null
         binding = null
         super.onDestroyView()
     }
@@ -133,12 +150,23 @@ class SyncStatusFragment : Fragment() {
         binding.connectionProgress.isVisible = state.isConnectionActionRunning
         binding.discoverRelayButton.isEnabled = !state.isConnectionActionRunning
         binding.pairRelayButton.isEnabled = !state.isConnectionActionRunning
+        binding.manualPairingToggle.isEnabled = !state.isConnectionActionRunning
         binding.syncNowButton.isEnabled =
             !state.isConnectionActionRunning &&
             state.connection is RelayConnectionState.Configured
         binding.disconnectRelayButton.isEnabled = !state.isConnectionActionRunning
         binding.disconnectRelayButton.isVisible =
             state.connection is RelayConnectionState.Configured
+        val challenge = state.nearbyPairingChallenge
+        binding.nearbyPairingCard.isVisible = challenge != null
+        binding.nearbyPairingCode.text = challenge?.verificationCode.orEmpty()
+        if (challenge != null && renderedNearbyCode != challenge.verificationCode) {
+            renderedNearbyCode = challenge.verificationCode
+            binding.scrollContent.smoothScrollTo(0, binding.nearbyPairingCard.top)
+        } else if (challenge == null) {
+            renderedNearbyCode = null
+        }
+        renderManualPairing(binding)
         renderConnection(binding, state.connection)
     }
 
@@ -204,6 +232,8 @@ class SyncStatusFragment : Fragment() {
             SyncStatusEvent.DiscoveryFailed -> showMessage(R.string.lan_relay_discovery_failed)
             is SyncStatusEvent.RelayDiscovered -> {
                 renderedConnection = null
+                manualPairingVisible = true
+                renderManualPairing(binding)
                 binding.relayHostInput.setText(event.relay.hostAddress)
                 binding.relayPortInput.setText(
                     String.format(Locale.ROOT, "%d", event.relay.port),
@@ -233,9 +263,17 @@ class SyncStatusFragment : Fragment() {
                         R.string.lan_relay_invalid_configuration
                     RelayPairingResult.LocalStorageFailure ->
                         R.string.lan_relay_local_storage_failure
+                    RelayPairingResult.ManualRequired ->
+                        R.string.lan_relay_invalid_configuration
+                    RelayPairingResult.ApprovalRejected ->
+                        R.string.lan_relay_approval_rejected
+                    RelayPairingResult.ApprovalExpired ->
+                        R.string.lan_relay_approval_expired
                 }
                 if (event.result is RelayPairingResult.Paired) {
                     binding.relayTokenInput.text?.clear()
+                    manualPairingVisible = false
+                    renderManualPairing(binding)
                     hideKeyboard(binding.root)
                 }
                 showMessage(message)
@@ -267,9 +305,31 @@ class SyncStatusFragment : Fragment() {
 
     private fun executeLanAction(action: PendingLanAction) {
         when (action) {
-            PendingLanAction.Discover -> viewModel.discoverRelay()
+            PendingLanAction.Discover -> viewModel.discoverRelay(deviceName())
             PendingLanAction.Pair -> pairFromInputs()
         }
+    }
+
+    private fun renderManualPairing(binding: FragmentSyncStatusBinding) {
+        binding.manualPairingFields.isVisible = manualPairingVisible
+        binding.manualPairingToggle.setText(
+            if (manualPairingVisible) {
+                R.string.manual_pairing_hide
+            } else {
+                R.string.manual_pairing_show
+            },
+        )
+    }
+
+    private fun deviceName(): String {
+        val manufacturer = Build.MANUFACTURER.trim()
+        val model = Build.MODEL.trim()
+        return when {
+            model.isBlank() -> getString(R.string.app_name)
+            manufacturer.isBlank() ||
+                model.startsWith(manufacturer, ignoreCase = true) -> model
+            else -> "$manufacturer $model"
+        }.take(64)
     }
 
     private fun pairFromInputs() {
@@ -337,6 +397,7 @@ class SyncStatusFragment : Fragment() {
 
     companion object {
         const val BACK_STACK_NAME = "sync_status"
+        private const val STATE_MANUAL_PAIRING_VISIBLE = "manual_pairing_visible"
         fun newInstance(): SyncStatusFragment = SyncStatusFragment()
     }
 

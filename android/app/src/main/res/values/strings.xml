@@ -249,6 +249,11 @@
     <string name="sync_now">Sync now</string>
     <string name="sync_scheduled">Synchronization scheduled.</string>
     <string name="discover_lan_relay">Find VaultNote Desktop</string>
+    <string name="nearby_pairing_instructions">Tap once to find your desktop. Check the matching code there and touch Approve—no token or password typing on this phone.</string>
+    <string name="nearby_pairing_check_desktop">Check this code on VaultNote Desktop</string>
+    <string name="nearby_pairing_waiting">Waiting for approval on the desktop…</string>
+    <string name="manual_pairing_show">Manual pairing and recovery</string>
+    <string name="manual_pairing_hide">Hide manual pairing</string>
     <string name="relay_host_address">Desktop or relay address</string>
     <string name="relay_port">Local sync port</string>
     <string name="relay_vault_id">Vault ID (filled by discovery)</string>
@@ -263,13 +268,13 @@
     <string name="lan_relay_checking">Checking relay configuration…</string>
     <string name="lan_relay_checking_description">Local content remains available while VaultNote checks encrypted credentials.</string>
     <string name="lan_relay_not_configured">LAN sync is not configured</string>
-    <string name="lan_relay_not_configured_description">In VaultNote Desktop settings, start phone sync. Then find the desktop here and verify its certificate fingerprint.</string>
+    <string name="lan_relay_not_configured_description">In VaultNote Desktop settings, start phone sync. Then find it here and approve the matching code on the desktop.</string>
     <string name="lan_relay_credentials_corrupted">Saved relay credentials are unavailable</string>
     <string name="lan_relay_credentials_corrupted_description">Disconnect and pair again. Your local vault data is unchanged.</string>
     <string name="lan_relay_connected">LAN sync configured</string>
     <string name="lan_relay_connection_details">Address: %1$s:%2$d\nVault: %3$s\nCertificate: %4$s</string>
     <string name="lan_relay_connection_required">Pair a LAN relay before starting synchronization.</string>
-    <string name="lan_relay_discovered">VaultNote Desktop found. Compare the certificate fingerprint before entering the phone token.</string>
+    <string name="lan_relay_discovered">Nearby approval is unavailable on this desktop. Manual pairing details are shown below.</string>
     <string name="lan_relay_not_found">VaultNote Desktop was not found. Check that both devices share Wi-Fi or hotspot and that desktop phone sync is running.</string>
     <string name="lan_relay_discovery_failed">Desktop discovery is unavailable on this network.</string>
     <string name="lan_network_permission_denied">Local network access is required for LAN synchronization.</string>
@@ -281,6 +286,8 @@
     <string name="lan_relay_unavailable">The relay could not be reached securely.</string>
     <string name="lan_relay_invalid_configuration">The relay details or protocol are not valid.</string>
     <string name="lan_relay_local_storage_failure">VaultNote could not protect the relay credentials on this device.</string>
+    <string name="lan_relay_approval_rejected">The desktop rejected this pairing request.</string>
+    <string name="lan_relay_approval_expired">The pairing request expired. Tap Find VaultNote Desktop to try again.</string>
     <string name="lan_relay_disconnected">Relay credentials removed. Local vault data is unchanged.</string>
     <string name="lan_relay_disconnect_failed">The protected relay credentials could not be removed.</string>
     <string name="sync_pending_count">Pending: %1$d</string>

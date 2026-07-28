@@ -10,11 +10,13 @@ import com.vaultnote.core.sync.SyncScheduler
 import com.vaultnote.core.sync.lan.LanDiscoveryResult
 import com.vaultnote.core.sync.lan.LanRelayCandidate
 import com.vaultnote.core.sync.lan.LanSyncConnectionRepository
+import com.vaultnote.core.sync.lan.NearbyPairingChallenge
 import com.vaultnote.core.sync.lan.RelayConnectionState
 import com.vaultnote.core.sync.lan.RelayPairingInput
 import com.vaultnote.core.sync.lan.RelayPairingResult
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
@@ -30,6 +32,7 @@ internal sealed interface SyncStatusState {
         val overview: SyncOverview,
         val connection: RelayConnectionState,
         val isConnectionActionRunning: Boolean,
+        val nearbyPairingChallenge: NearbyPairingChallenge?,
     ) : SyncStatusState
     data object Error : SyncStatusState
 }
@@ -53,13 +56,17 @@ internal class SyncStatusViewModel(
 ) : ViewModel() {
     private val mutableEvents = Channel<SyncStatusEvent>(Channel.BUFFERED)
     private val connectionActionRunning = kotlinx.coroutines.flow.MutableStateFlow(false)
+    private val nearbyPairingChallenge =
+        kotlinx.coroutines.flow.MutableStateFlow<NearbyPairingChallenge?>(null)
+    private var nearbyPairingJob: Job? = null
     val events: Flow<SyncStatusEvent> = mutableEvents.receiveAsFlow()
     val state = combine(
         repository.observeOverview(),
         connectionRepository.state,
         connectionActionRunning,
-    ) { overview, connection, busy ->
-        SyncStatusState.Content(overview, connection, busy)
+        nearbyPairingChallenge,
+    ) { overview, connection, busy, challenge ->
+        SyncStatusState.Content(overview, connection, busy, challenge)
     }
         .map<SyncStatusState.Content, SyncStatusState> { it }
         .catch { failure ->
@@ -93,14 +100,26 @@ internal class SyncStatusViewModel(
         }
     }
 
-    fun discoverRelay() {
+    fun discoverRelay(deviceName: String) {
         if (connectionActionRunning.value) return
-        viewModelScope.launch {
+        nearbyPairingJob = viewModelScope.launch {
             connectionActionRunning.value = true
             try {
                 when (val result = connectionRepository.discover()) {
-                    is LanDiscoveryResult.Found ->
-                        mutableEvents.send(SyncStatusEvent.RelayDiscovered(result.relay))
+                    is LanDiscoveryResult.Found -> {
+                        val pairing = connectionRepository.pairNearby(
+                            candidate = result.relay,
+                            deviceName = deviceName,
+                            onChallenge = { challenge ->
+                                nearbyPairingChallenge.value = challenge
+                            },
+                        )
+                        if (pairing == RelayPairingResult.ManualRequired) {
+                            mutableEvents.send(SyncStatusEvent.RelayDiscovered(result.relay))
+                        } else {
+                            mutableEvents.send(SyncStatusEvent.PairingFinished(pairing))
+                        }
+                    }
                     LanDiscoveryResult.NotFound ->
                         mutableEvents.send(SyncStatusEvent.DiscoveryNotFound)
                     LanDiscoveryResult.PermissionDenied ->
@@ -109,9 +128,16 @@ internal class SyncStatusViewModel(
                         mutableEvents.send(SyncStatusEvent.DiscoveryFailed)
                 }
             } finally {
+                nearbyPairingChallenge.value = null
                 connectionActionRunning.value = false
+                nearbyPairingJob = null
             }
         }
+    }
+
+    fun cancelNearbyPairing() {
+        nearbyPairingJob?.cancel()
+        nearbyPairingChallenge.value = null
     }
 
     fun pair(

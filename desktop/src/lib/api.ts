@@ -9,6 +9,7 @@ import type {
   EmbeddedRelayPairingDetails,
   EmbeddedRelayStatus,
   PairRelayInput,
+  PendingNearbyPairing,
   SearchResult,
   SyncConnectionStatus,
   SyncQueueStatus,
@@ -140,7 +141,7 @@ export function getEmbeddedRelayStatus(): Promise<EmbeddedRelayStatus> {
 
 export function enableEmbeddedRelay(
   password: string,
-): Promise<EmbeddedRelayPairingDetails> {
+): Promise<EmbeddedRelayStatus> {
   return invoke('enable_embedded_relay', { request: { password } });
 }
 
@@ -154,6 +155,18 @@ export function resetEmbeddedRelayAccess(
   password: string,
 ): Promise<EmbeddedRelayPairingDetails> {
   return invoke('reset_embedded_relay_access', { request: { password } });
+}
+
+export function getPendingNearbyPairings(): Promise<PendingNearbyPairing[]> {
+  return invoke('pending_nearby_pairings');
+}
+
+export function approveNearbyPairing(requestId: string): Promise<void> {
+  return invoke('approve_nearby_pairing', { request: { requestId } });
+}
+
+export function rejectNearbyPairing(requestId: string): Promise<void> {
+  return invoke('reject_nearby_pairing', { request: { requestId } });
 }
 
 export function getAuthStatus(): Promise<AuthStatus> {

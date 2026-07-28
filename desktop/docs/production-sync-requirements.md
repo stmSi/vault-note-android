@@ -6,12 +6,12 @@ VaultNote Desktop implements protocol 3 against the opaque HTTPS relay in `sync-
 
 - The normal Android-to-desktop path needs no separately installed relay. VaultNote Desktop embeds the same protocol-3 relay library, creates its private identity under the desktop app-data directory, binds to the LAN, and advertises itself through mDNS after the user selects **Start phone sync**.
 - Once enabled, the embedded host starts asynchronously on later desktop launches. It remains available while the desktop process is running, including while a password-protected local vault is locked, because the host stores only opaque encrypted relay records and has no sync content key.
-- First enablement self-pairs the desktop client and briefly displays the phone token. Android discovers the desktop, pins the displayed certificate fingerprint, and uses the same sync password. The token is never written to a plaintext convenience file.
+- First enablement self-pairs the desktop client. Android then discovers the desktop, creates an ephemeral P-256 ECDH request, and shows the same transcript-derived six-digit safety code as Desktop. One desktop approval transfers the token and existing sync master key through transcript-bound AES-256-GCM; Android users do not paste a token or type the sync password.
 - A standalone `sync-server` remains supported for advanced always-on or multi-desktop deployments, but it is not required for ordinary local-network use.
 - Manual pairing requires host, port, relay token, sync password, vault identity, pinned TLS SHA-256 fingerprint, and explicit fingerprint confirmation.
 - `_vaultnote-sync._tcp.local.` discovery advertises no credentials. A paired endpoint may move only when both the vault ID and pinned fingerprint match.
 - The relay token and derived sync master key are stored in an authenticated local credential envelope. An encrypted local vault protects that envelope with a vault-derived key. An unencrypted local vault requires the separate sync password again after process restart.
-- Tokens and content keys remain in Rust and are released with the unlocked vault service lifetime. Command responses expose only bounded, non-sensitive status.
+- Tokens and content keys remain in Rust and are released with the unlocked vault service lifetime. Nearby pairing encrypts them directly for the requesting Android ephemeral key; they are never returned to desktop JavaScript. Command responses expose only bounded, non-sensitive status.
 - PBKDF2/HKDF, AES-256-GCM item/key-check envelopes, and streamed attachment envelopes match Android protocol 3.
 - Persistent SQLite queue rows use leases, process-death recovery, bounded exponential retry, stable operation IDs, and stable encrypted artifacts for exact replay.
 - A sync run pulls remote changes, uploads local attachments and item snapshots, then pulls again. This order prevents a stale local write from hiding a concurrent remote change.
@@ -26,9 +26,9 @@ The normative wire contract, TLS rules, envelope layout, revision behavior, atta
 
 The relay is a rendezvous and durable opaque store, not a trusted content endpoint. It can observe vault and object identifiers, ciphertext sizes, revisions, request timing, IP addresses, and tombstones. It cannot decrypt item metadata or attachments without the sync password.
 
-mDNS is only a reachability hint. It cannot establish trust, rotate a certificate, replace a vault ID, or disclose a token. Certificate verification validates both the exact pin and a valid certificate signature before any bearer token is sent.
+mDNS is only a reachability hint. Nearby trust comes from the matching safety code derived from ECDH plus the complete client key, server key, request ID, vault ID, and certificate fingerprint. Key substitution changes the code. After approval, certificate verification validates the exact transferred pin and a valid certificate signature before the bearer token is used for ordinary sync.
 
-The sync password is not persisted. Pairing credentials necessarily pass through the local UI process once, and the fields are cleared after each attempt; stored tokens, password-derived keys, decrypted relay payloads, raw private responses, and attachment plaintext paths are never returned to JavaScript. Local vault compromise while unlocked and a compromised client process remain outside the protection boundary.
+The sync password is not persisted. Manual pairing fields are cleared after each attempt. Nearby requests expose only a device label, expiry, and safety code to JavaScript; stored tokens, sync keys, decrypted relay payloads, raw private responses, and attachment plaintext paths are never returned to JavaScript. Local vault compromise while unlocked and a compromised client process remain outside the protection boundary.
 
 ## Operational limits
 

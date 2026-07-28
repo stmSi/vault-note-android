@@ -8,7 +8,9 @@ Protocol implementations negotiate integer version `3`. The encrypted item JSON 
 
 ## Authentication
 
-Pairing requires the relay address, bearer token, a manually compared SHA-256 TLS certificate fingerprint, and a separate shared sync password. The token is sent only after exact certificate pin validation. The password is never sent; PBKDF2-HMAC-SHA256 derives the master key and an encrypted key-check proves that clients used the same password.
+The normal embedded-desktop path uses nearby approval. Android discovers VaultNote Desktop, opens a two-minute ephemeral P-256 ECDH session, and displays a six-digit safety code derived from the shared secret and the complete pairing transcript. Desktop independently displays the same code and releases the bearer token plus existing 256-bit sync master key only after the user approves that phone. The response is encrypted with transcript-bound AES-256-GCM, so neither the token nor a password is pasted or typed on Android. A substituted key produces a different safety code.
+
+Manual recovery pairing still accepts the relay address, bearer token, a manually compared SHA-256 TLS certificate fingerprint, and shared sync password. The token is sent only after exact certificate pin validation. The password is never sent; PBKDF2-HMAC-SHA256 derives the master key and an encrypted key-check proves that clients used the same password.
 
 Android stores the token and derived master key only inside an AES-GCM credential envelope whose non-exportable wrapping key is held by Android Keystore. It stores neither the sync password nor plaintext credentials. An expired or replaced token stops work without an automatic retry loop. Pairing the same vault again reactivates authentication-stopped queue rows and schedules unique work.
 
@@ -139,4 +141,4 @@ A worker claims a row with a random lease and expiry. Expired `RUNNING` rows ret
 
 The relay advertises `_vaultnote-sync._tcp.local.` only when started with `--lan`. Android resolves it through `NsdManager`, reads protocol/vault/fingerprint TXT attributes after resolution, and keeps a multicast lock only for the bounded discovery window. Android 17 and newer requests `ACCESS_LOCAL_NETWORK` only when the user starts discovery or pairing.
 
-Discovery is a reachability hint, not authentication. Initial pairing requires explicit fingerprint confirmation. A paired client may accept a new host/port only when discovery matches both the saved vault ID and pinned fingerprint; TLS pinning still applies to the subsequent connection. Manual address entry remains available for networks that suppress multicast.
+Discovery is a reachability hint, not authentication. Nearby approval authenticates the initial exchange through a user-confirmed safety code derived independently on both devices; the resulting payload also binds the relay vault ID and certificate fingerprint. Manual initial pairing instead requires explicit fingerprint confirmation. A paired client may accept a new host/port only when discovery matches both the saved vault ID and pinned fingerprint; TLS pinning still applies to the subsequent connection. Manual address entry remains available for networks that suppress multicast or run an older/standalone relay.

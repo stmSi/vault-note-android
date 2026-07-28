@@ -6,6 +6,7 @@ mod embedded_relay;
 mod error;
 mod lan_discovery;
 mod models;
+mod nearby_pairing;
 mod relay_client;
 mod repository;
 mod runtime;
@@ -66,6 +67,9 @@ pub fn run() {
             commands::enable_embedded_relay,
             commands::embedded_relay_pairing_details,
             commands::reset_embedded_relay_access,
+            commands::pending_nearby_pairings,
+            commands::approve_nearby_pairing,
+            commands::reject_nearby_pairing,
             commands::auth_status,
             commands::initialize_vault,
             commands::initialize_unencrypted_vault,
