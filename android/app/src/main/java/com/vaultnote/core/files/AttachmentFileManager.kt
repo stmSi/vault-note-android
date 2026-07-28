@@ -3,7 +3,6 @@ package com.vaultnote.core.files
 import android.content.ContentResolver
 import android.content.Context
 import android.graphics.BitmapFactory
-import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
@@ -170,19 +169,23 @@ class AndroidAttachmentFileManager(
                 ?: return@withContext RepositoryResult.Failure(AppError.CorruptedFile)
 
             var thumbnailWarning: AppError? = null
-            val generatedThumbnail = when (
-                val result = thumbnailGenerator.generate(
-                    source = temporary,
-                    mimeType = validated.format.canonicalMimeType,
-                    destination = thumbnailPlaintext,
-                )
-            ) {
-                is RepositoryResult.Success -> {
-                    result.value
-                }
-                is RepositoryResult.Failure -> {
-                    thumbnailWarning = result.error
-                    null
+            val generatedThumbnail = if (storedMetadata.isPasswordProtectedPdf) {
+                null
+            } else {
+                when (
+                    val result = thumbnailGenerator.generate(
+                        source = temporary,
+                        mimeType = validated.format.canonicalMimeType,
+                        destination = thumbnailPlaintext,
+                    )
+                ) {
+                    is RepositoryResult.Success -> {
+                        result.value
+                    }
+                    is RepositoryResult.Failure -> {
+                        thumbnailWarning = result.error
+                        null
+                    }
                 }
             }
             coroutineContext.ensureActive()
@@ -227,6 +230,7 @@ class AndroidAttachmentFileManager(
                     imageWidth = storedMetadata.imageWidth,
                     imageHeight = storedMetadata.imageHeight,
                     pdfPageCount = storedMetadata.pdfPageCount,
+                    isPasswordProtectedPdf = storedMetadata.isPasswordProtectedPdf,
                 ),
                 warning = thumbnailWarning,
             )
@@ -416,6 +420,7 @@ class AndroidAttachmentFileManager(
                     imageWidth = metadataProbe.imageWidth,
                     imageHeight = metadataProbe.imageHeight,
                     pdfPageCount = metadataProbe.pdfPageCount,
+                    isPasswordProtectedPdf = metadataProbe.isPasswordProtectedPdf,
                 ),
             )
         } catch (_: SecurityException) {
@@ -485,32 +490,67 @@ class AndroidAttachmentFileManager(
             ProbedMetadata(oriented?.first, oriented?.second, null)
         }
         AttachmentCategory.PDF -> {
-            val pageCount = try {
-                contentResolver.openFileDescriptor(uri, "r")?.use(::readPdfPageCount)
-            } catch (_: IOException) {
-                null
-            } catch (_: SecurityException) {
-                null
-            } catch (_: IllegalStateException) {
-                null
+            val probe = contentResolver.openFileDescriptor(uri, "r")?.use(::probePdfMetadata)
+                ?: PdfMetadataProbe.Unreadable
+            when (probe) {
+                is PdfMetadataProbe.Readable -> ProbedMetadata(
+                    imageWidth = null,
+                    imageHeight = null,
+                    pdfPageCount = probe.pageCount,
+                    isPasswordProtectedPdf = false,
+                )
+                PdfMetadataProbe.PasswordProtected -> ProbedMetadata(
+                    imageWidth = null,
+                    imageHeight = null,
+                    pdfPageCount = null,
+                    isPasswordProtectedPdf = true,
+                )
+                PdfMetadataProbe.Unreadable -> ProbedMetadata(null, null, null)
             }
-            ProbedMetadata(null, null, pageCount)
         }
         AttachmentCategory.TEXT,
         AttachmentCategory.DOCUMENT,
         -> ProbedMetadata(null, null, null)
     }
 
-    private fun probeStoredMetadata(file: File, format: AttachmentFormat): ProbedMetadata? = when (format.category) {
+    private suspend fun probeStoredMetadata(
+        file: File,
+        format: AttachmentFormat,
+    ): ProbedMetadata? = when (format.category) {
         AttachmentCategory.IMAGE -> {
             val bounds = file.inputStream().buffered().use(::readImageBounds) ?: return null
             val oriented = orientedDimensions(bounds.first, bounds.second, readExifOrientation(file))
             ProbedMetadata(oriented.first, oriented.second, null)
         }
         AttachmentCategory.PDF -> {
-            val pageCount = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use(::readPdfPageCount)
-                ?: return null
-            ProbedMetadata(null, null, pageCount)
+            if (containsPdfEncryptionDictionary(file)) {
+                ProbedMetadata(
+                    imageWidth = null,
+                    imageHeight = null,
+                    pdfPageCount = null,
+                    isPasswordProtectedPdf = true,
+                )
+            } else {
+                val probe = ParcelFileDescriptor.open(
+                    file,
+                    ParcelFileDescriptor.MODE_READ_ONLY,
+                ).use(::probePdfMetadata)
+                when (probe) {
+                    is PdfMetadataProbe.Readable -> ProbedMetadata(
+                        imageWidth = null,
+                        imageHeight = null,
+                        pdfPageCount = probe.pageCount,
+                        isPasswordProtectedPdf = false,
+                    )
+                    PdfMetadataProbe.PasswordProtected -> ProbedMetadata(
+                        imageWidth = null,
+                        imageHeight = null,
+                        pdfPageCount = null,
+                        isPasswordProtectedPdf = true,
+                    )
+                    PdfMetadataProbe.Unreadable -> null
+                }
+            }
         }
         AttachmentCategory.TEXT,
         AttachmentCategory.DOCUMENT,
@@ -526,9 +566,6 @@ class AndroidAttachmentFileManager(
             null
         }
     }
-
-    private fun readPdfPageCount(descriptor: ParcelFileDescriptor): Int? =
-        PdfRenderer(descriptor).use { renderer -> renderer.pageCount.takeIf { it > 0 } }
 
     private suspend fun ensureEncrypted(
         file: File,
@@ -597,6 +634,7 @@ class AndroidAttachmentFileManager(
         val imageWidth: Int?,
         val imageHeight: Int?,
         val pdfPageCount: Int?,
+        val isPasswordProtectedPdf: Boolean = false,
     )
 
     companion object {

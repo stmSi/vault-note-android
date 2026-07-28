@@ -9,8 +9,9 @@ import com.vaultnote.core.common.Clock
 import com.vaultnote.core.common.DispatcherProvider
 import com.vaultnote.core.common.IdGenerator
 import com.vaultnote.core.common.RepositoryResult
-import com.vaultnote.core.common.model.SyncOperationType
+import com.vaultnote.core.common.model.OcrState
 import com.vaultnote.core.common.model.SyncOperationState
+import com.vaultnote.core.common.model.SyncOperationType
 import com.vaultnote.core.database.VaultDatabase
 import com.vaultnote.core.database.entity.AttachmentFileCleanupEntity
 import com.vaultnote.core.database.entity.SyncOperationEntity
@@ -152,6 +153,21 @@ class RoomAttachmentRepositoryTest {
         assertEquals(2L, upload.targetRevision)
         assertEquals(SyncOperationType.UPSERT_ITEM, itemUpsert.operationType)
         assertEquals(2L, itemUpsert.targetRevision)
+    }
+
+    @Test
+    fun `password-protected PDF imports without scheduling unsupported OCR`() = runBlocking {
+        val itemId = vaultRepository.createNote("Protected document", "").successValue()
+        files.passwordProtectedPdf = true
+
+        val imported = repository.importFromUri(itemId, SOURCE_URI).successValue().attachment
+
+        assertNull(imported.pdfPageCount)
+        assertEquals(OcrState.NOT_APPLICABLE, imported.ocrState)
+        assertEquals(
+            OcrState.NOT_APPLICABLE,
+            database.attachmentDao().getById(imported.id)?.ocrState,
+        )
     }
 
     @Test
@@ -599,6 +615,7 @@ class RoomAttachmentRepositoryTest {
         var preparedLocalPathOverride: String? = null
         var preparedThumbnailPathOverride: String? = null
         var encryptionUpgradeFailure: AppError? = null
+        var passwordProtectedPdf: Boolean = false
 
         override fun planAttachmentPaths(
             attachmentId: String,
@@ -619,7 +636,8 @@ class RoomAttachmentRepositoryTest {
                     validationLevel = AttachmentValidationLevel.FULL,
                     imageWidth = null,
                     imageHeight = null,
-                    pdfPageCount = 2,
+                    pdfPageCount = if (passwordProtectedPdf) null else 2,
+                    isPasswordProtectedPdf = passwordProtectedPdf,
                 ),
             )
 
@@ -652,7 +670,8 @@ class RoomAttachmentRepositoryTest {
                     format = AttachmentFormat.PDF,
                     imageWidth = null,
                     imageHeight = null,
-                    pdfPageCount = 2,
+                    pdfPageCount = if (passwordProtectedPdf) null else 2,
+                    isPasswordProtectedPdf = passwordProtectedPdf,
                 ),
             )
         }

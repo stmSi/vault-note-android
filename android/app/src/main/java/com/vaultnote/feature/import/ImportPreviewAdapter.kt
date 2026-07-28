@@ -23,6 +23,7 @@ internal data class ImportCandidateRow(
     val renameEnabled: Boolean,
     val sourceUri: Uri,
     val category: AttachmentCategory?,
+    val isPasswordProtectedPdf: Boolean,
 )
 
 internal class ImportPreviewAdapter(
@@ -64,6 +65,11 @@ internal class ImportPreviewAdapter(
             binding.name.text = row.displayName
             binding.metadata.text = when {
                 !row.accepted -> context.getString(R.string.file_not_supported)
+                row.isPasswordProtectedPdf && row.sizeBytes != null -> context.getString(
+                    R.string.password_protected_pdf_metadata,
+                    Formatter.formatShortFileSize(context, row.sizeBytes),
+                )
+                row.isPasswordProtectedPdf -> context.getString(R.string.password_protected_pdf)
                 row.sizeBytes != null -> context.getString(
                     R.string.attachment_metadata,
                     row.mimeType.orEmpty(),

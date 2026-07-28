@@ -921,7 +921,7 @@ class RoomAttachmentRepository(
             createdAt = createdAt,
             ocrState = if (
                 format.category == AttachmentCategory.IMAGE ||
-                format.category == AttachmentCategory.PDF
+                (format.category == AttachmentCategory.PDF && !isPasswordProtectedPdf)
             ) {
                 OcrState.PENDING
             } else {

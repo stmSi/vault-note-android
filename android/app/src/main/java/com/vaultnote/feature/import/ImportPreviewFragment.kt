@@ -192,6 +192,7 @@ class ImportPreviewFragment : Fragment() {
             renameEnabled = renameEnabled && preview != null,
             sourceUri = candidate.source.uri,
             category = preview?.format?.category,
+            isPasswordProtectedPdf = preview?.isPasswordProtectedPdf == true,
         )
     }
 

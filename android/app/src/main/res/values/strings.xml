@@ -131,6 +131,8 @@
     <string name="file_not_supported">Not supported</string>
     <string name="file_ready">Ready to import</string>
     <string name="attachment_metadata">%1$s · %2$s</string>
+    <string name="password_protected_pdf">Password-protected PDF</string>
+    <string name="password_protected_pdf_metadata">Password-protected PDF · %1$s</string>
     <string name="selected_file_number">Selected file %1$d</string>
     <plurals name="import_progress">
         <item quantity="one">Imported %1$d of %2$d file</item>

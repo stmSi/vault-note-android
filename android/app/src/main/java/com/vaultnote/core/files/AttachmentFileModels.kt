@@ -130,6 +130,7 @@ data class AttachmentPreview(
     val imageWidth: Int?,
     val imageHeight: Int?,
     val pdfPageCount: Int?,
+    val isPasswordProtectedPdf: Boolean = false,
 )
 
 data class PreparedAttachment(
@@ -145,6 +146,7 @@ data class PreparedAttachment(
     val imageWidth: Int?,
     val imageHeight: Int?,
     val pdfPageCount: Int?,
+    val isPasswordProtectedPdf: Boolean = false,
 )
 
 data class PlannedAttachmentPaths(
