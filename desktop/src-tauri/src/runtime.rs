@@ -6,6 +6,7 @@ use std::{
 use crate::{
     crypto::AttachmentCrypto,
     database::{self, Database},
+    embedded_relay::EmbeddedRelayHost,
     error::AppError,
     models::{AuthStatus, VaultEncryptionMode},
     repository::{SqliteVaultRepository, VaultRepository},
@@ -23,6 +24,7 @@ pub struct RuntimeState {
     key_store: VaultKeyStore,
     plaintext_store: PlaintextVaultStore,
     services: RwLock<Option<AppState>>,
+    embedded_relay: EmbeddedRelayHost,
 }
 
 impl RuntimeState {
@@ -31,12 +33,14 @@ impl RuntimeState {
             .parent()
             .ok_or_else(|| std::io::Error::other("application data directory unavailable"))?
             .to_owned();
+        let embedded_relay = EmbeddedRelayHost::new(&app_data_directory)?;
         let state = Self {
             key_store: VaultKeyStore::new(&app_data_directory),
             plaintext_store: PlaintextVaultStore::new(&app_data_directory),
             database_path,
             app_data_directory,
             services: RwLock::new(None),
+            embedded_relay,
         };
         if state.configured_mode()? == VaultEncryptionMode::Unencrypted {
             *state.services.write().map_err(|_| AppError::StateLock)? =
@@ -116,6 +120,10 @@ impl RuntimeState {
         operation(services.as_ref().ok_or(AppError::AuthenticationRequired)?)
     }
 
+    pub fn embedded_relay(&self) -> EmbeddedRelayHost {
+        self.embedded_relay.clone()
+    }
+
     fn open_services(&self, master_key: MasterKey) -> Result<AppState, AppError> {
         let master_key = Arc::new(master_key);
         let database = Database::open(&self.database_path, master_key.as_bytes())?;
@@ -171,12 +179,14 @@ impl RuntimeState {
             .parent()
             .ok_or_else(|| std::io::Error::other("application data directory unavailable"))?
             .to_owned();
+        let embedded_relay = EmbeddedRelayHost::for_tests(&app_data_directory)?;
         let state = Self {
             key_store: VaultKeyStore::with_test_parameters(&app_data_directory),
             plaintext_store: PlaintextVaultStore::new(&app_data_directory),
             database_path,
             app_data_directory,
             services: RwLock::new(None),
+            embedded_relay,
         };
         if state.configured_mode()? == VaultEncryptionMode::Unencrypted {
             *state.services.write().map_err(|_| AppError::StateLock)? =

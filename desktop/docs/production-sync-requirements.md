@@ -4,6 +4,10 @@ VaultNote Desktop implements protocol 3 against the opaque HTTPS relay in `sync-
 
 ## Implemented behavior
 
+- The normal Android-to-desktop path needs no separately installed relay. VaultNote Desktop embeds the same protocol-3 relay library, creates its private identity under the desktop app-data directory, binds to the LAN, and advertises itself through mDNS after the user selects **Start phone sync**.
+- Once enabled, the embedded host starts asynchronously on later desktop launches. It remains available while the desktop process is running, including while a password-protected local vault is locked, because the host stores only opaque encrypted relay records and has no sync content key.
+- First enablement self-pairs the desktop client and briefly displays the phone token. Android discovers the desktop, pins the displayed certificate fingerprint, and uses the same sync password. The token is never written to a plaintext convenience file.
+- A standalone `sync-server` remains supported for advanced always-on or multi-desktop deployments, but it is not required for ordinary local-network use.
 - Manual pairing requires host, port, relay token, sync password, vault identity, pinned TLS SHA-256 fingerprint, and explicit fingerprint confirmation.
 - `_vaultnote-sync._tcp.local.` discovery advertises no credentials. A paired endpoint may move only when both the vault ID and pinned fingerprint match.
 - The relay token and derived sync master key are stored in an authenticated local credential envelope. An encrypted local vault protects that envelope with a vault-derived key. An unencrypted local vault requires the separate sync password again after process restart.
@@ -34,7 +38,7 @@ The sync password is not persisted. Pairing credentials necessarily pass through
 - Queue retry delay: 5 seconds doubling to a 6-hour cap.
 - Queue lease: 60 seconds.
 
-Phone hotspots and some access points suppress multicast, so manual host/port entry remains necessary. Automatic sync runs every 45 seconds only while both the local vault and sync credentials are unlocked; explicit sync remains available at any time.
+Phone hotspots and some access points suppress multicast, so Android retains manual host/port entry as a fallback. A desktop firewall may require one approval for inbound VaultNote traffic. Automatic client sync runs every 45 seconds only while both the local vault and sync credentials are unlocked; the embedded opaque host itself can remain available while the local vault is locked.
 
 ## Focused verification
 

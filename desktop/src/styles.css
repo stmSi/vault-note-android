@@ -331,6 +331,127 @@ button:disabled {
   border-radius: 8px;
 }
 
+.embedded-host-card {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(280px, auto);
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  background: var(--vn-field-background);
+  border: 1px solid var(--vn-settings-border);
+  border-radius: 12px;
+  box-shadow: 0 5px 18px rgb(19 61 66 / 7%);
+}
+
+.embedded-host-card.hosting {
+  border-color: #7dbca9;
+  box-shadow:
+    inset 3px 0 #27876c,
+    0 5px 18px rgb(19 61 66 / 8%);
+}
+
+.embedded-host-copy {
+  min-width: 0;
+}
+
+.embedded-host-copy strong {
+  font-size: 14px;
+}
+
+.embedded-host-copy p,
+.reset-phone-access p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--vn-muted);
+}
+
+.embedded-host-actions,
+.embedded-host-buttons {
+  display: flex;
+  align-items: end;
+  justify-content: end;
+  gap: 9px;
+}
+
+.embedded-host-actions label,
+.embedded-password {
+  min-width: 220px;
+}
+
+.embedded-host-actions input,
+.embedded-password input,
+.reset-phone-access input {
+  width: 100%;
+}
+
+.reset-phone-access > summary,
+.advanced-relay > summary {
+  color: var(--vn-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.reset-phone-access[open] {
+  display: grid;
+  gap: 8px;
+  min-width: 240px;
+  padding: 10px;
+  background: var(--vn-field-background);
+  border: 1px solid var(--vn-settings-border);
+  border-radius: 9px;
+}
+
+.phone-pairing-details {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.4fr) auto;
+  align-items: end;
+  gap: 10px 14px;
+  padding: 14px;
+  background: #edf8f3;
+  border: 1px solid #8bc5b3;
+  border-radius: 12px;
+}
+
+.phone-pairing-details ol {
+  margin: 7px 0 0;
+  padding-left: 20px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.phone-token input {
+  width: 100%;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.phone-fingerprint {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 3px;
+}
+
+.phone-fingerprint span {
+  font-size: 11px;
+  color: var(--vn-muted);
+}
+
+.phone-fingerprint code {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.advanced-relay {
+  display: grid;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.advanced-relay[open] > summary {
+  margin-bottom: 12px;
+}
+
 .backup-controls {
   justify-content: end;
   border-left: 1px solid #b9d8d0;
@@ -821,6 +942,17 @@ button:disabled {
     border-top: 1px solid #b9d8d0;
     border-left: 0;
   }
+
+  .embedded-host-card,
+  .phone-pairing-details {
+    grid-template-columns: 1fr;
+  }
+
+  .embedded-host-actions,
+  .embedded-host-buttons {
+    justify-content: start;
+    flex-wrap: wrap;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -927,7 +1059,8 @@ button:disabled {
   }
 
   .relay-summary,
-  .sync-message {
+  .sync-message,
+  .phone-pairing-details {
     color: #d7e8e2;
     background: rgb(4 16 14 / 34%);
     border-color: #435f58;

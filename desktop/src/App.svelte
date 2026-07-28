@@ -14,12 +14,15 @@
     deleteAttachment,
     disconnectRelay,
     discoverRelays,
+    enableEmbeddedRelay,
     exportCalendarEntry,
     exportAttachment,
     exportBackup,
     exportPlaintextBackup,
     getNote,
     getAuthStatus,
+    getEmbeddedRelayPairingDetails,
+    getEmbeddedRelayStatus,
     getSyncConnectionStatus,
     getSyncQueueStatus,
     importAttachment,
@@ -37,6 +40,7 @@
     restoreBackup,
     restoreBackupPath,
     restorePlaintextBackup,
+    resetEmbeddedRelayAccess,
     runSync,
     saveDatedEntry,
     saveStructuredNote,
@@ -60,6 +64,8 @@
     DatedEntry,
     DatedEntryDraft,
     DiscoveredRelay,
+    EmbeddedRelayPairingDetails,
+    EmbeddedRelayStatus,
     NoteBodyDocument,
     SyncQueueStatus,
     SyncConnectionStatus,
@@ -153,6 +159,11 @@
   let relayBusy = false;
   let syncMessage = '';
   let automaticSyncTimer: ReturnType<typeof setInterval> | undefined;
+  let embeddedRelay: EmbeddedRelayStatus | null = null;
+  let embeddedPairing: EmbeddedRelayPairingDetails | null = null;
+  let embeddedPassword = '';
+  let embeddedBusy = false;
+  let embeddedPairingTimer: ReturnType<typeof setTimeout> | undefined;
 
   onMount(() => {
     themePreference = storedThemePreference();
@@ -201,6 +212,7 @@
           loadVisibleItems(),
           refreshQueueStatus(),
           refreshSyncConnection(),
+          refreshEmbeddedRelay(),
           refreshReminderSchedule(false),
         ]);
       }
@@ -219,6 +231,7 @@
         loadVisibleItems(),
         refreshQueueStatus(),
         refreshSyncConnection(),
+        refreshEmbeddedRelay(),
         refreshReminderSchedule(false),
       ]);
     } catch (error) {
@@ -244,6 +257,8 @@
       listState = { kind: 'loading' };
       securityPanelOpen = false;
       syncConnection = null;
+      embeddedPairing = null;
+      embeddedPassword = '';
       relayPassword = '';
       relayToken = '';
     } catch (error) {
@@ -269,6 +284,7 @@
         loadVisibleItems(),
         refreshQueueStatus(),
         refreshSyncConnection(),
+        refreshEmbeddedRelay(),
         refreshReminderSchedule(false),
       ]);
     } catch (error) {
@@ -294,6 +310,7 @@
         loadVisibleItems(),
         refreshQueueStatus(),
         refreshSyncConnection(),
+        refreshEmbeddedRelay(),
         refreshReminderSchedule(false),
       ]);
     } catch (error) {
@@ -407,6 +424,9 @@
     feedbackMessage = message;
     if (feedbackTimer !== undefined) {
       clearTimeout(feedbackTimer);
+    }
+    if (embeddedPairingTimer !== undefined) {
+      clearTimeout(embeddedPairingTimer);
     }
     feedbackTimer = setTimeout(() => {
       feedbackMessage = '';
@@ -667,6 +687,105 @@
       }
     } catch (error) {
       actionError = commandError(error);
+    }
+  }
+
+  async function refreshEmbeddedRelay(): Promise<void> {
+    try {
+      embeddedRelay = await getEmbeddedRelayStatus();
+    } catch (error) {
+      actionError = commandError(error);
+    }
+  }
+
+  function retainEmbeddedPairing(details: EmbeddedRelayPairingDetails): void {
+    embeddedPairing = details;
+    if (embeddedPairingTimer !== undefined) {
+      clearTimeout(embeddedPairingTimer);
+    }
+    embeddedPairingTimer = setTimeout(() => {
+      embeddedPairing = null;
+      embeddedPairingTimer = undefined;
+    }, 120_000);
+  }
+
+  async function startEmbeddedRelay(): Promise<void> {
+    if (embeddedPassword.length < 8) {
+      return;
+    }
+    embeddedBusy = true;
+    actionError = null;
+    syncMessage = 'Starting private sync hosting on this computer…';
+    try {
+      const details = await enableEmbeddedRelay(embeddedPassword);
+      embeddedPassword = '';
+      embeddedRelay = details.status;
+      retainEmbeddedPairing(details);
+      syncMessage = 'Local sync is ready. On Android, tap Find VaultNote Desktop and use the details below.';
+      await synchronize(true);
+    } catch (error) {
+      embeddedPassword = '';
+      actionError = commandError(error);
+      syncMessage = '';
+      await refreshEmbeddedRelay();
+    } finally {
+      embeddedBusy = false;
+    }
+  }
+
+  async function revealEmbeddedPairing(): Promise<void> {
+    embeddedBusy = true;
+    actionError = null;
+    try {
+      const details = await getEmbeddedRelayPairingDetails(embeddedPassword);
+      embeddedPassword = '';
+      embeddedRelay = details.status;
+      retainEmbeddedPairing(details);
+    } catch (error) {
+      embeddedPassword = '';
+      actionError = commandError(error);
+    } finally {
+      embeddedBusy = false;
+    }
+  }
+
+  async function copyEmbeddedToken(): Promise<void> {
+    if (embeddedPairing === null) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(embeddedPairing.authenticationToken);
+      showFeedback('Phone pairing token copied');
+    } catch {
+      actionError = {
+        code: 'clipboard_unavailable',
+        message: 'Clipboard access is unavailable. Select and copy the token manually.',
+        retryable: false,
+      };
+    }
+  }
+
+  async function resetEmbeddedAccess(): Promise<void> {
+    if (
+      embeddedPassword.length < 8 ||
+      !window.confirm('Replace the phone access token? Existing phones must pair again.')
+    ) {
+      return;
+    }
+    embeddedBusy = true;
+    actionError = null;
+    try {
+      const details = await resetEmbeddedRelayAccess(embeddedPassword);
+      embeddedPassword = '';
+      embeddedRelay = details.status;
+      retainEmbeddedPairing(details);
+      syncMessage = 'Phone access was replaced. Pair Android again with the new token.';
+      await synchronize(true);
+    } catch (error) {
+      embeddedPassword = '';
+      actionError = commandError(error);
+    } finally {
+      embeddedBusy = false;
     }
   }
 
@@ -1254,16 +1373,130 @@
         <div class="section-heading">
           <div>
             <strong>Android ↔ desktop LAN sync</strong>
-            <p>Relay data is encrypted before it leaves either VaultNote client.</p>
+            <p>This computer can host encrypted sync. No separate server or relay setup is required.</p>
           </div>
-          <span class:connected={syncConnection?.unlocked} class="connection-badge">
-            {syncConnection?.unlocked
-              ? 'Connected'
+          <span class:connected={embeddedRelay?.running || syncConnection?.unlocked} class="connection-badge">
+            {embeddedRelay?.running
+              ? 'Hosting'
+              : syncConnection?.unlocked
+                ? 'Connected'
               : syncConnection?.configured
                 ? 'Locked'
                 : 'Not paired'}
           </span>
         </div>
+
+        <div class="embedded-host-card" class:hosting={embeddedRelay?.running}>
+          {#if embeddedRelay === null}
+            <p>Checking local sync hosting…</p>
+          {:else if !embeddedRelay.enabled}
+            <div class="embedded-host-copy">
+              <strong>Sync directly with Android</strong>
+              <p>Choose one sync password. VaultNote starts and advertises the private host automatically whenever the desktop app is open.</p>
+            </div>
+            <form
+              class="embedded-host-actions"
+              onsubmit={(event) => {
+                event.preventDefault();
+                void startEmbeddedRelay();
+              }}
+            >
+              <label>
+                <span>Sync password</span>
+                <input
+                  required
+                  type="password"
+                  minlength="8"
+                  maxlength="1024"
+                  autocomplete="new-password"
+                  bind:value={embeddedPassword}
+                />
+              </label>
+              <button disabled={embeddedBusy || embeddedPassword.length < 8}>
+                {embeddedBusy ? 'Starting…' : 'Start phone sync'}
+              </button>
+            </form>
+          {:else}
+            <div class="embedded-host-copy">
+              <strong>{embeddedRelay.running ? 'This computer is discoverable' : 'Local sync host is unavailable'}</strong>
+              <p>
+                {embeddedRelay.running
+                  ? `Android can find VaultNote Desktop on port ${embeddedRelay.port}. Hosting continues while this app is open, even when the vault is locked.`
+                  : 'Retry starting the host, and allow VaultNote through the desktop firewall if prompted.'}
+              </p>
+            </div>
+            {#if syncConnection?.requiresPassword}
+              <label class="embedded-password">
+                <span>Sync password</span>
+                <input
+                  type="password"
+                  minlength="8"
+                  maxlength="1024"
+                  autocomplete="current-password"
+                  bind:value={embeddedPassword}
+                />
+              </label>
+            {/if}
+            <div class="embedded-host-buttons">
+              <button
+                disabled={embeddedBusy ||
+                  !embeddedRelay.running ||
+                  (syncConnection?.requiresPassword === true && embeddedPassword.length < 8)}
+                onclick={() => void revealEmbeddedPairing()}
+              >
+                {embeddedBusy ? 'Loading…' : 'Show phone details'}
+              </button>
+              <details class="reset-phone-access">
+                <summary>Replace phone access</summary>
+                <p>This disconnects previously paired phones.</p>
+                <label>
+                  <span>Sync password</span>
+                  <input
+                    type="password"
+                    minlength="8"
+                    maxlength="1024"
+                    autocomplete="current-password"
+                    bind:value={embeddedPassword}
+                  />
+                </label>
+                <button
+                  class="danger-button"
+                  disabled={embeddedBusy || embeddedPassword.length < 8}
+                  onclick={() => void resetEmbeddedAccess()}
+                >
+                  Replace token
+                </button>
+              </details>
+            </div>
+          {/if}
+        </div>
+
+        {#if embeddedPairing !== null}
+          <div class="phone-pairing-details" role="status">
+            <div>
+              <strong>Connect Android</strong>
+              <ol>
+                <li>Open VaultNote → Sync and tap <b>Find VaultNote Desktop</b>.</li>
+                <li>Confirm this certificate fingerprint matches the phone.</li>
+                <li>Paste the token and enter the same sync password.</li>
+              </ol>
+            </div>
+            <label class="phone-token">
+              <span>Phone pairing token · hidden again in two minutes</span>
+              <input
+                readonly
+                spellcheck="false"
+                value={embeddedPairing.authenticationToken}
+                onclick={(event) => event.currentTarget.select()}
+              />
+            </label>
+            <button onclick={() => void copyEmbeddedToken()}>Copy token</button>
+            <div class="phone-fingerprint">
+              <span>Certificate SHA-256</span>
+              <code>{embeddedPairing.status.certificateSha256}</code>
+            </div>
+          </div>
+        {/if}
 
         {#if syncConnection?.configured}
           <div class="relay-summary">
@@ -1307,9 +1540,11 @@
               <button disabled={syncRunning} onclick={() => void synchronize(true)}>
                 {syncRunning ? 'Syncing…' : 'Sync now'}
               </button>
-              <button class="danger-button" disabled={relayBusy} onclick={forgetRelay}>
-                Disconnect
-              </button>
+              {#if !embeddedRelay?.enabled}
+                <button class="danger-button" disabled={relayBusy} onclick={forgetRelay}>
+                  Disconnect
+                </button>
+              {/if}
             </div>
           {:else}
             <p role="alert">The saved pairing could not be unlocked. Pair this relay again.</p>
@@ -1318,94 +1553,97 @@
             </button>
           {/if}
         {:else}
-          <div class="relay-discovery">
-            <button class="secondary-button" disabled={relayBusy} onclick={findRelays}>
-              {relayBusy ? 'Discovering…' : 'Find relays automatically'}
-            </button>
-            {#if discoveredRelays.length > 0}
-              <div class="relay-results" aria-label="Discovered relays">
-                {#each discoveredRelays as relay (`${relay.vaultId}-${relay.hostAddress}-${relay.port}`)}
-                  <button type="button" onclick={() => selectRelay(relay)}>
-                    <strong>{relay.instanceName}</strong>
-                    <span>{relay.hostAddress}:{relay.port} · {relay.vaultId}</span>
-                  </button>
-                {/each}
-              </div>
-            {/if}
-          </div>
-          <form
-            class="relay-pair-form"
-            onsubmit={(event) => {
-              event.preventDefault();
-              void connectRelay();
-            }}
-          >
-            <label>
-              <span>Relay address</span>
-              <input
-                required
-                maxlength="253"
-                autocomplete="off"
-                placeholder="192.168.1.20"
-                bind:value={relayHostAddress}
-              />
-            </label>
-            <label>
-              <span>Port</span>
-              <input required type="number" min="1" max="65535" bind:value={relayPort} />
-            </label>
-            <label>
-              <span>Vault ID</span>
-              <input maxlength="128" autocomplete="off" bind:value={relayVaultId} />
-            </label>
-            <label class="wide-field">
-              <span>Certificate SHA-256 fingerprint</span>
-              <input
-                required
-                minlength="64"
-                maxlength="64"
-                spellcheck="false"
-                autocomplete="off"
-                bind:value={relayFingerprint}
-              />
-            </label>
-            <label class="wide-field">
-              <span>Relay token</span>
-              <input
-                required
-                type="password"
-                maxlength="128"
-                autocomplete="off"
-                bind:value={relayToken}
-              />
-            </label>
-            <label class="wide-field">
-              <span>Sync password</span>
-              <input
-                required
-                type="password"
-                minlength="8"
-                maxlength="1024"
-                autocomplete="new-password"
-                bind:value={relayPassword}
-              />
-            </label>
-            <label class="fingerprint-confirm wide-field">
-              <input type="checkbox" bind:checked={relayFingerprintConfirmed} />
-              <span>I compared and trust this relay certificate fingerprint.</span>
-            </label>
-            <button
-              class="wide-field"
-              disabled={relayBusy ||
-                relayHostAddress.trim().length === 0 ||
-                relayFingerprint.trim().length !== 64 ||
-                relayToken.length === 0 ||
-                relayPassword.length < 8 ||
-                !relayFingerprintConfirmed}
+          <details class="advanced-relay">
+            <summary>Advanced: connect through another host</summary>
+            <div class="relay-discovery">
+              <button class="secondary-button" disabled={relayBusy} onclick={findRelays}>
+                {relayBusy ? 'Discovering…' : 'Find relays automatically'}
+              </button>
+              {#if discoveredRelays.length > 0}
+                <div class="relay-results" aria-label="Discovered relays">
+                  {#each discoveredRelays as relay (`${relay.vaultId}-${relay.hostAddress}-${relay.port}`)}
+                    <button type="button" onclick={() => selectRelay(relay)}>
+                      <strong>{relay.instanceName}</strong>
+                      <span>{relay.hostAddress}:{relay.port} · {relay.vaultId}</span>
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+            <form
+              class="relay-pair-form"
+              onsubmit={(event) => {
+                event.preventDefault();
+                void connectRelay();
+              }}
             >
-              {relayBusy ? 'Verifying…' : 'Pair securely'}
-            </button>
-          </form>
+              <label>
+                <span>Relay address</span>
+                <input
+                  required
+                  maxlength="253"
+                  autocomplete="off"
+                  placeholder="192.168.1.20"
+                  bind:value={relayHostAddress}
+                />
+              </label>
+              <label>
+                <span>Port</span>
+                <input required type="number" min="1" max="65535" bind:value={relayPort} />
+              </label>
+              <label>
+                <span>Vault ID</span>
+                <input maxlength="128" autocomplete="off" bind:value={relayVaultId} />
+              </label>
+              <label class="wide-field">
+                <span>Certificate SHA-256 fingerprint</span>
+                <input
+                  required
+                  minlength="64"
+                  maxlength="64"
+                  spellcheck="false"
+                  autocomplete="off"
+                  bind:value={relayFingerprint}
+                />
+              </label>
+              <label class="wide-field">
+                <span>Relay token</span>
+                <input
+                  required
+                  type="password"
+                  maxlength="128"
+                  autocomplete="off"
+                  bind:value={relayToken}
+                />
+              </label>
+              <label class="wide-field">
+                <span>Sync password</span>
+                <input
+                  required
+                  type="password"
+                  minlength="8"
+                  maxlength="1024"
+                  autocomplete="new-password"
+                  bind:value={relayPassword}
+                />
+              </label>
+              <label class="fingerprint-confirm wide-field">
+                <input type="checkbox" bind:checked={relayFingerprintConfirmed} />
+                <span>I compared and trust this relay certificate fingerprint.</span>
+              </label>
+              <button
+                class="wide-field"
+                disabled={relayBusy ||
+                  relayHostAddress.trim().length === 0 ||
+                  relayFingerprint.trim().length !== 64 ||
+                  relayToken.length === 0 ||
+                  relayPassword.length < 8 ||
+                  !relayFingerprintConfirmed}
+              >
+                {relayBusy ? 'Verifying…' : 'Pair securely'}
+              </button>
+            </form>
+          </details>
         {/if}
         {#if syncMessage}<p class="sync-message" role="status">{syncMessage}</p>{/if}
       </div>

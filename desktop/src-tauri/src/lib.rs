@@ -2,6 +2,7 @@ mod backup;
 mod commands;
 mod crypto;
 mod database;
+mod embedded_relay;
 mod error;
 mod lan_discovery;
 mod models;
@@ -27,7 +28,12 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let database_path = storage::prepare_database_path(app.handle())?;
-            app.manage(RuntimeState::new(database_path)?);
+            let runtime = RuntimeState::new(database_path)?;
+            let embedded_relay = runtime.embedded_relay();
+            app.manage(runtime);
+            tauri::async_runtime::spawn(async move {
+                let _ = embedded_relay.start_if_enabled().await;
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -56,6 +62,10 @@ pub fn run() {
             commands::unlock_sync,
             commands::disconnect_relay,
             commands::run_sync,
+            commands::embedded_relay_status,
+            commands::enable_embedded_relay,
+            commands::embedded_relay_pairing_details,
+            commands::reset_embedded_relay_access,
             commands::auth_status,
             commands::initialize_vault,
             commands::initialize_unencrypted_vault,

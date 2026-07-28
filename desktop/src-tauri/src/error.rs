@@ -57,6 +57,8 @@ pub enum AppError {
     CorruptedSync,
     #[error("local data changed while synchronization was in progress")]
     SyncChangedLocally,
+    #[error("embedded LAN sync host is unavailable")]
+    EmbeddedRelayUnavailable,
 }
 
 #[derive(Debug, Serialize)]
@@ -76,6 +78,10 @@ impl From<AppError> for CommandError {
                     "body" => ("invalid_body", "The note body is invalid."),
                     "query" => ("invalid_query", "The search query is invalid."),
                     "id" => ("invalid_id", "The note identifier is invalid."),
+                    "sync_password" => (
+                        "invalid_sync_password",
+                        "Use a sync password containing at least 8 characters.",
+                    ),
                     _ => ("invalid_input", "The request is invalid."),
                 };
                 let _ = reason;
@@ -203,6 +209,11 @@ impl From<AppError> for CommandError {
             AppError::SyncChangedLocally => Self {
                 code: "sync_changed_locally",
                 message: "The item changed during synchronization. VaultNote will retry safely.",
+                retryable: true,
+            },
+            AppError::EmbeddedRelayUnavailable => Self {
+                code: "embedded_relay_unavailable",
+                message: "VaultNote could not start local sync hosting. Check the network and firewall, then retry.",
                 retryable: true,
             },
         }

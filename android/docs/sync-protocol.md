@@ -14,6 +14,8 @@ Android stores the token and derived master key only inside an AES-GCM credentia
 
 Desktop stores the same secrets in an authenticated credential envelope. An encrypted desktop vault wraps it with a vault-derived subkey; an unencrypted desktop vault deliberately requires the separate sync password again after restart. Desktop also stores neither the sync password nor plaintext credentials.
 
+For ordinary LAN use, VaultNote Desktop embeds and manages the opaque relay. The user starts phone sync once in desktop settings; subsequent desktop launches start the configured host asynchronously and advertise it through mDNS. The relay remains content-blind and may run while the desktop vault is locked. The standalone `sync-server` process is an optional advanced deployment, not a requirement for Android-to-desktop synchronization.
+
 ## Item schema
 
 Item IDs and attachment IDs are collision-resistant client-generated strings. Persisted enum values are stable uppercase codes. Timestamps are UTC epoch milliseconds for display/audit only; they do not decide conflicts.

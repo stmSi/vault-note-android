@@ -165,6 +165,19 @@ export interface SyncRunReport {
   deletedAttachments: number;
 }
 
+export interface EmbeddedRelayStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number | null;
+  vaultId: string | null;
+  certificateSha256: string | null;
+}
+
+export interface EmbeddedRelayPairingDetails {
+  status: EmbeddedRelayStatus;
+  authenticationToken: string;
+}
+
 export interface AuthStatus {
   setupRequired: boolean;
   unlocked: boolean;

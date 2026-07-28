@@ -1,6 +1,6 @@
 [package]
 name = "vaultnote-desktop"
-version = "0.2.0"
+version = "0.3.0"
 description = "Offline-first VaultNote desktop client"
 authors = ["VaultNote contributors"]
 edition = "2024"
@@ -16,10 +16,12 @@ tauri-build = { version = "2.6.3", features = [] }
 [dependencies]
 argon2 = { version = "0.5.3", features = ["std", "zeroize"] }
 aes-gcm = { version = "0.10.3", features = ["std", "zeroize"] }
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 base64 = "0.22.1"
 chrono = "0.4.42"
 chrono-tz = "0.10.4"
 futures-util = "0.3.32"
+fs2 = "0.4.3"
 hkdf = "0.12.4"
 mdns-sd = { version = "0.20.3", default-features = false }
 openssl = "0.10.81"
@@ -36,20 +38,19 @@ subtle = "2.6.1"
 tauri = { version = "2.11.5", features = [] }
 tauri-plugin-notification = "2"
 thiserror = "2.0.19"
-tokio = { version = "1.53.1", features = ["fs", "io-util", "sync", "time"] }
+tokio = { version = "1.53.1", features = ["fs", "io-util", "rt", "sync", "time"] }
 tokio-util = { version = "0.7.19", features = ["io"] }
 uuid = { version = "1.23.5", features = ["serde", "v4"] }
 unicode-normalization = "0.1.24"
 zeroize = { version = "1.8.2", features = ["derive"] }
 zip = { version = "6.0.0", default-features = false }
+vaultnote-sync-server = { path = "../../sync-server", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rfd = { version = "0.17.2", default-features = false, features = ["wayland", "xdg-portal"] }
 
 [dev-dependencies]
-axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 tempfile = "3.27.0"
-vaultnote-sync-server = { path = "../../sync-server" }
 
 [profile.release]
 codegen-units = 1

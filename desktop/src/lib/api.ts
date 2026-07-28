@@ -6,6 +6,8 @@ import type {
   BackupInspection,
   BackupSummary,
   DiscoveredRelay,
+  EmbeddedRelayPairingDetails,
+  EmbeddedRelayStatus,
   PairRelayInput,
   SearchResult,
   SyncConnectionStatus,
@@ -130,6 +132,28 @@ export function disconnectRelay(): Promise<SyncConnectionStatus> {
 
 export function runSync(): Promise<SyncRunReport> {
   return invoke('run_sync');
+}
+
+export function getEmbeddedRelayStatus(): Promise<EmbeddedRelayStatus> {
+  return invoke('embedded_relay_status');
+}
+
+export function enableEmbeddedRelay(
+  password: string,
+): Promise<EmbeddedRelayPairingDetails> {
+  return invoke('enable_embedded_relay', { request: { password } });
+}
+
+export function getEmbeddedRelayPairingDetails(
+  password: string,
+): Promise<EmbeddedRelayPairingDetails> {
+  return invoke('embedded_relay_pairing_details', { request: { password } });
+}
+
+export function resetEmbeddedRelayAccess(
+  password: string,
+): Promise<EmbeddedRelayPairingDetails> {
+  return invoke('reset_embedded_relay_access', { request: { password } });
 }
 
 export function getAuthStatus(): Promise<AuthStatus> {

@@ -4,6 +4,7 @@ use tauri::State;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
+    embedded_relay::{EmbeddedRelayStart, EmbeddedRelayStatus},
     error::CommandError,
     models::{
         AgendaEntry, AuthStatus, BackupSummary, DatedEntryDraft, NoteBodyDocument, RestoreSummary,
@@ -117,6 +118,20 @@ pub struct RestoreBackupPathRequest {
     path: PathBuf,
     password: Option<String>,
     plaintext_confirmed: bool,
+}
+
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EmbeddedRelayAccessRequest {
+    password: String,
+}
+
+#[derive(serde::Serialize, Zeroize, ZeroizeOnDrop)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddedRelayPairingDetails {
+    #[zeroize(skip)]
+    status: EmbeddedRelayStatus,
+    authentication_token: String,
 }
 
 #[tauri::command]
@@ -405,6 +420,72 @@ pub async fn run_sync(state: State<'_, RuntimeState>) -> Result<SyncRunReport, C
 }
 
 #[tauri::command]
+pub async fn embedded_relay_status(
+    state: State<'_, RuntimeState>,
+) -> Result<EmbeddedRelayStatus, CommandError> {
+    state
+        .embedded_relay()
+        .start_if_enabled()
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn enable_embedded_relay(
+    state: State<'_, RuntimeState>,
+    mut request: EmbeddedRelayAccessRequest,
+) -> Result<EmbeddedRelayPairingDetails, CommandError> {
+    let result = async {
+        validate_sync_password(&request.password)?;
+        let started = state.embedded_relay().enable().await?;
+        pair_with_embedded_relay(&state, started, &request.password).await
+    }
+    .await
+    .map_err(CommandError::from);
+    request.password.zeroize();
+    result
+}
+
+#[tauri::command]
+pub async fn embedded_relay_pairing_details(
+    state: State<'_, RuntimeState>,
+    mut request: EmbeddedRelayAccessRequest,
+) -> Result<EmbeddedRelayPairingDetails, CommandError> {
+    let result = async {
+        let status = state.embedded_relay().start_if_enabled().await?;
+        if !status.enabled || !status.running {
+            return Err(crate::error::AppError::SyncNotConfigured);
+        }
+        let sync = state.with_services(|services| Ok(services.sync.clone()))?;
+        let token = token_for_embedded_relay(&sync, &status, &request.password)?;
+        Ok(EmbeddedRelayPairingDetails {
+            status,
+            authentication_token: token.to_string(),
+        })
+    }
+    .await
+    .map_err(CommandError::from);
+    request.password.zeroize();
+    result
+}
+
+#[tauri::command]
+pub async fn reset_embedded_relay_access(
+    state: State<'_, RuntimeState>,
+    mut request: EmbeddedRelayAccessRequest,
+) -> Result<EmbeddedRelayPairingDetails, CommandError> {
+    let result = async {
+        validate_sync_password(&request.password)?;
+        let started = state.embedded_relay().rotate_access().await?;
+        pair_with_embedded_relay(&state, started, &request.password).await
+    }
+    .await
+    .map_err(CommandError::from);
+    request.password.zeroize();
+    result
+}
+
+#[tauri::command]
 pub fn auth_status(state: State<'_, RuntimeState>) -> Result<AuthStatus, CommandError> {
     state.status().map_err(CommandError::from)
 }
@@ -664,4 +745,78 @@ pub async fn restore_backup_path(
     .await
     .map_err(|_| CommandError::from(crate::error::AppError::InvalidBackup))?
     .map_err(CommandError::from)
+}
+
+async fn pair_with_embedded_relay(
+    state: &RuntimeState,
+    mut started: EmbeddedRelayStart,
+    password: &str,
+) -> Result<EmbeddedRelayPairingDetails, crate::error::AppError> {
+    let vault_id = started
+        .status
+        .vault_id
+        .as_deref()
+        .ok_or(crate::error::AppError::EmbeddedRelayUnavailable)?;
+    let certificate_sha256 = started
+        .status
+        .certificate_sha256
+        .as_deref()
+        .ok_or(crate::error::AppError::EmbeddedRelayUnavailable)?;
+    let port = started
+        .status
+        .port
+        .ok_or(crate::error::AppError::EmbeddedRelayUnavailable)?;
+    let sync = state.with_services(|services| Ok(services.sync.clone()))?;
+    let token = match started.authentication_token.take() {
+        Some(token) => token,
+        None => token_for_embedded_relay(&sync, &started.status, password)?,
+    };
+    sync.pair(PairRelayParameters {
+        host_address: "127.0.0.1".to_owned(),
+        port,
+        certificate_sha256: certificate_sha256.to_owned(),
+        authentication_token: token.to_string(),
+        sync_password: password.to_owned(),
+        expected_vault_id: Some(vault_id.to_owned()),
+        fingerprint_confirmed: true,
+    })
+    .await?;
+    Ok(EmbeddedRelayPairingDetails {
+        status: started.status,
+        authentication_token: token.to_string(),
+    })
+}
+
+fn token_for_embedded_relay(
+    sync: &crate::sync_engine::LanSyncService,
+    status: &EmbeddedRelayStatus,
+    password: &str,
+) -> Result<zeroize::Zeroizing<String>, crate::error::AppError> {
+    let vault_id = status
+        .vault_id
+        .as_deref()
+        .ok_or(crate::error::AppError::EmbeddedRelayUnavailable)?;
+    let certificate_sha256 = status
+        .certificate_sha256
+        .as_deref()
+        .ok_or(crate::error::AppError::EmbeddedRelayUnavailable)?;
+    match sync.authentication_token_for(vault_id, certificate_sha256) {
+        Ok(token) => Ok(token),
+        Err(crate::error::AppError::SyncLocked) if !password.is_empty() => {
+            sync.unlock_sync(password)?;
+            sync.authentication_token_for(vault_id, certificate_sha256)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn validate_sync_password(password: &str) -> Result<(), crate::error::AppError> {
+    if (8..=1024).contains(&password.chars().count()) {
+        Ok(())
+    } else {
+        Err(crate::error::AppError::InvalidInput {
+            field: "sync_password",
+            reason: "sync password must contain 8 to 1024 characters".to_owned(),
+        })
+    }
 }

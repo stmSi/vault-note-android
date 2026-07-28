@@ -160,6 +160,20 @@ impl LanSyncService {
         self.status()
     }
 
+    pub fn authentication_token_for(
+        &self,
+        vault_id: &str,
+        certificate_sha256: &str,
+    ) -> Result<Zeroizing<String>, AppError> {
+        let secrets = self.inner.credentials.active()?;
+        if secrets.public.vault_id != vault_id
+            || secrets.public.certificate_sha256 != certificate_sha256
+        {
+            return Err(AppError::RelayIdentity);
+        }
+        Ok(Zeroizing::new(secrets.authentication_token.to_string()))
+    }
+
     pub async fn discover(&self) -> Result<Vec<DiscoveredRelay>, AppError> {
         tokio::task::spawn_blocking(|| lan_discovery::discover_relays(Duration::from_secs(3)))
             .await
