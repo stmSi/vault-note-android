@@ -48,7 +48,7 @@
         android:ellipsize="end"
         android:maxLines="2"
         android:textAppearance="?attr/textAppearanceBodySmall"
-        android:textColor="@color/vault_on_surface_variant"
+        android:textColor="?attr/colorOnSurfaceVariant"
         app:layout_constraintBottom_toBottomOf="@id/thumbnail"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toEndOf="@id/thumbnail"

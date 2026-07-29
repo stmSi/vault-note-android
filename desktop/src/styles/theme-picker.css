@@ -1,0 +1,66 @@
+.theme-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+  gap: 7px;
+  width: 100%;
+  max-height: 246px;
+  padding: 3px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.theme-option {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 45px;
+  padding: 5px 7px;
+  color: var(--vn-text);
+  text-align: left;
+  background: var(--vn-row-background);
+  border: 1px solid var(--vn-border);
+  border-radius: 9px;
+}
+
+.theme-option > span:last-child {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-option.selected {
+  background: var(--vn-row-selected);
+  border-color: var(--vn-accent);
+  box-shadow: inset 0 0 0 1px var(--vn-accent);
+}
+
+.theme-swatch {
+  width: 40px;
+  height: 31px;
+  border: 1px solid rgb(127 127 127 / 26%);
+  border-radius: 7px;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 18%);
+}
+
+.appearance-controls {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.brand-block p,
+.queue-label {
+  color: var(--vn-on-accent-muted);
+}
+
+.brand-mark {
+  color: var(--vn-accent-header);
+  background: color-mix(in srgb, var(--vn-accent) 32%, white);
+}
+
+.section-tabs button.active {
+  color: var(--vn-control-text);
+}

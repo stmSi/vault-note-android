@@ -41,7 +41,7 @@
             android:gravity="end"
             android:text="@string/save_failed"
             android:textAppearance="?attr/textAppearanceLabelSmall"
-            android:textColor="@color/vault_on_surface_variant" />
+            android:textColor="?attr/colorOnSurfaceVariant" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/save_retry_button"

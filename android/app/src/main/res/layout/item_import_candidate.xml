@@ -43,7 +43,7 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent"
-        app:tint="@color/vault_primary" />
+        app:tint="?attr/colorPrimary" />
 
     <TextView
         android:id="@+id/name"
@@ -65,7 +65,7 @@
         android:ellipsize="end"
         android:maxLines="1"
         android:textAppearance="?attr/textAppearanceBodySmall"
-        android:textColor="@color/vault_on_surface_variant"
+        android:textColor="?attr/colorOnSurfaceVariant"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toStartOf="@id/status_icon"
         app:layout_constraintStart_toStartOf="@id/name"

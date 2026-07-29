@@ -9,7 +9,6 @@ import android.text.style.StyleSpan
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.core.view.isVisible
-import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
@@ -56,8 +55,8 @@ internal class SearchResultAdapter(
         fun bind(result: VaultSearchResult) = with(binding) {
             val context = root.context
             val colorStyle = result.color.toStyle()
-            root.setCardBackgroundColor(ContextCompat.getColor(context, colorStyle.surfaceColor))
-            title.setTextColor(ContextCompat.getColor(context, colorStyle.titleColor))
+            root.setCardBackgroundColor(colorStyle.resolveSurface(context))
+            title.setTextColor(colorStyle.resolveTitle(context))
             val highlightBackground = MaterialColors.getColor(
                 root,
                 com.google.android.material.R.attr.colorSecondaryContainer,

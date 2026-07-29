@@ -9,7 +9,7 @@
     android:focusable="true"
     android:minWidth="@dimen/touch_target"
     android:minHeight="@dimen/touch_target"
-    app:cardBackgroundColor="@color/vault_surface_variant"
+    app:cardBackgroundColor="?attr/colorSurfaceVariant"
     app:cardCornerRadius="12dp"
     app:cardElevation="0dp">
 
@@ -23,7 +23,7 @@
         android:padding="@dimen/space_m"
         android:text="@string/add_attachment_short"
         android:textAppearance="?attr/textAppearanceLabelMedium"
-        app:drawableTint="@color/vault_on_surface_variant"
+        app:drawableTint="?attr/colorOnSurfaceVariant"
         app:drawableTopCompat="@drawable/ic_add_attachment" />
 
 </com.google.android.material.card.MaterialCardView>

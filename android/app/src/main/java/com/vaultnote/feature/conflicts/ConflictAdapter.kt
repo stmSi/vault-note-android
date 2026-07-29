@@ -2,7 +2,6 @@ package com.vaultnote.feature.conflicts
 
 import android.view.LayoutInflater
 import android.view.ViewGroup
-import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
@@ -32,8 +31,8 @@ internal class ConflictAdapter(
         fun bind(item: VaultItemSummary) = with(binding) {
             val context = root.context
             val colors = item.color.toStyle()
-            root.setCardBackgroundColor(ContextCompat.getColor(context, colors.surfaceColor))
-            title.setTextColor(ContextCompat.getColor(context, colors.titleColor))
+            root.setCardBackgroundColor(colors.resolveSurface(context))
+            title.setTextColor(colors.resolveTitle(context))
             title.text = item.title.ifBlank { context.getString(R.string.untitled_note) }
             preview.text = item.bodyPreview
             versionLabel.setText(

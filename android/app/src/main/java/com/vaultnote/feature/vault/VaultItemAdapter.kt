@@ -5,7 +5,6 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.DiffUtil
@@ -83,8 +82,8 @@ internal class VaultItemAdapter(
             val item = row.note
             val context = root.context
             val colorStyle = item.color.toStyle()
-            root.setBackgroundColor(ContextCompat.getColor(context, colorStyle.surfaceColor))
-            title.setTextColor(ContextCompat.getColor(context, colorStyle.titleColor))
+            root.setBackgroundColor(colorStyle.resolveSurface(context))
+            title.setTextColor(colorStyle.resolveTitle(context))
             title.text = item.title.ifBlank { context.getString(R.string.untitled_note) }
             bodyPreview.text = item.bodyPreview
             bodyPreview.visibility = if (item.bodyPreview.isBlank()) View.GONE else View.VISIBLE

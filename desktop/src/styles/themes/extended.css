@@ -1,0 +1,419 @@
+html[data-theme='tokyo_night'] {
+  --vn-surface: #1a1b26;
+  --vn-surface-subtle: #1f2335;
+  --vn-surface-muted: #292e42;
+  --vn-control-background: #24283b;
+  --vn-text: #c0caf5;
+  --vn-text-muted: #a9b1d6;
+  --vn-control-text: #7aa2f7;
+  --vn-border: #3b4261;
+  --vn-border-strong: #737aa2;
+  --vn-accent: #7aa2f7;
+  --vn-accent-strong: #5476c9;
+  --vn-accent-soft: #283d67;
+  --vn-accent-header: #1b2a4d;
+  --vn-app-background: linear-gradient(125deg, #1a1b26, #24283b 52%, #1f2335);
+  --vn-sidebar-background: rgb(26 27 38 / 97%);
+  --vn-editor-background: rgb(31 35 53 / 97%);
+  --vn-header-background: linear-gradient(118deg, #1b2a4d, #394b7a 58%, #4a3565);
+  --vn-header-border: #47577f;
+  --vn-field-background: #24283b;
+  --vn-row-background: rgb(36 40 59 / 95%);
+  --vn-row-selected: #283d67;
+  --vn-settings-background: #202a43;
+  --vn-settings-border: #445275;
+  --vn-focus-ring: rgb(122 162 247 / 38%);
+  --vn-toast-background: #7aa2f7;
+}
+
+html[data-theme='dracula'] {
+  --vn-surface: #181820;
+  --vn-surface-subtle: #20212b;
+  --vn-surface-muted: #343746;
+  --vn-control-background: #282a36;
+  --vn-text: #f8f8f2;
+  --vn-text-muted: #bfc1d4;
+  --vn-control-text: #bd93f9;
+  --vn-border: #4a4d5e;
+  --vn-border-strong: #8b8da0;
+  --vn-accent: #bd93f9;
+  --vn-accent-strong: #8b60c8;
+  --vn-accent-soft: #493b66;
+  --vn-accent-header: #302444;
+  --vn-app-background: linear-gradient(125deg, #181820, #282a36 52%, #34283f);
+  --vn-sidebar-background: rgb(31 32 42 / 97%);
+  --vn-editor-background: rgb(24 24 32 / 98%);
+  --vn-header-background: linear-gradient(118deg, #302444, #604579 58%, #63314e);
+  --vn-header-border: #68517f;
+  --vn-field-background: #282a36;
+  --vn-row-background: rgb(40 42 54 / 95%);
+  --vn-row-selected: #493b66;
+  --vn-settings-background: #332b44;
+  --vn-settings-border: #655477;
+  --vn-focus-ring: rgb(189 147 249 / 38%);
+  --vn-toast-background: #bd93f9;
+}
+
+html[data-theme='monokai'] {
+  --vn-surface: #1e1f1c;
+  --vn-surface-subtle: #252621;
+  --vn-surface-muted: #36372f;
+  --vn-control-background: #2d2e28;
+  --vn-text: #f8f8f2;
+  --vn-text-muted: #c9c9bd;
+  --vn-control-text: #a6e22e;
+  --vn-border: #4d4e43;
+  --vn-border-strong: #929389;
+  --vn-accent: #a6e22e;
+  --vn-accent-strong: #6ea20a;
+  --vn-accent-soft: #3e4e22;
+  --vn-accent-header: #2d3b16;
+  --vn-app-background: linear-gradient(125deg, #1e1f1c, #2d2e28 52%, #272822);
+  --vn-sidebar-background: rgb(37 38 33 / 97%);
+  --vn-editor-background: rgb(30 31 28 / 98%);
+  --vn-header-background: linear-gradient(118deg, #2d3b16, #52691f 58%, #713044);
+  --vn-header-border: #5b6d2d;
+  --vn-field-background: #2d2e28;
+  --vn-row-background: rgb(45 46 40 / 95%);
+  --vn-row-selected: #3e4e22;
+  --vn-settings-background: #303823;
+  --vn-settings-border: #58633a;
+  --vn-focus-ring: rgb(166 226 46 / 36%);
+  --vn-toast-background: #a6e22e;
+}
+
+html[data-theme='nord_night'] {
+  --vn-surface: #1b202c;
+  --vn-surface-subtle: #242b38;
+  --vn-surface-muted: #343d4d;
+  --vn-control-background: #2e3440;
+  --vn-text: #eceff4;
+  --vn-text-muted: #c3cad5;
+  --vn-control-text: #88c0d0;
+  --vn-border: #4c566a;
+  --vn-border-strong: #8b96a8;
+  --vn-accent: #88c0d0;
+  --vn-accent-strong: #4f8798;
+  --vn-accent-soft: #304a56;
+  --vn-accent-header: #233a46;
+  --vn-app-background: linear-gradient(125deg, #1b202c, #2e3440 52%, #242b38);
+  --vn-sidebar-background: rgb(36 43 56 / 97%);
+  --vn-editor-background: rgb(27 32 44 / 98%);
+  --vn-header-background: linear-gradient(118deg, #233a46, #406474 58%, #4a4a67);
+  --vn-header-border: #526b78;
+  --vn-field-background: #2e3440;
+  --vn-row-background: rgb(46 52 64 / 95%);
+  --vn-row-selected: #304a56;
+  --vn-settings-background: #293b46;
+  --vn-settings-border: #536a75;
+  --vn-focus-ring: rgb(136 192 208 / 37%);
+  --vn-toast-background: #88c0d0;
+}
+
+html[data-theme='gruvbox'] {
+  --vn-surface: #1d2021;
+  --vn-surface-subtle: #282828;
+  --vn-surface-muted: #3c3836;
+  --vn-control-background: #32302f;
+  --vn-text: #ebdbb2;
+  --vn-text-muted: #d5c4a1;
+  --vn-control-text: #d79921;
+  --vn-border: #504945;
+  --vn-border-strong: #928374;
+  --vn-accent: #d79921;
+  --vn-accent-strong: #a46e0a;
+  --vn-accent-soft: #4b3c1f;
+  --vn-accent-header: #3b2d16;
+  --vn-app-background: linear-gradient(125deg, #1d2021, #3c3836 52%, #282828);
+  --vn-sidebar-background: rgb(40 40 40 / 97%);
+  --vn-editor-background: rgb(29 32 33 / 98%);
+  --vn-header-background: linear-gradient(118deg, #3b2d16, #705120 58%, #4a4e29);
+  --vn-header-border: #725b32;
+  --vn-field-background: #32302f;
+  --vn-row-background: rgb(50 48 47 / 95%);
+  --vn-row-selected: #4b3c1f;
+  --vn-settings-background: #393125;
+  --vn-settings-border: #66583e;
+  --vn-focus-ring: rgb(215 153 33 / 37%);
+  --vn-toast-background: #d79921;
+}
+
+html[data-theme='solarized'] {
+  --vn-surface: #002b36;
+  --vn-surface-subtle: #073642;
+  --vn-surface-muted: #164652;
+  --vn-control-background: #0b3b46;
+  --vn-text: #eee8d5;
+  --vn-text-muted: #b9b49f;
+  --vn-control-text: #2aa198;
+  --vn-border: #42616a;
+  --vn-border-strong: #839496;
+  --vn-accent: #2aa198;
+  --vn-accent-strong: #14766f;
+  --vn-accent-soft: #124d4d;
+  --vn-accent-header: #063d42;
+  --vn-app-background: linear-gradient(125deg, #002b36, #073642 52%, #0b3440);
+  --vn-sidebar-background: rgb(4 48 59 / 98%);
+  --vn-editor-background: rgb(0 43 54 / 98%);
+  --vn-header-background: linear-gradient(118deg, #063d42, #12625f 58%, #4d4c3b);
+  --vn-header-border: #2d6667;
+  --vn-field-background: #0b3b46;
+  --vn-row-background: rgb(11 59 70 / 95%);
+  --vn-row-selected: #124d4d;
+  --vn-settings-background: #0a4149;
+  --vn-settings-border: #36686d;
+  --vn-focus-ring: rgb(42 161 152 / 38%);
+  --vn-toast-background: #2aa198;
+}
+
+html[data-theme='catppuccin'] {
+  --vn-surface: #1e1e2e;
+  --vn-surface-subtle: #252538;
+  --vn-surface-muted: #36364f;
+  --vn-control-background: #313244;
+  --vn-text: #cdd6f4;
+  --vn-text-muted: #bac2de;
+  --vn-control-text: #cba6f7;
+  --vn-border: #51526d;
+  --vn-border-strong: #9399b2;
+  --vn-accent: #cba6f7;
+  --vn-accent-strong: #9271ba;
+  --vn-accent-soft: #493b5f;
+  --vn-accent-header: #332845;
+  --vn-app-background: linear-gradient(125deg, #1e1e2e, #313244 52%, #29273c);
+  --vn-sidebar-background: rgb(37 37 56 / 97%);
+  --vn-editor-background: rgb(30 30 46 / 98%);
+  --vn-header-background: linear-gradient(118deg, #332845, #5e4975 58%, #58405c);
+  --vn-header-border: #66557e;
+  --vn-field-background: #313244;
+  --vn-row-background: rgb(49 50 68 / 95%);
+  --vn-row-selected: #493b5f;
+  --vn-settings-background: #382e4a;
+  --vn-settings-border: #625273;
+  --vn-focus-ring: rgb(203 166 247 / 38%);
+  --vn-toast-background: #cba6f7;
+}
+
+html[data-theme='everforest'] {
+  --vn-surface: #1e2326;
+  --vn-surface-subtle: #272e33;
+  --vn-surface-muted: #374145;
+  --vn-control-background: #2d353b;
+  --vn-text: #d3c6aa;
+  --vn-text-muted: #b7b1a1;
+  --vn-control-text: #a7c080;
+  --vn-border: #4f5b58;
+  --vn-border-strong: #859289;
+  --vn-accent: #a7c080;
+  --vn-accent-strong: #708b50;
+  --vn-accent-soft: #3d4a32;
+  --vn-accent-header: #2c3926;
+  --vn-app-background: linear-gradient(125deg, #1e2326, #2d353b 52%, #26322c);
+  --vn-sidebar-background: rgb(39 46 51 / 97%);
+  --vn-editor-background: rgb(30 35 38 / 98%);
+  --vn-header-background: linear-gradient(118deg, #2c3926, #506240 58%, #3c5652);
+  --vn-header-border: #5d6c52;
+  --vn-field-background: #2d353b;
+  --vn-row-background: rgb(45 53 59 / 95%);
+  --vn-row-selected: #3d4a32;
+  --vn-settings-background: #333d32;
+  --vn-settings-border: #5b6a53;
+  --vn-focus-ring: rgb(167 192 128 / 37%);
+  --vn-toast-background: #a7c080;
+}
+
+html[data-theme='material_ocean'] {
+  --vn-surface: #0f111a;
+  --vn-surface-subtle: #161b28;
+  --vn-surface-muted: #263149;
+  --vn-control-background: #1a2233;
+  --vn-text: #eeffff;
+  --vn-text-muted: #b2ccd6;
+  --vn-control-text: #82aaff;
+  --vn-border: #35425e;
+  --vn-border-strong: #7c8aa5;
+  --vn-accent: #82aaff;
+  --vn-accent-strong: #5279c9;
+  --vn-accent-soft: #273c66;
+  --vn-accent-header: #182b4f;
+  --vn-app-background: linear-gradient(125deg, #0f111a, #1a2233 52%, #101827);
+  --vn-sidebar-background: rgb(18 24 37 / 98%);
+  --vn-editor-background: rgb(15 17 26 / 98%);
+  --vn-header-background: linear-gradient(118deg, #182b4f, #344f80 58%, #4d355f);
+  --vn-header-border: #405d89;
+  --vn-field-background: #1a2233;
+  --vn-row-background: rgb(26 34 51 / 95%);
+  --vn-row-selected: #273c66;
+  --vn-settings-background: #1b2a46;
+  --vn-settings-border: #3f577e;
+  --vn-focus-ring: rgb(130 170 255 / 38%);
+  --vn-toast-background: #82aaff;
+}
+
+html[data-theme='night_owl'] {
+  --vn-surface: #011627;
+  --vn-surface-subtle: #071e33;
+  --vn-surface-muted: #17344d;
+  --vn-control-background: #0b2942;
+  --vn-text: #d6deeb;
+  --vn-text-muted: #a8b9ce;
+  --vn-control-text: #82aaff;
+  --vn-border: #294d68;
+  --vn-border-strong: #738da5;
+  --vn-accent: #82aaff;
+  --vn-accent-strong: #4c78cc;
+  --vn-accent-soft: #153d67;
+  --vn-accent-header: #092d50;
+  --vn-app-background: linear-gradient(125deg, #011627, #0b2942 52%, #132336);
+  --vn-sidebar-background: rgb(3 27 46 / 98%);
+  --vn-editor-background: rgb(1 22 39 / 98%);
+  --vn-header-background: linear-gradient(118deg, #092d50, #24517e 58%, #4b355d);
+  --vn-header-border: #315e89;
+  --vn-field-background: #0b2942;
+  --vn-row-background: rgb(11 41 66 / 95%);
+  --vn-row-selected: #153d67;
+  --vn-settings-background: #102f4c;
+  --vn-settings-border: #315676;
+  --vn-focus-ring: rgb(130 170 255 / 38%);
+  --vn-toast-background: #82aaff;
+}
+
+html[data-theme='moonlight'] {
+  --vn-surface: #1e2030;
+  --vn-surface-subtle: #24273a;
+  --vn-surface-muted: #353a55;
+  --vn-control-background: #2a2e47;
+  --vn-text: #c8d3f5;
+  --vn-text-muted: #a9b8e8;
+  --vn-control-text: #82aaff;
+  --vn-border: #4a5274;
+  --vn-border-strong: #828bb8;
+  --vn-accent: #82aaff;
+  --vn-accent-strong: #5878c5;
+  --vn-accent-soft: #35446f;
+  --vn-accent-header: #273457;
+  --vn-app-background: linear-gradient(125deg, #1e2030, #2a2e47 52%, #22243a);
+  --vn-sidebar-background: rgb(34 36 58 / 97%);
+  --vn-editor-background: rgb(30 32 48 / 98%);
+  --vn-header-background: linear-gradient(118deg, #273457, #455b91 58%, #594373);
+  --vn-header-border: #536894;
+  --vn-field-background: #2a2e47;
+  --vn-row-background: rgb(42 46 71 / 95%);
+  --vn-row-selected: #35446f;
+  --vn-settings-background: #303856;
+  --vn-settings-border: #596589;
+  --vn-focus-ring: rgb(130 170 255 / 38%);
+  --vn-toast-background: #82aaff;
+}
+
+html[data-theme='deep_space'] {
+  --vn-surface: #0b1320;
+  --vn-surface-subtle: #101b2c;
+  --vn-surface-muted: #1f3047;
+  --vn-control-background: #14243a;
+  --vn-text: #d7e2f2;
+  --vn-text-muted: #aebed2;
+  --vn-control-text: #5ccfe6;
+  --vn-border: #31465f;
+  --vn-border-strong: #768ba3;
+  --vn-accent: #5ccfe6;
+  --vn-accent-strong: #2792aa;
+  --vn-accent-soft: #174052;
+  --vn-accent-header: #0d3041;
+  --vn-app-background: linear-gradient(125deg, #0b1320, #14243a 52%, #171a2e);
+  --vn-sidebar-background: rgb(13 23 38 / 98%);
+  --vn-editor-background: rgb(11 19 32 / 98%);
+  --vn-header-background: linear-gradient(118deg, #0d3041, #21556e 58%, #393959);
+  --vn-header-border: #326175;
+  --vn-field-background: #14243a;
+  --vn-row-background: rgb(20 36 58 / 95%);
+  --vn-row-selected: #174052;
+  --vn-settings-background: #163043;
+  --vn-settings-border: #36586c;
+  --vn-focus-ring: rgb(92 207 230 / 38%);
+  --vn-toast-background: #5ccfe6;
+}
+
+html[data-theme='blue_hour'] {
+  --vn-surface: #111827;
+  --vn-surface-subtle: #172033;
+  --vn-surface-muted: #293852;
+  --vn-control-background: #1e2d46;
+  --vn-text: #e5edf8;
+  --vn-text-muted: #b9c6d8;
+  --vn-control-text: #60a5fa;
+  --vn-border: #3c5270;
+  --vn-border-strong: #8292a9;
+  --vn-accent: #60a5fa;
+  --vn-accent-strong: #3078c9;
+  --vn-accent-soft: #224570;
+  --vn-accent-header: #18345a;
+  --vn-app-background: linear-gradient(125deg, #111827, #1e3a5f 52%, #25233c);
+  --vn-sidebar-background: rgb(19 29 48 / 97%);
+  --vn-editor-background: rgb(17 24 39 / 98%);
+  --vn-header-background: linear-gradient(118deg, #18345a, #325d91 58%, #554268);
+  --vn-header-border: #3f6897;
+  --vn-field-background: #1e2d46;
+  --vn-row-background: rgb(30 45 70 / 95%);
+  --vn-row-selected: #224570;
+  --vn-settings-background: #203650;
+  --vn-settings-border: #46627f;
+  --vn-focus-ring: rgb(96 165 250 / 38%);
+  --vn-toast-background: #60a5fa;
+}
+
+html[data-theme='terminal'] {
+  --vn-surface: #07130c;
+  --vn-surface-subtle: #0b1b11;
+  --vn-surface-muted: #183321;
+  --vn-control-background: #0f2418;
+  --vn-text: #d7f5df;
+  --vn-text-muted: #acd0b7;
+  --vn-control-text: #33d17a;
+  --vn-border: #2c5038;
+  --vn-border-strong: #71917b;
+  --vn-accent: #33d17a;
+  --vn-accent-strong: #15944e;
+  --vn-accent-soft: #17462a;
+  --vn-accent-header: #0c351d;
+  --vn-app-background: linear-gradient(125deg, #07130c, #0f2418 52%, #101a14);
+  --vn-sidebar-background: rgb(8 25 14 / 98%);
+  --vn-editor-background: rgb(7 19 12 / 98%);
+  --vn-header-background: linear-gradient(118deg, #0c351d, #185e34 58%, #284c45);
+  --vn-header-border: #28663d;
+  --vn-field-background: #0f2418;
+  --vn-row-background: rgb(15 36 24 / 95%);
+  --vn-row-selected: #17462a;
+  --vn-settings-background: #12351f;
+  --vn-settings-border: #315f40;
+  --vn-focus-ring: rgb(51 209 122 / 38%);
+  --vn-toast-background: #33d17a;
+}
+
+html[data-theme='velvet'] {
+  --vn-surface: #1b111c;
+  --vn-surface-subtle: #25162b;
+  --vn-surface-muted: #3b2942;
+  --vn-control-background: #322036;
+  --vn-text: #f4e4f5;
+  --vn-text-muted: #d4bfd6;
+  --vn-control-text: #e879f9;
+  --vn-border: #5a4161;
+  --vn-border-strong: #9c88a1;
+  --vn-accent: #e879f9;
+  --vn-accent-strong: #aa43bb;
+  --vn-accent-soft: #50305a;
+  --vn-accent-header: #3c2144;
+  --vn-app-background: linear-gradient(125deg, #1b111c, #362139 52%, #25162b);
+  --vn-sidebar-background: rgb(32 18 35 / 97%);
+  --vn-editor-background: rgb(27 17 28 / 98%);
+  --vn-header-background: linear-gradient(118deg, #3c2144, #6b3a76 58%, #71384f);
+  --vn-header-border: #754780;
+  --vn-field-background: #322036;
+  --vn-row-background: rgb(50 32 54 / 95%);
+  --vn-row-selected: #50305a;
+  --vn-settings-background: #3a2742;
+  --vn-settings-border: #674a6f;
+  --vn-focus-ring: rgb(232 121 249 / 38%);
+  --vn-toast-background: #e879f9;
+}

@@ -6,6 +6,7 @@
   import DateDialog from './DateDialog.svelte';
   import DatePanel from './DatePanel.svelte';
   import NoteBlockEditor from './NoteBlockEditor.svelte';
+  import ThemePicker from './ThemePicker.svelte';
   import {
     commandError,
     approveNearbyPairing,
@@ -59,6 +60,7 @@
   import { DebouncedAutosaver, type AutosaveStatus } from './lib/autosave';
   import { derivePlainText, documentFromPlainText } from './lib/noteBody';
   import { reconcileReminderNotifications } from './lib/reminders';
+  import { parseThemePreference, type ThemePreference } from './lib/themes';
   import type {
     AgendaEntry,
     AppCommandError,
@@ -95,8 +97,6 @@
     | { kind: 'empty' }
     | { kind: 'content'; items: DisplayItem[] }
     | { kind: 'error'; error: AppCommandError };
-
-  type ThemePreference = 'system' | 'light' | 'dark' | 'aurora';
 
   const emptyQueue: SyncQueueStatus = {
     pendingCount: 0,
@@ -150,7 +150,7 @@
   let componentDestroyed = false;
   let searchInput: HTMLInputElement;
   let titleInput: HTMLInputElement;
-  let themePreference: ThemePreference = 'system';
+  let themePreference: ThemePreference = 'dark';
   let syncConnection: SyncConnectionStatus | null = null;
   let discoveredRelays: DiscoveredRelay[] = [];
   let relayHostAddress = '';
@@ -422,10 +422,7 @@
   }
 
   function storedThemePreference(): ThemePreference {
-    const stored = window.localStorage.getItem('vaultnote.theme');
-    return stored === 'light' || stored === 'dark' || stored === 'aurora'
-      ? stored
-      : 'system';
+    return parseThemePreference(window.localStorage.getItem('vaultnote.theme'));
   }
 
   function applyTheme(theme: ThemePreference): void {
@@ -1437,20 +1434,9 @@
       <div class="security-group appearance-controls">
         <div>
           <strong>Appearance</strong>
-          <p>Choose a calm workspace or follow your system.</p>
+          <p>Choose a complete dark palette with a matching gradient.</p>
         </div>
-        <label>
-          <span>Theme</span>
-          <select
-            value={themePreference}
-            onchange={(event) => applyTheme(event.currentTarget.value as ThemePreference)}
-          >
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-            <option value="aurora">Aurora gradient</option>
-          </select>
-        </label>
+        <ThemePicker selected={themePreference} onSelect={applyTheme} />
       </div>
       <div class="security-group vault-protection">
         {#if authentication.encryptionMode === 'PASSWORD'}

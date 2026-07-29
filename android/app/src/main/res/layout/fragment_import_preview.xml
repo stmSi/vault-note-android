@@ -38,7 +38,7 @@
         android:layout_marginStart="@dimen/space_m"
         android:layout_marginTop="@dimen/space_s"
         android:layout_marginEnd="@dimen/space_m"
-        android:background="@color/vault_surface_variant"
+        android:background="?attr/colorSurfaceVariant"
         android:ellipsize="end"
         android:maxLines="4"
         android:padding="@dimen/space_m"

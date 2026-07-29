@@ -9,6 +9,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.DrawableCompat
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.color.MaterialColors
 import com.vaultnote.R
 
 internal class VaultSwipeCallback(
@@ -17,10 +18,18 @@ internal class VaultSwipeCallback(
     private val onSwipe: (itemId: String, change: VaultItemChange) -> Unit,
 ) : ItemTouchHelper.Callback() {
     private val archivePaint = Paint().apply {
-        color = ContextCompat.getColor(context, R.color.vault_primary)
+        color = MaterialColors.getColor(
+            context,
+            androidx.appcompat.R.attr.colorPrimary,
+            Color.BLUE,
+        )
     }
     private val trashPaint = Paint().apply {
-        color = ContextCompat.getColor(context, R.color.vault_error)
+        color = MaterialColors.getColor(
+            context,
+            androidx.appcompat.R.attr.colorError,
+            Color.RED,
+        )
     }
     private val archiveIcon = tintedIcon(context, R.drawable.ic_archive)
     private val trashIcon = tintedIcon(context, R.drawable.ic_delete)

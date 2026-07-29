@@ -31,7 +31,7 @@
             android:contentDescription="@string/open_calendar"
             android:padding="12dp"
             android:src="@drawable/ic_calendar"
-            app:tint="@color/vault_on_surface" />
+            app:tint="?attr/colorOnSurface" />
     </LinearLayout>
 
     <com.google.android.material.button.MaterialButtonToggleGroup

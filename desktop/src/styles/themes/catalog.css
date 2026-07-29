@@ -1,0 +1,50 @@
+@import './core.css';
+@import './extended.css';
+
+html:is(
+  [data-theme='dark'],
+  [data-theme='obsidian'],
+  [data-theme='graphite'],
+  [data-theme='aurora'],
+  [data-theme='nebula'],
+  [data-theme='amethyst'],
+  [data-theme='emerald'],
+  [data-theme='forest'],
+  [data-theme='cobalt'],
+  [data-theme='indigo'],
+  [data-theme='crimson'],
+  [data-theme='ember'],
+  [data-theme='mocha'],
+  [data-theme='dusk'],
+  [data-theme='cyber'],
+  [data-theme='tokyo_night'],
+  [data-theme='dracula'],
+  [data-theme='monokai'],
+  [data-theme='nord_night'],
+  [data-theme='gruvbox'],
+  [data-theme='solarized'],
+  [data-theme='catppuccin'],
+  [data-theme='everforest'],
+  [data-theme='material_ocean'],
+  [data-theme='night_owl'],
+  [data-theme='moonlight'],
+  [data-theme='deep_space'],
+  [data-theme='blue_hour'],
+  [data-theme='terminal'],
+  [data-theme='velvet']
+) {
+  color-scheme: dark;
+  --vn-on-accent: #fff;
+  --vn-on-accent-muted: rgb(255 255 255 / 72%);
+  --vn-danger: #ffb4ab;
+  --vn-overlay: rgb(0 0 0 / 70%);
+  --vn-panel-shadow: 0 18px 56px rgb(0 0 0 / 42%);
+  --vn-toast-text: #0d1718;
+  --vn-muted: var(--vn-text-muted);
+  --accent: var(--vn-accent);
+  --border: var(--vn-border);
+  --surface: var(--vn-surface);
+  --surface-raised: var(--vn-surface-muted);
+  --text: var(--vn-text);
+  --text-muted: var(--vn-text-muted);
+}

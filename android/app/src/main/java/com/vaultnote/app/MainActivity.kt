@@ -16,6 +16,7 @@ import androidx.core.view.isVisible
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePaddingRelative
+import androidx.core.view.WindowCompat
 import androidx.fragment.app.commit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -44,6 +45,8 @@ import com.vaultnote.feature.backup.BackupRestoreFragment
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.security.LockPolicy
 import com.vaultnote.core.security.VaultLockState
+import com.vaultnote.core.theme.VaultTheme
+import com.vaultnote.core.theme.VaultThemePreferences
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -51,6 +54,7 @@ import kotlinx.coroutines.yield
 
 class MainActivity : AppCompatActivity(), MainNavigator {
     private lateinit var binding: ActivityMainBinding
+    private lateinit var activeTheme: VaultTheme
     private val incomingImports: IncomingImportCoordinator by viewModels()
     private var securityMigrationJob: Job? = null
     private var ocrProcessingJob: Job? = null
@@ -65,10 +69,17 @@ class MainActivity : AppCompatActivity(), MainNavigator {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
+        activeTheme = VaultThemePreferences(this).selectedTheme()
+        setTheme(activeTheme.styleResource)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        activeTheme.applyBackground(binding.root)
+        WindowCompat.getInsetsController(window, binding.root).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
         configurePrimaryNavigation()
         configureBackNavigation()
         supportFragmentManager.addOnBackStackChangedListener(::updatePrimaryNavigation)

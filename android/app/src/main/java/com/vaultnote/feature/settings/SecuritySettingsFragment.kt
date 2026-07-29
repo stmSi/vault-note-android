@@ -19,6 +19,8 @@ import com.vaultnote.R
 import com.vaultnote.app.appContainer
 import com.vaultnote.app.MainNavigator
 import com.vaultnote.core.security.LockPolicy
+import com.vaultnote.core.theme.VaultThemePreferences
+import com.vaultnote.core.theme.VaultThemes
 import com.vaultnote.databinding.FragmentSecuritySettingsBinding
 import com.vaultnote.feature.lock.AndroidVaultAuthenticator
 import com.vaultnote.feature.lock.VaultAuthenticator
@@ -46,6 +48,7 @@ class SecuritySettingsFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         val currentBinding = requireNotNull(binding)
+        configureThemes(currentBinding)
         authenticator = AndroidVaultAuthenticator(
             fragment = this,
             onSuccess = viewModel::confirmLockEnabled,
@@ -146,6 +149,21 @@ class SecuritySettingsFragment : Fragment() {
         TimeoutOption(60_000L, getString(R.string.timeout_1_minute)),
         TimeoutOption(300_000L, getString(R.string.timeout_5_minutes)),
     )
+
+    private fun configureThemes(currentBinding: FragmentSecuritySettingsBinding) {
+        val preferences = VaultThemePreferences(requireContext())
+        val themes = VaultThemes.selectable
+        currentBinding.themeInput.setAdapter(VaultThemeAdapter(requireContext(), themes))
+        val selected = preferences.selectedTheme()
+        currentBinding.themeInput.setText(getString(selected.labelResource), false)
+        selected.applyBackground(currentBinding.themePreview, cornerRadiusDp = 12f)
+        currentBinding.themeInput.setOnItemClickListener { _, _, position, _ ->
+            val theme = themes.getOrNull(position) ?: return@setOnItemClickListener
+            if (theme == preferences.selectedTheme()) return@setOnItemClickListener
+            preferences.select(theme)
+            requireActivity().recreate()
+        }
+    }
 
     private fun applyInsets(currentBinding: FragmentSecuritySettingsBinding) {
         val rootStart = currentBinding.content.paddingStart

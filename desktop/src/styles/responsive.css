@@ -1,0 +1,43 @@
+@media (max-width: 900px) {
+  .workspace {
+    grid-template-columns: 290px minmax(0, 1fr);
+  }
+
+  .editor-content {
+    padding-inline: 24px;
+  }
+
+  .queue-label {
+    display: none;
+  }
+
+  .security-panel {
+    grid-template-columns: 1fr;
+    max-height: 70vh;
+    overflow: auto;
+  }
+
+  .backup-controls {
+    justify-content: start;
+    padding: 12px 0 0;
+    border-top: 1px solid var(--vn-settings-border);
+    border-left: 0;
+  }
+
+  .embedded-host-card,
+  .phone-pairing-details {
+    grid-template-columns: 1fr;
+  }
+
+  .embedded-host-actions,
+  .embedded-host-buttons {
+    justify-content: start;
+    flex-wrap: wrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}

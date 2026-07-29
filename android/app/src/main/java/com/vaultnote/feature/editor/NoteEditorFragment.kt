@@ -457,8 +457,8 @@ class NoteEditorFragment : Fragment() {
             getString(R.string.untitled_note)
         }
         val colorStyle = state.draft.color.toStyle()
-        val surfaceColor = ContextCompat.getColor(requireContext(), colorStyle.surfaceColor)
-        val titleColor = ContextCompat.getColor(requireContext(), colorStyle.titleColor)
+        val surfaceColor = colorStyle.resolveSurface(requireContext())
+        val titleColor = colorStyle.resolveTitle(requireContext())
         currentBinding.root.setBackgroundColor(surfaceColor)
         currentBinding.titleInput.setTextColor(titleColor)
         currentBinding.toolbar.setTitleTextColor(titleColor)

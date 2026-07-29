@@ -1,0 +1,376 @@
+
+.security-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 12px 20px;
+  color: #263330;
+  background: #e5f4ee;
+  border-bottom: 1px solid #b9d8d0;
+}
+
+.security-group {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+}
+
+.relay-controls {
+  display: grid;
+  grid-column: 1 / -1;
+  align-items: stretch;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #b9d8d0;
+}
+
+.section-heading,
+.relay-actions,
+.inline-secret-form,
+.fingerprint-confirm {
+  display: flex;
+  align-items: center;
+}
+
+.section-heading {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.section-heading p {
+  margin-top: 3px;
+  font-size: 12px;
+  color: #526b65;
+}
+
+.connection-badge {
+  flex: none;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 750;
+  color: #6b5040;
+  background: #f4e7dc;
+  border-radius: 999px;
+}
+
+.connection-badge.connected {
+  color: #165a49;
+  background: #cce9df;
+}
+
+.relay-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 18px;
+  padding: 10px 12px;
+  font-size: 12px;
+  background: rgb(255 255 255 / 55%);
+  border: 1px solid #c3ddd6;
+  border-radius: 9px;
+}
+
+.relay-summary span {
+  min-width: 0;
+}
+
+.fingerprint-line {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 3px;
+}
+
+.fingerprint-line code {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.relay-actions,
+.inline-secret-form {
+  gap: 10px;
+}
+
+.inline-secret-form label {
+  flex: 1;
+}
+
+.relay-discovery {
+  display: grid;
+  gap: 8px;
+}
+
+.relay-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 7px;
+}
+
+.relay-results button {
+  display: grid;
+  gap: 3px;
+  padding: 9px 11px;
+  text-align: left;
+}
+
+.relay-results button span {
+  overflow: hidden;
+  font-size: 11px;
+  color: #61736f;
+  text-overflow: ellipsis;
+}
+
+.relay-pair-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) minmax(90px, 1fr) minmax(180px, 2fr);
+  gap: 10px;
+}
+
+.relay-pair-form .wide-field {
+  grid-column: 1 / -1;
+}
+
+.relay-pair-form input {
+  width: 100%;
+}
+
+.fingerprint-confirm {
+  display: flex !important;
+  gap: 8px !important;
+  cursor: pointer;
+}
+
+.fingerprint-confirm input {
+  width: auto;
+}
+
+.sync-message {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #205648;
+  background: rgb(255 255 255 / 48%);
+  border-radius: 8px;
+}
+
+.embedded-host-card {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(280px, auto);
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  background: var(--vn-field-background);
+  border: 1px solid var(--vn-settings-border);
+  border-radius: 12px;
+  box-shadow: 0 5px 18px rgb(19 61 66 / 7%);
+}
+
+.embedded-host-card.hosting {
+  border-color: #7dbca9;
+  box-shadow:
+    inset 3px 0 #27876c,
+    0 5px 18px rgb(19 61 66 / 8%);
+}
+
+.embedded-host-copy {
+  min-width: 0;
+}
+
+.embedded-host-copy strong {
+  font-size: 14px;
+}
+
+.embedded-host-copy p,
+.reset-phone-access p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--vn-muted);
+}
+
+.embedded-host-actions,
+.embedded-host-buttons {
+  display: flex;
+  align-items: end;
+  justify-content: end;
+  gap: 9px;
+}
+
+.embedded-host-actions label,
+.embedded-password {
+  min-width: 220px;
+}
+
+.embedded-host-actions input,
+.embedded-password input,
+.reset-phone-access input {
+  width: 100%;
+}
+
+.reset-phone-access > summary,
+.advanced-relay > summary {
+  color: var(--vn-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.reset-phone-access[open] {
+  display: grid;
+  gap: 8px;
+  min-width: 240px;
+  padding: 10px;
+  background: var(--vn-field-background);
+  border: 1px solid var(--vn-settings-border);
+  border-radius: 9px;
+}
+
+.phone-pairing-details {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.4fr) auto;
+  align-items: end;
+  gap: 10px 14px;
+  padding: 14px;
+  background: #edf8f3;
+  border: 1px solid #8bc5b3;
+  border-radius: 12px;
+}
+
+.nearby-pairing-requests {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.nearby-pairing-request {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem 1.5rem;
+  align-items: center;
+  padding: 1rem 1.1rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      120deg,
+      color-mix(in srgb, var(--accent) 11%, var(--surface)),
+      var(--surface)
+    );
+  box-shadow: 0 10px 28px rgb(0 0 0 / 8%);
+  animation: pairing-arrival 180ms ease-out;
+}
+
+.nearby-pairing-request strong {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 1.05rem;
+}
+
+.nearby-pairing-request p {
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+}
+
+.nearby-pairing-code {
+  padding: 0.65rem 0.8rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 13%, var(--surface-raised));
+  color: var(--text);
+  font-size: clamp(1.3rem, 2.8vw, 1.8rem);
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.nearby-pairing-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+}
+
+.manual-phone-access {
+  width: 100%;
+}
+
+.manual-phone-access > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-weight: 650;
+}
+
+.manual-phone-access > p {
+  margin: 0.45rem 0 0.75rem;
+}
+
+@keyframes pairing-arrival {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nearby-pairing-request {
+    animation: none;
+  }
+}
+
+.phone-pairing-details ol {
+  margin: 7px 0 0;
+  padding-left: 20px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.phone-token input {
+  width: 100%;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.phone-fingerprint {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 3px;
+}
+
+.phone-fingerprint span {
+  font-size: 11px;
+  color: var(--vn-muted);
+}
+
+.phone-fingerprint code {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.advanced-relay {
+  display: grid;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.advanced-relay[open] > summary {
+  margin-bottom: 12px;
+}
+
+.backup-controls {
+  justify-content: end;
+  border-left: 1px solid #b9d8d0;
+  padding-left: 12px;
+}
+
+.security-panel p {
+  flex: 1;
+  margin: 0;
+}
+
+.security-panel label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.security-panel input,
+.security-panel button,
+.lock-card input {
+  padding: 8px 10px;
+}

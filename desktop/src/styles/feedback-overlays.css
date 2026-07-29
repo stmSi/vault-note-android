@@ -1,0 +1,243 @@
+.drop-overlay {
+  position: fixed;
+  inset: 14px;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  color: var(--vn-text);
+  pointer-events: none;
+  background: color-mix(in srgb, var(--vn-accent-soft) 90%, transparent);
+  border: 2px dashed var(--vn-accent);
+  border-radius: 18px;
+  box-shadow: inset 0 0 0 999px rgb(5 24 21 / 20%);
+  animation: drop-appear 140ms ease-out;
+}
+
+.drop-overlay > div {
+  display: grid;
+  gap: 7px;
+  place-items: center;
+  max-width: 460px;
+  padding: 30px 40px;
+  text-align: center;
+  background: var(--vn-surface);
+  border: 1px solid var(--vn-border);
+  border-radius: 16px;
+  box-shadow: var(--vn-panel-shadow);
+}
+
+.drop-overlay p {
+  margin: 0;
+  color: var(--vn-text-muted);
+}
+
+.drop-glyph {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  font-size: 30px;
+  color: var(--vn-accent);
+  border: 2px solid currentColor;
+  border-radius: 14px;
+}
+
+@keyframes drop-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+.feedback-toast {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 160;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: min(420px, calc(100vw - 44px));
+  padding: 11px 15px;
+  color: var(--vn-toast-text);
+  background: var(--vn-toast-background);
+  border: 1px solid rgb(255 255 255 / 15%);
+  border-radius: 10px;
+  box-shadow: 0 12px 34px rgb(4 27 23 / 28%);
+  animation: toast-in 200ms ease-out;
+}
+
+.feedback-toast span {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--vn-toast-background);
+  background: var(--vn-toast-text);
+  border-radius: 50%;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+.backup-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--vn-overlay);
+}
+
+.backup-drop-dialog {
+  display: grid;
+  gap: 15px;
+  width: min(100%, 520px);
+  padding: 24px;
+  color: var(--vn-text);
+  background: var(--vn-surface);
+  border: 1px solid var(--vn-border);
+  border-radius: 16px;
+  box-shadow: var(--vn-panel-shadow);
+  animation: dialog-in 170ms ease-out;
+}
+
+.backup-drop-dialog > header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.backup-drop-dialog h2,
+.backup-drop-dialog p {
+  margin: 0;
+}
+
+.backup-drop-dialog > p {
+  color: var(--vn-text-muted);
+}
+
+.backup-drop-dialog .eyebrow {
+  font-size: 11px;
+  font-weight: 750;
+  color: var(--vn-accent);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.backup-dialog-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--vn-accent);
+  background: var(--vn-accent-soft);
+  border-radius: 11px;
+}
+
+.backup-dialog-icon.readable {
+  color: #9a6207;
+  background: #fff1cc;
+}
+
+.backup-file-name {
+  overflow: hidden;
+  padding: 10px 12px;
+  font-weight: 700;
+  color: var(--vn-text) !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--vn-surface-muted);
+  border-radius: 8px;
+}
+
+.backup-drop-dialog label:not(.plaintext-confirm) {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.backup-drop-dialog input[type='password'] {
+  width: 100%;
+  padding: 10px 11px;
+  color: var(--vn-text);
+  background: var(--vn-field-background);
+  border: 1px solid var(--vn-border);
+  border-radius: 8px;
+}
+
+.plaintext-warning {
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  color: #7c4b05;
+  background: #fff6dc;
+  border: 1px solid #e5be6a;
+  border-radius: 9px;
+}
+
+.plaintext-confirm {
+  display: flex;
+  align-items: start;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.backup-drop-dialog footer {
+  display: flex;
+  justify-content: end;
+  gap: 8px;
+}
+
+.backup-drop-dialog footer button,
+.backup-drop-dialog .icon-button {
+  padding: 8px 11px;
+}
+
+.backup-drop-dialog .icon-button {
+  font-size: 20px;
+  background: transparent;
+  border-color: transparent;
+}
+
+.backup-drop-dialog footer button:last-child {
+  color: #fff;
+  background: var(--vn-accent-strong);
+  border-color: var(--vn-accent-strong);
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
+@media (max-width: 900px) {
+  .appearance-controls,
+  .vault-protection {
+    align-items: start;
+  }
+
+  .backup-actions {
+    align-items: stretch;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

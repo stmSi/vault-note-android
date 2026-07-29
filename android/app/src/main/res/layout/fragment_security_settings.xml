@@ -20,10 +20,48 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/appearance_title"
+            android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_xs"
+            android:text="@string/appearance_description"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/theme_container"
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_m"
+            android:hint="@string/theme_label">
+
+            <AutoCompleteTextView
+                android:id="@+id/theme_input"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:filterTouchesWhenObscured="true"
+                android:hint="@string/theme_label"
+                android:inputType="none" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <View
+            android:id="@+id/theme_preview"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="@dimen/space_s"
+            android:importantForAccessibility="no" />
+
         <com.google.android.material.materialswitch.MaterialSwitch
             android:id="@+id/lock_switch"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_l"
             android:filterTouchesWhenObscured="true"
             android:minHeight="@dimen/touch_target"
             android:text="@string/enable_app_lock" />

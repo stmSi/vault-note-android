@@ -44,7 +44,7 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:textAppearance="?attr/textAppearanceLabelMedium"
-            android:textColor="@color/vault_on_surface_variant"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:visibility="gone" />
 
         <TextView
@@ -63,7 +63,7 @@
             android:layout_marginTop="@dimen/space_s"
             android:gravity="center"
             android:textAppearance="?attr/textAppearanceBodySmall"
-            android:textColor="@color/vault_on_surface_variant" />
+            android:textColor="?attr/colorOnSurfaceVariant" />
 
         <TextView
             android:id="@+id/file_size"
@@ -71,7 +71,7 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:textAppearance="?attr/textAppearanceBodySmall"
-            android:textColor="@color/vault_on_surface_variant" />
+            android:textColor="?attr/colorOnSurfaceVariant" />
 
         <TextView
             android:id="@+id/details"
@@ -79,7 +79,7 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:textAppearance="?attr/textAppearanceBodySmall"
-            android:textColor="@color/vault_on_surface_variant" />
+            android:textColor="?attr/colorOnSurfaceVariant" />
 
         <TextView
             android:id="@+id/ocr_status"
@@ -89,7 +89,7 @@
             android:accessibilityLiveRegion="polite"
             android:gravity="center"
             android:textAppearance="?attr/textAppearanceBodySmall"
-            android:textColor="@color/vault_on_surface_variant"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:visibility="gone" />
 
         <com.google.android.material.button.MaterialButton

@@ -1,0 +1,288 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.VaultNote.Dark" parent="Theme.VaultNote.DarkBase">
+        <item name="colorPrimary">#AFC6FF</item>
+        <item name="colorOnPrimary">#002E69</item>
+        <item name="colorPrimaryContainer">#164582</item>
+        <item name="colorOnPrimaryContainer">#D8E2FF</item>
+        <item name="colorSecondary">#C3C6DD</item>
+        <item name="colorOnSecondary">#2D303E</item>
+        <item name="colorSecondaryContainer">#434654</item>
+        <item name="colorOnSecondaryContainer">#DFE2F9</item>
+        <item name="colorTertiary">#E5BAD8</item>
+        <item name="android:colorBackground">#111318</item>
+        <item name="colorOnBackground">#E2E2E9</item>
+        <item name="colorSurface">#111318</item>
+        <item name="colorOnSurface">#E2E2E9</item>
+        <item name="colorSurfaceVariant">#44474F</item>
+        <item name="colorOnSurfaceVariant">#C4C6D0</item>
+        <item name="colorOutline">#8E9099</item>
+    </style>
+
+    <style name="Theme.VaultNote.Obsidian" parent="Theme.VaultNote.DarkBase">
+        <item name="colorPrimary">#C4C7CE</item>
+        <item name="colorOnPrimary">#2D3035</item>
+        <item name="colorPrimaryContainer">#44474C</item>
+        <item name="colorOnPrimaryContainer">#E0E3EA</item>
+        <item name="colorSecondary">#C5C6CA</item>
+        <item name="colorOnSecondary">#2F3033</item>
+        <item name="colorSecondaryContainer">#45474A</item>
+        <item name="colorOnSecondaryContainer">#E1E2E6</item>
+        <item name="colorTertiary">#D2C3D6</item>
+        <item name="android:colorBackground">#0D0F12</item>
+        <item name="colorOnBackground">#E3E2E6</item>
+        <item name="colorSurface">#111316</item>
+        <item name="colorOnSurface">#E3E2E6</item>
+        <item name="colorSurfaceVariant">#45464A</item>
+        <item name="colorOnSurfaceVariant">#C6C6CA</item>
+        <item name="colorOutline">#909094</item>
+    </style>
+
+    <style name="Theme.VaultNote.Graphite" parent="Theme.VaultNote.DarkBase">
+        <item name="colorPrimary">#BFC8CC</item>
+        <item name="colorOnPrimary">#293236</item>
+        <item name="colorPrimaryContainer">#3F494D</item>
+        <item name="colorOnPrimaryContainer">#DBE4E8</item>
+        <item name="colorSecondary">#C1C8CA</item>
+        <item name="colorOnSecondary">#2B3133</item>
+        <item name="colorSecondaryContainer">#41484A</item>
+        <item name="colorOnSecondaryContainer">#DDE4E6</item>
+        <item name="colorTertiary">#C9C2D4</item>
+        <item name="android:colorBackground">#181A1D</item>
+        <item name="colorOnBackground">#E1E2E5</item>
+        <item name="colorSurface">#1C1E21</item>
+        <item name="colorOnSurface">#E1E2E5</item>
+        <item name="colorSurfaceVariant">#444749</item>
+        <item name="colorOnSurfaceVariant">#C4C7C9</item>
+        <item name="colorOutline">#8E9193</item>
+    </style>
+
+    <style name="Theme.VaultNote.Aurora" parent="Theme.VaultNote.DarkBase">
+        <item name="colorPrimary">#80D5C3</item>
+        <item name="colorOnPrimary">#00372F</item>
+        <item name="colorPrimaryContainer">#005047</item>
+        <item name="colorOnPrimaryContainer">#9CF2DF</item>
+        <item name="colorSecondary">#B2CCC5</item>
+        <item name="colorOnSecondary">#1D3530</item>
+        <item name="colorSecondaryContainer">#344C47</item>
+        <item name="colorOnSecondaryContainer">#CEE8E1</item>
+        <item name="colorTertiary">#B4C7E9</item>
+        <item name="android:colorBackground">#111923</item>
+        <item name="colorOnBackground">#DCE4E8</item>
+        <item name="colorSurface">#151D26</item>
+        <item name="colorOnSurface">#DCE4E8</item>
+        <item name="colorSurfaceVariant">#3F4946</item>
+        <item name="colorOnSurfaceVariant">#BEC9C5</item>
+        <item name="colorOutline">#89938F</item>
+    </style>
+
+    <style name="Theme.VaultNote.Nebula" parent="Theme.VaultNote.DarkBase">
+        <item name="colorPrimary">#C8BFFF</item>
+        <item name="colorOnPrimary">#302761</item>
+        <item name="colorPrimaryContainer">#473E79</item>
+        <item name="colorOnPrimaryContainer">#E5DEFF</item>
+        <item name="colorSecondary">#CAC1D9</item>
+        <item name="colorOnSecondary">#332D42</item>
+        <item name="colorSecondaryContainer">#4A4359</item>
+        <item name="colorOnSecondaryContainer">#E7DEFA</item>
+        <item name="colorTertiary">#EDB8C7</item>
+        <item name="android:colorBackground">#14121F</item>
+        <item name="colorOnBackground">#E6E0EE</item>
+        <item name="colorSurface">#191724</item>
+        <item name="colorOnSurface">#E6E0EE</item>
+        <item name="colorSurfaceVariant">#49454F</item>
+        <item name="colorOnSurfaceVariant">#CBC4D0</item>
+        <item name="colorOutline">#958E99</item>
+    </style>
+
+    <style name="Theme.VaultNote.Amethyst" parent="Theme.VaultNote.DarkBase">
+        <item name="colorPrimary">#DBB8F7</item>
+        <item name="colorOnPrimary">#402052</item>
+        <item name="colorPrimaryContainer">#58376A</item>
+        <item name="colorOnPrimaryContainer">#F5D9FF</item>
+        <item name="colorSecondary">#D5C1D8</item>
+        <item name="colorOnSecondary">#392D3D</item>
+        <item name="colorSecondaryContainer">#504454</item>
+        <item name="colorOnSecondaryContainer">#F2DDF5</item>
+        <item name="colorTertiary">#F4B7B9</item>
+        <item name="android:colorBackground">#18121F</item>
+        <item name="colorOnBackground">#EBDFF0</item>
+        <item name="colorSurface">#1D1724</item>
+        <item name="colorOnSurface">#EBDFF0</item>
+        <item name="colorSurfaceVariant">#4D444F</item>
+        <item name="colorOnSurfaceVariant">#D0C3D1</item>
+        <item name="colorOutline">#9A8D9B</item>
+    </style>
+
+    <style name="Theme.VaultNote.Emerald" parent="Theme.VaultNote.DarkBase">
+        <item name="colorPrimary">#79D9AF</item>
+        <item name="colorOnPrimary">#003824</item>
+        <item name="colorPrimaryContainer">#005235</item>
+        <item name="colorOnPrimaryContainer">#96F6CA</item>
+        <item name="colorSecondary">#B4CCBF</item>
+        <item name="colorOnSecondary">#20362C</item>
+        <item name="colorSecondaryContainer">#374C42</item>
+        <item name="colorOnSecondaryContainer">#D0E8DB</item>
+        <item name="colorTertiary">#A8CDDF</item>
+        <item name="android:colorBackground">#0D1916</item>
+        <item name="colorOnBackground">#DDE5DF</item>
+        <item name="colorSurface">#111D19</item>
+        <item name="colorOnSurface">#DDE5DF</item>
+        <item name="colorSurfaceVariant">#3F4943</item>
+        <item name="colorOnSurfaceVariant">#BEC9C2</item>
+        <item name="colorOutline">#89938D</item>
+    </style>
+
+    <style name="Theme.VaultNote.Forest" parent="Theme.VaultNote.DarkBase">
+        <item name="colorPrimary">#A5D49D</item>
+        <item name="colorOnPrimary">#10380F</item>
+        <item name="colorPrimaryContainer">#285024</item>
+        <item name="colorOnPrimaryContainer">#C0F0B7</item>
+        <item name="colorSecondary">#BBCBB5</item>
+        <item name="colorOnSecondary">#263423</item>
+        <item name="colorSecondaryContainer">#3C4B38</item>
+        <item name="colorOnSecondaryContainer">#D7E7D0</item>
+        <item name="colorTertiary">#A0CFD1</item>
+        <item name="android:colorBackground">#101810</item>
+        <item name="colorOnBackground">#DFE4D9</item>
+        <item name="colorSurface">#141C14</item>
+        <item name="colorOnSurface">#DFE4D9</item>
+        <item name="colorSurfaceVariant">#43483F</item>
+        <item name="colorOnSurfaceVariant">#C3C8BC</item>
+        <item name="colorOutline">#8D9287</item>
+    </style>
+
+    <style name="Theme.VaultNote.Cobalt" parent="Theme.VaultNote.DarkBase">
+        <item name="colorPrimary">#A8C7FF</item>
+        <item name="colorOnPrimary">#003063</item>
+        <item name="colorPrimaryContainer">#154779</item>
+        <item name="colorOnPrimaryContainer">#D5E3FF</item>
+        <item name="colorSecondary">#BBC7DB</item>
+        <item name="colorOnSecondary">#253140</item>
+        <item name="colorSecondaryContainer">#3B4858</item>
+        <item name="colorOnSecondaryContainer">#D7E3F7</item>
+        <item name="colorTertiary">#D8BDE4</item>
+        <item name="android:colorBackground">#0E1726</item>
+        <item name="colorOnBackground">#DEE2EA</item>
+        <item name="colorSurface">#121B2A</item>
+        <item name="colorOnSurface">#DEE2EA</item>
+        <item name="colorSurfaceVariant">#43474E</item>
+        <item name="colorOnSurfaceVariant">#C3C6CF</item>
+        <item name="colorOutline">#8D9199</item>
+    </style>
+
+    <style name="Theme.VaultNote.Indigo" parent="Theme.VaultNote.DarkBase">
+        <item name="colorPrimary">#BEC2FF</item>
+        <item name="colorOnPrimary">#272B60</item>
+        <item name="colorPrimaryContainer">#3E4378</item>
+        <item name="colorOnPrimaryContainer">#E0E0FF</item>
+        <item name="colorSecondary">#C5C4DC</item>
+        <item name="colorOnSecondary">#2E2F42</item>
+        <item name="colorSecondaryContainer">#454659</item>
+        <item name="colorOnSecondaryContainer">#E1E0F9</item>
+        <item name="colorTertiary">#E8B9D2</item>
+        <item name="android:colorBackground">#121426</item>
+        <item name="colorOnBackground">#E3E1EC</item>
+        <item name="colorSurface">#17182B</item>
+        <item name="colorOnSurface">#E3E1EC</item>
+        <item name="colorSurfaceVariant">#46464F</item>
+        <item name="colorOnSurfaceVariant">#C7C5D0</item>
+        <item name="colorOutline">#918F9A</item>
+    </style>
+
+    <style name="Theme.VaultNote.Crimson" parent="Theme.VaultNote.DarkBase">
+        <item name="colorPrimary">#FFB0C3</item>
+        <item name="colorOnPrimary">#65002F</item>
+        <item name="colorPrimaryContainer">#8D1746</item>
+        <item name="colorOnPrimaryContainer">#FFD9E1</item>
+        <item name="colorSecondary">#E4BDC6</item>
+        <item name="colorOnSecondary">#432931</item>
+        <item name="colorSecondaryContainer">#5B3F47</item>
+        <item name="colorOnSecondaryContainer">#FFD9E1</item>
+        <item name="colorTertiary">#F0BC95</item>
+        <item name="android:colorBackground">#1D1115</item>
+        <item name="colorOnBackground">#F0DEE1</item>
+        <item name="colorSurface">#22161A</item>
+        <item name="colorOnSurface">#F0DEE1</item>
+        <item name="colorSurfaceVariant">#524347</item>
+        <item name="colorOnSurfaceVariant">#D5C2C6</item>
+        <item name="colorOutline">#9E8C90</item>
+    </style>
+
+    <style name="Theme.VaultNote.Ember" parent="Theme.VaultNote.DarkBase">
+        <item name="colorPrimary">#FFB68A</item>
+        <item name="colorOnPrimary">#552100</item>
+        <item name="colorPrimaryContainer">#793100</item>
+        <item name="colorOnPrimaryContainer">#FFDBC6</item>
+        <item name="colorSecondary">#E4BFA9</item>
+        <item name="colorOnSecondary">#422B1D</item>
+        <item name="colorSecondaryContainer">#5B4132</item>
+        <item name="colorOnSecondaryContainer">#FFDBC9</item>
+        <item name="colorTertiary">#D4C68F</item>
+        <item name="android:colorBackground">#1C1410</item>
+        <item name="colorOnBackground">#F0E0D8</item>
+        <item name="colorSurface">#211914</item>
+        <item name="colorOnSurface">#F0E0D8</item>
+        <item name="colorSurfaceVariant">#52443C</item>
+        <item name="colorOnSurfaceVariant">#D7C2B7</item>
+        <item name="colorOutline">#A08C81</item>
+    </style>
+
+    <style name="Theme.VaultNote.Mocha" parent="Theme.VaultNote.DarkBase">
+        <item name="colorPrimary">#E7B98E</item>
+        <item name="colorOnPrimary">#442A13</item>
+        <item name="colorPrimaryContainer">#5D4028</item>
+        <item name="colorOnPrimaryContainer">#FFDCBA</item>
+        <item name="colorSecondary">#D8C2AE</item>
+        <item name="colorOnSecondary">#3B2E22</item>
+        <item name="colorSecondaryContainer">#524438</item>
+        <item name="colorOnSecondaryContainer">#F5DECA</item>
+        <item name="colorTertiary">#BCCB9C</item>
+        <item name="android:colorBackground">#1A1513</item>
+        <item name="colorOnBackground">#EDE0DA</item>
+        <item name="colorSurface">#1F1A17</item>
+        <item name="colorOnSurface">#EDE0DA</item>
+        <item name="colorSurfaceVariant">#50453E</item>
+        <item name="colorOnSurfaceVariant">#D3C4BB</item>
+        <item name="colorOutline">#9C8E85</item>
+    </style>
+
+    <style name="Theme.VaultNote.Dusk" parent="Theme.VaultNote.DarkBase">
+        <item name="colorPrimary">#D0BCFF</item>
+        <item name="colorOnPrimary">#381E72</item>
+        <item name="colorPrimaryContainer">#4F378B</item>
+        <item name="colorOnPrimaryContainer">#EADDFF</item>
+        <item name="colorSecondary">#CCC2DC</item>
+        <item name="colorOnSecondary">#332D41</item>
+        <item name="colorSecondaryContainer">#4A4458</item>
+        <item name="colorOnSecondaryContainer">#E8DEF8</item>
+        <item name="colorTertiary">#EFB8C8</item>
+        <item name="android:colorBackground">#171521</item>
+        <item name="colorOnBackground">#E6E1E9</item>
+        <item name="colorSurface">#1C1B1F</item>
+        <item name="colorOnSurface">#E6E1E5</item>
+        <item name="colorSurfaceVariant">#49454F</item>
+        <item name="colorOnSurfaceVariant">#CAC4D0</item>
+        <item name="colorOutline">#938F99</item>
+    </style>
+
+    <style name="Theme.VaultNote.Cyber" parent="Theme.VaultNote.DarkBase">
+        <item name="colorPrimary">#4DE1E8</item>
+        <item name="colorOnPrimary">#003739</item>
+        <item name="colorPrimaryContainer">#004F53</item>
+        <item name="colorOnPrimaryContainer">#70F5FC</item>
+        <item name="colorSecondary">#B0CCCE</item>
+        <item name="colorOnSecondary">#1B3436</item>
+        <item name="colorSecondaryContainer">#324B4D</item>
+        <item name="colorOnSecondaryContainer">#CCE8EA</item>
+        <item name="colorTertiary">#B7C4EA</item>
+        <item name="android:colorBackground">#07191C</item>
+        <item name="colorOnBackground">#DCE4E5</item>
+        <item name="colorSurface">#0B1D20</item>
+        <item name="colorOnSurface">#DCE4E5</item>
+        <item name="colorSurfaceVariant">#3F494A</item>
+        <item name="colorOnSurfaceVariant">#BEC8C9</item>
+        <item name="colorOutline">#899394</item>
+    </style>
+
+</resources>
