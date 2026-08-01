@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use std::path::PathBuf;
-use tauri::State;
+use tauri::{State, ipc::Response};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
@@ -655,6 +655,37 @@ pub async fn export_attachment(
     state
         .with_services(|services| services.attachments.export_to(&request.id, &destination))
         .map(|()| true)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn preview_attachment(
+    state: State<'_, RuntimeState>,
+    request: ItemRequest,
+) -> Result<Response, CommandError> {
+    validate_id(&request.id).map_err(CommandError::from)?;
+    let service = state
+        .with_services(|services| Ok(services.attachments.clone()))
+        .map_err(CommandError::from)?;
+    tokio::task::spawn_blocking(move || service.preview_image(&request.id))
+        .await
+        .map_err(|_| CommandError::from(crate::error::AppError::AttachmentPreviewUnavailable))?
+        .map(Response::new)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn open_attachment(
+    state: State<'_, RuntimeState>,
+    request: ItemRequest,
+) -> Result<(), CommandError> {
+    validate_id(&request.id).map_err(CommandError::from)?;
+    let service = state
+        .with_services(|services| Ok(services.attachments.clone()))
+        .map_err(CommandError::from)?;
+    tokio::task::spawn_blocking(move || service.open(&request.id))
+        .await
+        .map_err(|_| CommandError::from(crate::error::AppError::AttachmentOpenFailed))?
         .map_err(CommandError::from)
 }
 

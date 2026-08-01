@@ -1,6 +1,6 @@
 [package]
 name = "vaultnote-desktop"
-version = "0.5.2"
+version = "0.5.3"
 description = "Offline-first VaultNote desktop client"
 authors = ["VaultNote contributors"]
 edition = "2024"

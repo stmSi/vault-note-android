@@ -1,3 +1,4 @@
+mod attachment_viewer;
 mod backup;
 mod commands;
 mod crypto;
@@ -79,6 +80,8 @@ pub fn run() {
             commands::import_attachment,
             commands::import_attachment_path,
             commands::export_attachment,
+            commands::preview_attachment,
+            commands::open_attachment,
             commands::delete_attachment,
             commands::export_backup,
             commands::restore_backup,

@@ -205,6 +205,14 @@ export function exportAttachment(id: string): Promise<boolean> {
   return invoke('export_attachment', { request: { id } });
 }
 
+export function previewAttachment(id: string): Promise<ArrayBuffer> {
+  return invoke('preview_attachment', { request: { id } });
+}
+
+export function openAttachment(id: string): Promise<void> {
+  return invoke('open_attachment', { request: { id } });
+}
+
 export function deleteAttachment(id: string): Promise<void> {
   return invoke('delete_attachment', { request: { id } });
 }

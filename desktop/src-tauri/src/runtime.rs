@@ -141,7 +141,12 @@ impl RuntimeState {
             &self.app_data_directory,
         )?;
         let repository: Arc<dyn VaultRepository> = Arc::new(SqliteVaultRepository::new(database));
-        Ok(AppState::new(repository, attachment_crypto, sync))
+        AppState::new(
+            repository,
+            attachment_crypto,
+            sync,
+            &self.app_data_directory,
+        )
     }
 
     fn open_unencrypted_services(&self) -> Result<AppState, AppError> {
@@ -156,7 +161,12 @@ impl RuntimeState {
             &self.app_data_directory,
         )?;
         let repository: Arc<dyn VaultRepository> = Arc::new(SqliteVaultRepository::new(database));
-        Ok(AppState::new(repository, attachment_storage, sync))
+        AppState::new(
+            repository,
+            attachment_storage,
+            sync,
+            &self.app_data_directory,
+        )
     }
 
     fn configured_mode(&self) -> Result<VaultEncryptionMode, AppError> {

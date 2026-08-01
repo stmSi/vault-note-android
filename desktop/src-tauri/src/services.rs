@@ -7,6 +7,7 @@ use chrono::{DateTime, Days, Utc};
 use chrono_tz::Tz;
 
 use crate::{
+    attachment_viewer::AttachmentViewer,
     backup::BackupService,
     crypto::AttachmentCrypto,
     error::AppError,
@@ -194,13 +195,19 @@ impl AppState {
         repository: Arc<dyn VaultRepository>,
         attachment_crypto: AttachmentCrypto,
         sync: LanSyncService,
-    ) -> Self {
-        Self {
+        app_data_directory: &std::path::Path,
+    ) -> Result<Self, AppError> {
+        let viewer = AttachmentViewer::new(app_data_directory)?;
+        Ok(Self {
             vault: VaultService::new(Arc::clone(&repository)),
             sync,
-            attachments: AttachmentService::new(Arc::clone(&repository), attachment_crypto.clone()),
+            attachments: AttachmentService::new(
+                Arc::clone(&repository),
+                attachment_crypto.clone(),
+                viewer,
+            ),
             backup: BackupService::new(repository, attachment_crypto),
-        }
+        })
     }
 }
 
@@ -208,11 +215,20 @@ impl AppState {
 pub struct AttachmentService {
     repository: Arc<dyn VaultRepository>,
     crypto: AttachmentCrypto,
+    viewer: AttachmentViewer,
 }
 
 impl AttachmentService {
-    pub fn new(repository: Arc<dyn VaultRepository>, crypto: AttachmentCrypto) -> Self {
-        Self { repository, crypto }
+    pub fn new(
+        repository: Arc<dyn VaultRepository>,
+        crypto: AttachmentCrypto,
+        viewer: AttachmentViewer,
+    ) -> Self {
+        Self {
+            repository,
+            crypto,
+            viewer,
+        }
     }
 
     pub fn list(&self, parent_item_id: &str) -> Result<Vec<VaultAttachment>, AppError> {
@@ -269,9 +285,35 @@ impl AttachmentService {
         Ok(())
     }
 
+    pub fn preview_image(&self, id: &str) -> Result<Vec<u8>, AppError> {
+        validate_id(id)?;
+        let record = self.repository.attachment_record(id)?;
+        if !matches!(
+            record.attachment.mime_type.as_str(),
+            "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+        ) {
+            return Err(AppError::AttachmentPreviewUnavailable);
+        }
+        let mut plaintext = self.crypto.decrypt_verified_bytes(
+            &record.encrypted_relative_path,
+            &record.attachment.id,
+            record.attachment.file_size,
+            &record.attachment.sha256,
+            24 * 1024 * 1024,
+        )?;
+        Ok(std::mem::take(&mut *plaintext))
+    }
+
+    pub fn open(&self, id: &str) -> Result<(), AppError> {
+        validate_id(id)?;
+        let record = self.repository.attachment_record(id)?;
+        self.viewer.open(&record, &self.crypto)
+    }
+
     pub fn delete(&self, id: &str) -> Result<(), AppError> {
         validate_id(id)?;
         let record = self.repository.attachment_record(id)?;
+        self.viewer.discard(&record.attachment)?;
         let staged = self
             .crypto
             .stage_removal(&record.encrypted_relative_path, &record.attachment.id)?;

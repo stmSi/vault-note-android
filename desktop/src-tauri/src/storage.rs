@@ -27,26 +27,26 @@ pub fn harden_database_file(path: &std::path::Path) -> Result<(), AppError> {
 }
 
 #[cfg(unix)]
-fn harden_directory(path: &std::path::Path) -> Result<(), AppError> {
+pub(crate) fn harden_directory(path: &std::path::Path) -> Result<(), AppError> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn harden_directory(_path: &std::path::Path) -> Result<(), AppError> {
+pub(crate) fn harden_directory(_path: &std::path::Path) -> Result<(), AppError> {
     Ok(())
 }
 
 #[cfg(unix)]
-fn harden_file(path: &std::path::Path) -> Result<(), AppError> {
+pub(crate) fn harden_file(path: &std::path::Path) -> Result<(), AppError> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn harden_file(_path: &std::path::Path) -> Result<(), AppError> {
+pub(crate) fn harden_file(_path: &std::path::Path) -> Result<(), AppError> {
     Ok(())
 }
 

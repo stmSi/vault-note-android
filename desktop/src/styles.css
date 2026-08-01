@@ -1,6 +1,7 @@
 @import './styles/base.css';
 @import './styles/security.css';
 @import './styles/workspace.css';
+@import './styles/attachments.css';
 @import './styles/responsive.css';
 @import './styles/themes/catalog.css';
 @import './styles/appearance-core.css';

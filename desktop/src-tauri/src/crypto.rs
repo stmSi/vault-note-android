@@ -237,6 +237,28 @@ impl AttachmentCrypto {
         Ok(plaintext)
     }
 
+    pub fn decrypt_verified_bytes(
+        &self,
+        relative_path: &str,
+        attachment_id: &str,
+        expected_size: i64,
+        expected_sha256: &str,
+        maximum_size: u64,
+    ) -> Result<Zeroizing<Vec<u8>>, AppError> {
+        let expected_size =
+            u64::try_from(expected_size).map_err(|_| AppError::AttachmentPreviewUnavailable)?;
+        if expected_size > maximum_size {
+            return Err(AppError::AttachmentPreviewUnavailable);
+        }
+        let plaintext = self.decrypt_bytes(relative_path, attachment_id)?;
+        if plaintext.len() as u64 != expected_size
+            || hex_digest(Sha256::digest(plaintext.as_slice()).as_slice()) != expected_sha256
+        {
+            return Err(AppError::Cryptography);
+        }
+        Ok(plaintext)
+    }
+
     pub fn encrypt_restored(
         &self,
         plaintext: &[u8],
@@ -997,6 +1019,54 @@ mod tests {
             .windows(b"private attachment".len())
             .any(|window| window == b"private attachment")
         );
+    }
+
+    #[test]
+    fn preview_bytes_enforce_size_and_checksum_before_display() {
+        let directory = tempdir().expect("temporary directory should exist");
+        let crypto = AttachmentCrypto::new(Arc::new(MasterKey::for_tests()), directory.path())
+            .expect("crypto should initialize");
+        let source = directory.path().join("preview.png");
+        let plaintext = b"authenticated image bytes";
+        fs::write(&source, plaintext).expect("source should write");
+        let id = "00000000-0000-0000-0000-000000000004";
+        let encrypted = crypto
+            .encrypt_import(&source, id)
+            .expect("import should encrypt");
+
+        assert_eq!(
+            crypto
+                .decrypt_verified_bytes(
+                    &encrypted.relative_path,
+                    id,
+                    encrypted.plaintext_size,
+                    &encrypted.sha256,
+                    1024,
+                )
+                .expect("verified preview should decrypt")
+                .as_slice(),
+            plaintext
+        );
+        assert!(matches!(
+            crypto.decrypt_verified_bytes(
+                &encrypted.relative_path,
+                id,
+                encrypted.plaintext_size,
+                &"0".repeat(64),
+                1024,
+            ),
+            Err(AppError::Cryptography)
+        ));
+        assert!(matches!(
+            crypto.decrypt_verified_bytes(
+                &encrypted.relative_path,
+                id,
+                encrypted.plaintext_size,
+                &encrypted.sha256,
+                4,
+            ),
+            Err(AppError::AttachmentPreviewUnavailable)
+        ));
     }
 
     #[test]

@@ -3,6 +3,8 @@
   import type { UnlistenFn } from '@tauri-apps/api/event';
   import { onDestroy, onMount } from 'svelte';
   import AgendaPanel from './AgendaPanel.svelte';
+  import AttachmentPanel from './AttachmentPanel.svelte';
+  import AttachmentPreview from './AttachmentPreview.svelte';
   import DateDialog from './DateDialog.svelte';
   import DatePanel from './DatePanel.svelte';
   import NoteBlockEditor from './NoteBlockEditor.svelte';
@@ -38,7 +40,9 @@
     listAttachments,
     lock,
     moveToTrash,
+    openAttachment,
     pairRelay,
+    previewAttachment,
     restore,
     restoreBackup,
     restoreBackupPath,
@@ -58,6 +62,7 @@
     inspectBackupPath,
   } from './lib/api';
   import { DebouncedAutosaver, type AutosaveStatus } from './lib/autosave';
+  import { previewableImages } from './lib/attachments';
   import { derivePlainText, documentFromPlainText } from './lib/noteBody';
   import { reconcileReminderNotifications } from './lib/reminders';
   import { parseThemePreference, type ThemePreference } from './lib/themes';
@@ -90,6 +95,11 @@
     id: string;
     title: string;
     bodyDocument: NoteBodyDocument;
+  }
+
+  interface AttachmentPreviewState {
+    attachment: VaultAttachment;
+    objectUrl: string;
   }
 
   type ListState =
@@ -136,6 +146,12 @@
   let securityPanelOpen = false;
   let attachments: VaultAttachment[] = [];
   let attachmentBusy = false;
+  let attachmentPreview: AttachmentPreviewState | null = null;
+  let attachmentPreviewRequest = 0;
+  $: imageAttachments = previewableImages(attachments);
+  $: attachmentPreviewIndex = attachmentPreview === null
+    ? -1
+    : imageAttachments.findIndex((attachment) => attachment.id === attachmentPreview?.attachment.id);
   let backupPassword = '';
   let backupBusy = false;
   let backupMessage = '';
@@ -260,6 +276,7 @@
       return;
     }
     try {
+      closeAttachmentPreview();
       authentication = await lock();
       autosaver = null;
       selected = null;
@@ -471,7 +488,9 @@
       return;
     }
     if (event.key === 'Escape') {
-      if (droppedBackup !== null) {
+      if (attachmentPreview !== null) {
+        closeAttachmentPreview();
+      } else if (droppedBackup !== null) {
         closeDroppedBackup();
       } else if (agendaOpen) {
         agendaOpen = false;
@@ -638,6 +657,7 @@
 
   onDestroy(() => {
     componentDestroyed = true;
+    closeAttachmentPreview();
     dragDropUnlisten?.();
     window.removeEventListener('keydown', handleGlobalShortcut);
     if (searchTimer !== undefined) {
@@ -985,6 +1005,7 @@
 
   function installNote(note: VaultNote): void {
     autosaver?.cancelPending();
+    closeAttachmentPreview();
     selected = note;
     editorTitle = note.title;
     editorDocument = note.bodyDocument ?? documentFromPlainText(note.body);
@@ -1030,6 +1051,12 @@
       const loaded = await listAttachments(noteId);
       if (selected?.id === noteId) {
         attachments = loaded;
+        if (
+          attachmentPreview !== null &&
+          !loaded.some((attachment) => attachment.id === attachmentPreview?.attachment.id)
+        ) {
+          closeAttachmentPreview();
+        }
       }
     } catch (error) {
       actionError = commandError(error);
@@ -1070,12 +1097,76 @@
     }
   }
 
+  function closeAttachmentPreview(): void {
+    attachmentPreviewRequest += 1;
+    if (attachmentPreview !== null) {
+      URL.revokeObjectURL(attachmentPreview.objectUrl);
+      attachmentPreview = null;
+    }
+  }
+
+  async function showAttachmentPreview(attachment: VaultAttachment): Promise<void> {
+    const request = ++attachmentPreviewRequest;
+    attachmentBusy = true;
+    try {
+      const bytes = await previewAttachment(attachment.id);
+      if (
+        request !== attachmentPreviewRequest ||
+        componentDestroyed ||
+        !attachments.some((candidate) => candidate.id === attachment.id)
+      ) {
+        return;
+      }
+      const objectUrl = URL.createObjectURL(new Blob([bytes], { type: attachment.mimeType }));
+      if (attachmentPreview !== null) {
+        URL.revokeObjectURL(attachmentPreview.objectUrl);
+      }
+      attachmentPreview = { attachment, objectUrl };
+    } catch (error) {
+      actionError = commandError(error);
+    } finally {
+      attachmentBusy = false;
+    }
+  }
+
+  async function openAttachmentExternally(attachment: VaultAttachment): Promise<void> {
+    attachmentBusy = true;
+    try {
+      await openAttachment(attachment.id);
+      showFeedback('Opened in default app · temporary copy clears when VaultNote locks');
+    } catch (error) {
+      actionError = commandError(error);
+    } finally {
+      attachmentBusy = false;
+    }
+  }
+
+  function showAdjacentImage(offset: -1 | 1): void {
+    if (attachmentPreviewIndex < 0) return;
+    const next = imageAttachments[attachmentPreviewIndex + offset];
+    if (next !== undefined) {
+      void showAttachmentPreview(next);
+    }
+  }
+
+  function attachmentImageFailed(): void {
+    actionError = {
+      code: 'attachment_preview_failed',
+      message: 'This image could not be decoded. Open it with your default app instead.',
+      retryable: false,
+    };
+    closeAttachmentPreview();
+  }
+
   async function removeAttachment(id: string): Promise<void> {
     if (selected === null) {
       return;
     }
     attachmentBusy = true;
     try {
+      if (attachmentPreview?.attachment.id === id) {
+        closeAttachmentPreview();
+      }
       await deleteAttachment(id);
       await Promise.all([
         loadNoteAttachments(selected.id),
@@ -1088,12 +1179,6 @@
     } finally {
       attachmentBusy = false;
     }
-  }
-
-  function formattedFileSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
   }
 
   async function openNote(id: string): Promise<void> {
@@ -1945,40 +2030,17 @@
             onDocumentChange={bodyDocumentChanged}
             onDates={toggleDatesPanel}
           />
-          <section class="attachment-section" aria-label="Attachments">
-            <header>
-              <div>
-                <strong>Attachments</strong>
-                <small>
-                  {attachments.length} {attachments.length === 1 ? 'file' : 'files'}
-                </small>
-              </div>
-              {#if selected.deletedAtEpochMillis === null}
-                <button disabled={attachmentBusy} onclick={addAttachment}>+ Add file</button>
-              {/if}
-            </header>
-            <div class="attachment-list">
-              {#if attachments.length === 0}
-                <p>Drop files anywhere to add them here.</p>
-              {/if}
-              {#each attachments as attachment (attachment.id)}
-                <div class="attachment-row">
-                  <span>
-                    <strong>{attachment.displayName}</strong>
-                    <small>
-                      {formattedFileSize(attachment.fileSize)} · {authentication?.encryptionMode === 'PASSWORD'
-                        ? 'encrypted locally'
-                        : 'stored without encryption'}
-                    </small>
-                  </span>
-                  <button disabled={attachmentBusy} onclick={() => saveAttachment(attachment.id)}>Save copy</button>
-                  {#if selected.deletedAtEpochMillis === null}
-                    <button class="danger-button" disabled={attachmentBusy} onclick={() => removeAttachment(attachment.id)}>Delete</button>
-                  {/if}
-                </div>
-              {/each}
-            </div>
-          </section>
+          <AttachmentPanel
+            {attachments}
+            busy={attachmentBusy}
+            readonly={selected.deletedAtEpochMillis !== null}
+            encryptionMode={authentication?.encryptionMode ?? 'UNCONFIGURED'}
+            onAdd={() => void addAttachment()}
+            onPreview={(attachment) => void showAttachmentPreview(attachment)}
+            onOpen={(attachment) => void openAttachmentExternally(attachment)}
+            onSave={(id) => void saveAttachment(id)}
+            onDelete={(id) => void removeAttachment(id)}
+          />
           {#if metadataPanel === 'dates' && selected.deletedAtEpochMillis === null}
             <DatePanel
               entries={selected.datedEntries}
@@ -2011,6 +2073,25 @@
           onComplete={finishDate}
           onSnooze={snoozeDate}
           onExport={exportDate}
+        />
+      {/if}
+      {#if attachmentPreview !== null}
+        <AttachmentPreview
+          attachment={attachmentPreview.attachment}
+          source={attachmentPreview.objectUrl}
+          busy={attachmentBusy}
+          hasPrevious={attachmentPreviewIndex > 0}
+          hasNext={attachmentPreviewIndex >= 0 && attachmentPreviewIndex < imageAttachments.length - 1}
+          onClose={closeAttachmentPreview}
+          onPrevious={() => showAdjacentImage(-1)}
+          onNext={() => showAdjacentImage(1)}
+          onOpen={() => {
+            if (attachmentPreview !== null) void openAttachmentExternally(attachmentPreview.attachment);
+          }}
+          onSave={() => {
+            if (attachmentPreview !== null) void saveAttachment(attachmentPreview.attachment.id);
+          }}
+          onImageError={attachmentImageFailed}
         />
       {/if}
     </section>

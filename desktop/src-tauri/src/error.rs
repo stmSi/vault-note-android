@@ -35,6 +35,10 @@ pub enum AppError {
     FileTooLarge,
     #[error("selected file type is unsupported")]
     UnsupportedFile,
+    #[error("attachment cannot be previewed in the app")]
+    AttachmentPreviewUnavailable,
+    #[error("attachment could not be opened by the desktop")]
+    AttachmentOpenFailed,
     #[error("backup is invalid or corrupted")]
     InvalidBackup,
     #[error("backup version is unsupported")]
@@ -155,6 +159,16 @@ impl From<AppError> for CommandError {
                 code: "unsupported_file",
                 message: "The selected file type is not supported.",
                 retryable: false,
+            },
+            AppError::AttachmentPreviewUnavailable => Self {
+                code: "attachment_preview_unavailable",
+                message: "This image is too large or cannot be previewed here. Open it with your default app instead.",
+                retryable: false,
+            },
+            AppError::AttachmentOpenFailed => Self {
+                code: "attachment_open_failed",
+                message: "No desktop application could open this file.",
+                retryable: true,
             },
             AppError::InvalidBackup => Self {
                 code: "invalid_backup",
