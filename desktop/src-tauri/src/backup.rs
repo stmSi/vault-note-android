@@ -1648,6 +1648,32 @@ mod tests {
         (directory, repository, crypto, service, item_id)
     }
 
+    fn repack_with_deflate(source: &Path, destination: &Path) {
+        let mut source_archive =
+            ZipArchive::new(File::open(source).expect("stored backup should be readable"))
+                .expect("stored backup should be a zip archive");
+        let output = File::create(destination).expect("deflated backup should be created");
+        let mut writer = ZipWriter::new(output);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        for index in 0..source_archive.len() {
+            let mut entry = source_archive
+                .by_index(index)
+                .expect("stored backup entry should be readable");
+            let name = entry.name().to_owned();
+            let mut bytes = Vec::with_capacity(entry.size() as usize);
+            entry
+                .read_to_end(&mut bytes)
+                .expect("stored backup entry should decompress");
+            writer
+                .start_file(name, options)
+                .expect("deflated entry should start");
+            writer
+                .write_all(&bytes)
+                .expect("deflated entry should be written");
+        }
+        writer.finish().expect("deflated backup should finish");
+    }
+
     #[test]
     fn encrypted_entry_binds_manifest_and_path() {
         let key = Zeroizing::new([7_u8; 32]);
@@ -1777,6 +1803,49 @@ mod tests {
                 .len(),
             2,
             "validation failure must not partially restore notes"
+        );
+    }
+
+    #[test]
+    fn android_deflated_plaintext_backup_inspects_and_restores() {
+        let (directory, repository, _crypto, service, _original_id) = populated_service();
+        let stored = directory.path().join("stored.vnb");
+        let android_style = directory.path().join("android-deflated.vnb");
+        service
+            .export_plaintext_to(4_000, stored.clone())
+            .expect("plaintext fixture should export");
+        repack_with_deflate(&stored, &android_style);
+
+        let mut archive = ZipArchive::new(
+            File::open(&android_style).expect("deflated backup should be readable"),
+        )
+        .expect("deflated backup should be a zip archive");
+        assert_eq!(
+            archive
+                .by_index(0)
+                .expect("deflated entry should be readable")
+                .compression(),
+            CompressionMethod::Deflated
+        );
+        assert_eq!(
+            service
+                .inspect(&android_style)
+                .expect("Android backup should inspect")
+                .protection,
+            BackupProtection::Plaintext
+        );
+
+        let restored = service
+            .restore_auto(None, &android_style)
+            .expect("Android backup should restore");
+        assert_eq!(restored.restored_item_count, 1);
+        assert_eq!(restored.restored_attachment_count, 1);
+        assert_eq!(
+            repository
+                .list_items(VaultSection::Active, 100)
+                .expect("notes should list")
+                .len(),
+            2
         );
     }
 

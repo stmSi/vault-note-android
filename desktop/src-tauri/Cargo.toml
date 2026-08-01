@@ -1,6 +1,6 @@
 [package]
 name = "vaultnote-desktop"
-version = "0.5.1"
+version = "0.5.2"
 description = "Offline-first VaultNote desktop client"
 authors = ["VaultNote contributors"]
 edition = "2024"
@@ -45,7 +45,7 @@ tokio-util = { version = "0.7.19", features = ["io"] }
 uuid = { version = "1.23.5", features = ["serde", "v4"] }
 unicode-normalization = "0.1.24"
 zeroize = { version = "1.8.2", features = ["derive"] }
-zip = { version = "6.0.0", default-features = false }
+zip = { version = "6.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 vaultnote-sync-server = { path = "../../sync-server", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
