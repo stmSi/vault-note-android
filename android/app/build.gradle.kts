@@ -14,8 +14,8 @@ android {
         applicationId = "com.vaultnote"
         minSdk = 26
         targetSdk = 37
-        versionCode = 31
-        versionName = "1.13.0"
+        versionCode = 32
+        versionName = "1.13.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

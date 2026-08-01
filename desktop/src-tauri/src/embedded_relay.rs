@@ -1,6 +1,6 @@
 use std::{
     fs::{File, OpenOptions},
-    net::{Ipv4Addr, SocketAddr, TcpListener},
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
     path::{Path, PathBuf},
     sync::{Arc, Mutex as StdMutex},
     time::Duration,
@@ -34,6 +34,7 @@ pub struct EmbeddedRelayStatus {
     pub enabled: bool,
     pub running: bool,
     pub port: Option<u16>,
+    pub lan_address: Option<String>,
     pub vault_id: Option<String>,
     pub certificate_sha256: Option<String>,
 }
@@ -294,6 +295,7 @@ impl EmbeddedRelayStatus {
             enabled: false,
             running: false,
             port: None,
+            lan_address: None,
             vault_id: None,
             certificate_sha256: None,
         }
@@ -304,6 +306,7 @@ impl EmbeddedRelayStatus {
             enabled: true,
             running: true,
             port: Some(port),
+            lan_address: primary_lan_address(),
             vault_id: Some(config.vault_id.clone()),
             certificate_sha256: Some(config.tls.certificate_sha256.clone()),
         }
@@ -330,6 +333,17 @@ fn bind_listener() -> Result<TcpListener, AppError> {
         .set_nonblocking(true)
         .map_err(|_| AppError::EmbeddedRelayUnavailable)?;
     Ok(listener)
+}
+
+fn primary_lan_address() -> Option<String> {
+    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+    socket.connect((Ipv4Addr::new(192, 0, 2, 1), 9)).ok()?;
+    match socket.local_addr().ok()?.ip() {
+        IpAddr::V4(address) if !address.is_loopback() && !address.is_unspecified() => {
+            Some(address.to_string())
+        }
+        _ => None,
+    }
 }
 
 fn acquire_process_lock(directory: &Path) -> Result<File, vaultnote_sync_server::RelayError> {
@@ -381,6 +395,7 @@ mod tests {
         let status = started.status;
         assert!(status.enabled);
         assert!(status.running);
+        assert_ne!(status.lan_address.as_deref(), Some("127.0.0.1"));
         let client = RelayClient::new(ProvisionalRelayAccess {
             host_address: "127.0.0.1",
             port: status.port.expect("running port should exist"),

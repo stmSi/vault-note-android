@@ -2,7 +2,8 @@
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="?attr/colorSurface">
 
     <androidx.core.widget.NestedScrollView
         android:id="@+id/content"
@@ -24,6 +25,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/appearance_title"
+            android:textColor="?attr/colorOnSurface"
             android:textAppearance="?attr/textAppearanceTitleMedium" />
 
         <TextView
@@ -31,6 +33,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/space_xs"
             android:text="@string/appearance_description"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:textAppearance="?attr/textAppearanceBodySmall" />
 
         <com.google.android.material.textfield.TextInputLayout
@@ -64,13 +67,15 @@
             android:layout_marginTop="@dimen/space_l"
             android:filterTouchesWhenObscured="true"
             android:minHeight="@dimen/touch_target"
-            android:text="@string/enable_app_lock" />
+            android:text="@string/enable_app_lock"
+            android:textColor="?attr/colorOnSurface" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/space_xs"
             android:text="@string/app_lock_description"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:textAppearance="?attr/textAppearanceBodySmall" />
 
         <com.google.android.material.textfield.TextInputLayout
@@ -97,13 +102,15 @@
             android:layout_marginTop="@dimen/space_l"
             android:filterTouchesWhenObscured="true"
             android:minHeight="@dimen/touch_target"
-            android:text="@string/block_screenshots" />
+            android:text="@string/block_screenshots"
+            android:textColor="?attr/colorOnSurface" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/space_xs"
             android:text="@string/secure_recents_description"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:textAppearance="?attr/textAppearanceBodySmall" />
 
         <com.google.android.material.button.MaterialButton

@@ -169,6 +169,7 @@ export interface EmbeddedRelayStatus {
   enabled: boolean;
   running: boolean;
   port: number | null;
+  lanAddress: string | null;
   vaultId: string | null;
   certificateSha256: string | null;
 }

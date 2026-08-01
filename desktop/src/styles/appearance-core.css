@@ -25,6 +25,7 @@
   background: var(--vn-settings-background);
   border-color: var(--vn-settings-border);
   box-shadow: 0 12px 32px rgb(14 41 37 / 15%);
+  text-shadow: none;
 }
 
 .security-group,
@@ -48,7 +49,7 @@
 .appearance-controls p,
 .backup-heading span {
   margin-top: 3px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--vn-text-muted);
 }
 
@@ -100,7 +101,7 @@
 .sync-message,
 .phone-pairing-details {
   color: var(--vn-text);
-  background: color-mix(in srgb, var(--vn-surface) 70%, transparent);
+  background: var(--vn-surface-subtle);
   border-color: var(--vn-settings-border);
 }
 
@@ -264,7 +265,6 @@ button,
 .note-row,
 input,
 select,
-.security-panel,
 .feedback-toast {
   transition:
     color 140ms ease,

@@ -1497,7 +1497,7 @@
               <strong>{embeddedRelay.running ? 'This computer is discoverable' : 'Local sync host is unavailable'}</strong>
               <p>
                 {embeddedRelay.running
-                  ? `On Android, tap Find VaultNote Desktop. A matching code appears on both devices; approve it here. Nothing needs to be copied or typed on the phone. Hosting continues while this app is open, even when the vault is locked.`
+                  ? `Listening on ${embeddedRelay.lanAddress ?? 'all LAN interfaces'}:${embeddedRelay.port ?? 'active port'}. On Android, tap Find VaultNote Desktop. A matching code appears on both devices; approve it here. Hosting continues while this app is open, even when the vault is locked.`
                   : 'Retry starting the host, and allow VaultNote through the desktop firewall if prompted.'}
               </p>
             </div>
@@ -1603,6 +1603,10 @@
             </label>
             <button onclick={() => void copyEmbeddedToken()}>Copy token</button>
             <div class="phone-fingerprint">
+              <span>LAN endpoint</span>
+              <code>{embeddedPairing.status.lanAddress ?? 'Automatic discovery'}:{embeddedPairing.status.port ?? 'active port'}</code>
+            </div>
+            <div class="phone-fingerprint">
               <span>Certificate SHA-256</span>
               <code>{embeddedPairing.status.certificateSha256}</code>
             </div>
@@ -1612,7 +1616,13 @@
         {#if syncConnection?.configured}
           <div class="relay-summary">
             <span><strong>Vault</strong> {syncConnection.vaultId}</span>
-            <span><strong>Relay</strong> {syncConnection.hostAddress}:{syncConnection.port}</span>
+            {#if embeddedRelay?.enabled && embeddedRelay.vaultId === syncConnection.vaultId}
+              <span>
+                <strong>Relay</strong> This computer · {embeddedRelay.lanAddress ?? 'all LAN interfaces'}:{embeddedRelay.port ?? 'active port'}
+              </span>
+            {:else}
+              <span><strong>Relay</strong> {syncConnection.hostAddress}:{syncConnection.port}</span>
+            {/if}
             <span class="fingerprint-line">
               <strong>Certificate</strong>
               <code>{syncConnection.certificateSha256}</code>

@@ -39,7 +39,7 @@
 
 .section-heading p {
   margin-top: 3px;
-  font-size: 12px;
+  font-size: 13px;
   color: #526b65;
 }
 
@@ -47,7 +47,7 @@
   flex: none;
   padding: 4px 9px;
   font-size: 11px;
-  font-weight: 750;
+  font-weight: 700;
   color: #6b5040;
   background: #f4e7dc;
   border-radius: 999px;
@@ -63,7 +63,7 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px 18px;
   padding: 10px 12px;
-  font-size: 12px;
+  font-size: 13px;
   background: rgb(255 255 255 / 55%);
   border: 1px solid #c3ddd6;
   border-radius: 9px;
@@ -146,7 +146,7 @@
 
 .sync-message {
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: 13px;
   color: #205648;
   background: rgb(255 255 255 / 48%);
   border-radius: 8px;
@@ -182,7 +182,7 @@
 .embedded-host-copy p,
 .reset-phone-access p {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.45;
   color: var(--vn-muted);
 }
@@ -316,7 +316,7 @@
 .phone-pairing-details ol {
   margin: 7px 0 0;
   padding-left: 20px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
 }
 
@@ -366,7 +366,7 @@
 .security-panel label {
   display: grid;
   gap: 4px;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .security-panel input,
