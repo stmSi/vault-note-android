@@ -6,6 +6,19 @@ plugins {
     alias(libs.plugins.room)
 }
 
+val ciVersionName = providers.gradleProperty("vaultnoteVersionName").orNull
+val ciVersionCode = providers.gradleProperty("vaultnoteVersionCode").orNull?.toIntOrNull()
+val releaseKeystorePath = providers.environmentVariable("VAULTNOTE_KEYSTORE_PATH").orNull
+val releaseKeystorePassword = providers.environmentVariable("VAULTNOTE_KEYSTORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("VAULTNOTE_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("VAULTNOTE_KEY_PASSWORD").orNull
+val hasReleaseSigning = listOf(
+    releaseKeystorePath,
+    releaseKeystorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.vaultnote"
     compileSdk = 37
@@ -14,11 +27,22 @@ android {
         applicationId = "com.vaultnote"
         minSdk = 26
         targetSdk = 37
-        versionCode = 32
-        versionName = "1.13.1"
+        versionCode = ciVersionCode ?: 32
+        versionName = ciVersionName ?: "1.13.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(requireNotNull(releaseKeystorePath))
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
@@ -27,6 +51,7 @@ android {
             versionNameSuffix = "-debug"
         }
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

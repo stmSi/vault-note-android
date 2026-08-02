@@ -1,0 +1,307 @@
+name: Test, build, and release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Optional exact release version (for example, 0.1.0)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vaultnote-production-release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Resolve release version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      android_version_code: ${{ steps.version.outputs.android_version_code }}
+      source: ${{ steps.version.outputs.source }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out complete history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Test release tooling
+        run: node --test .github/scripts/*.test.mjs
+
+      - name: Calculate release version
+        id: version
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          RELEASE_TAGS_FILE: ${{ runner.temp }}/vaultnote-release-tags.txt
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          git tag --list > "$RELEASE_TAGS_FILE"
+          node .github/scripts/release-version.mjs
+
+      - name: Summarize version
+        env:
+          RELEASE_SOURCE: ${{ steps.version.outputs.source }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          printf '### Release %s\n\nVersion source: `%s`\n' "$RELEASE_TAG" "$RELEASE_SOURCE" >> "$GITHUB_STEP_SUMMARY"
+
+  android:
+    name: Android tests and APKs
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      signing: ${{ steps.signing.outputs.signing }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            android/*.gradle.kts
+            android/gradle/libs.versions.toml
+            android/app/gradle.lockfile
+            android/settings-gradle.lockfile
+
+      - name: Prepare optional Android release signing
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          configured=0
+          [[ -n "$KEYSTORE_BASE64" ]] && configured=$((configured + 1))
+          [[ -n "$KEYSTORE_PASSWORD" ]] && configured=$((configured + 1))
+          [[ -n "$KEY_ALIAS" ]] && configured=$((configured + 1))
+          [[ -n "$KEY_PASSWORD" ]] && configured=$((configured + 1))
+          if [[ "$configured" -eq 0 ]]; then
+            echo "signing=unsigned" >> "$GITHUB_OUTPUT"
+            echo "::warning::Android signing secrets are absent. Publishing an installable debug APK and clearly labeled unsigned release APKs."
+            exit 0
+          fi
+          if [[ "$configured" -ne 4 ]]; then
+            echo "All four Android signing secrets must be configured together." >&2
+            exit 1
+          fi
+          keystore="$RUNNER_TEMP/vaultnote-release.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          chmod 600 "$keystore"
+          {
+            echo "VAULTNOTE_KEYSTORE_PATH=$keystore"
+            echo "VAULTNOTE_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "VAULTNOTE_KEY_ALIAS=$KEY_ALIAS"
+            echo "VAULTNOTE_KEY_PASSWORD=$KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+          echo "signing=signed" >> "$GITHUB_OUTPUT"
+
+      - name: Test, lint, and build Android
+        working-directory: android
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          ANDROID_VERSION_CODE: ${{ needs.version.outputs.android_version_code }}
+        run: |
+          chmod +x ./gradlew
+          ./gradlew \
+            testDebugUnitTest \
+            lintDebug \
+            assembleDebug \
+            assembleRelease \
+            --no-daemon \
+            --stacktrace \
+            -PvaultnoteVersionName="$RELEASE_VERSION" \
+            -PvaultnoteVersionCode="$ANDROID_VERSION_CODE"
+
+      - name: Collect Android release files
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          SIGNING: ${{ steps.signing.outputs.signing }}
+        shell: bash
+        run: |
+          output="$RUNNER_TEMP/android-release"
+          mkdir -p "$output"
+          cp android/app/build/outputs/apk/debug/app-universal-debug.apk \
+            "$output/VaultNote-Android-${RELEASE_VERSION}-universal-debug.apk"
+          if [[ "$SIGNING" == "signed" ]]; then
+            cp android/app/build/outputs/apk/release/app-universal-release.apk \
+              "$output/VaultNote-Android-${RELEASE_VERSION}-universal-signed.apk"
+            cp android/app/build/outputs/apk/release/app-arm64-v8a-release.apk \
+              "$output/VaultNote-Android-${RELEASE_VERSION}-arm64-v8a-signed.apk"
+          else
+            cp android/app/build/outputs/apk/release/app-universal-release-unsigned.apk \
+              "$output/VaultNote-Android-${RELEASE_VERSION}-universal-unsigned.apk"
+            cp android/app/build/outputs/apk/release/app-arm64-v8a-release-unsigned.apk \
+              "$output/VaultNote-Android-${RELEASE_VERSION}-arm64-v8a-unsigned.apk"
+          fi
+          cd "$output"
+          sha256sum VaultNote-Android-*.apk > SHA256SUMS-Android.txt
+
+      - name: Remove temporary signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/vaultnote-release.jks"
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-release-${{ needs.version.outputs.version }}
+          path: ${{ runner.temp }}/android-release
+          if-no-files-found: error
+          retention-days: 14
+
+  desktop:
+    name: Desktop tests and Linux bundles
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install Tauri Linux prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            rpm \
+            wget
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Set up Rust 1.88
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.88.0
+
+      - name: Cache Cargo downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+          key: cargo-${{ runner.os }}-1.88-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-1.88-
+
+      - name: Apply release version
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: node .github/scripts/apply-release-version.mjs "$RELEASE_VERSION"
+
+      - name: Install locked frontend dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Check and test frontend
+        working-directory: desktop
+        run: |
+          npm run check
+          npm test
+
+      - name: Check and test Rust
+        working-directory: desktop/src-tauri
+        run: |
+          cargo fmt --check
+          cargo test --locked
+          cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Build Linux desktop bundles
+        working-directory: desktop
+        run: npm run bundle:linux
+
+      - name: Collect desktop release files
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        shell: bash
+        run: |
+          output="$RUNNER_TEMP/desktop-release"
+          bundle="desktop/src-tauri/target/release/bundle"
+          mkdir -p "$output"
+          cp "$bundle/appimage/VaultNote_${RELEASE_VERSION}_amd64.AppImage" \
+            "$output/VaultNote-Desktop-${RELEASE_VERSION}-x86_64.AppImage"
+          cp "$bundle/deb/VaultNote_${RELEASE_VERSION}_amd64.deb" \
+            "$output/VaultNote-Desktop-${RELEASE_VERSION}-amd64.deb"
+          cp "$bundle/rpm/VaultNote-${RELEASE_VERSION}-1.x86_64.rpm" \
+            "$output/VaultNote-Desktop-${RELEASE_VERSION}-x86_64.rpm"
+          chmod +x "$output/VaultNote-Desktop-${RELEASE_VERSION}-x86_64.AppImage"
+          cd "$output"
+          sha256sum VaultNote-Desktop-* > SHA256SUMS-Desktop.txt
+
+      - name: Upload desktop artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: desktop-release-${{ needs.version.outputs.version }}
+          path: ${{ runner.temp }}/desktop-release
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub release
+    needs:
+      - version
+      - android
+      - desktop
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified build artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: '*-release-${{ needs.version.outputs.version }}'
+          path: release
+          merge-multiple: true
+
+      - name: Verify release checksums
+        working-directory: release
+        run: |
+          sha256sum --check SHA256SUMS-Android.txt
+          sha256sum --check SHA256SUMS-Desktop.txt
+
+      - name: Publish immutable release tag and assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          gh release create "$RELEASE_TAG" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "VaultNote $RELEASE_VERSION" \
+            --generate-notes
+
+      - name: Summarize release
+        env:
+          ANDROID_SIGNING: ${{ needs.android.outputs.signing }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          printf 'Published `%s`. Android production signing: `%s`.\n' "$RELEASE_TAG" "$ANDROID_SIGNING" >> "$GITHUB_STEP_SUMMARY"
