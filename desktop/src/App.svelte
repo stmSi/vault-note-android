@@ -8,7 +8,7 @@
   import DateDialog from './DateDialog.svelte';
   import DatePanel from './DatePanel.svelte';
   import NoteBlockEditor from './NoteBlockEditor.svelte';
-  import ThemePicker from './ThemePicker.svelte';
+  import ThemeDrawer from './ThemeDrawer.svelte';
   import {
     commandError,
     approveNearbyPairing,
@@ -143,7 +143,9 @@
   let newPassword = '';
   let confirmPassword = '';
   let authenticationBusy = false;
-  let securityPanelOpen = false;
+  let syncSettingsOpen = false;
+  let themeDrawerOpen = false;
+  let themeButton: HTMLButtonElement;
   let attachments: VaultAttachment[] = [];
   let attachmentBusy = false;
   let attachmentPreview: AttachmentPreviewState | null = null;
@@ -285,7 +287,8 @@
       agendaOpen = false;
       metadataPanel = null;
       listState = { kind: 'loading' };
-      securityPanelOpen = false;
+      syncSettingsOpen = false;
+      themeDrawerOpen = false;
       syncConnection = null;
       embeddedPairing = null;
       pendingNearbyPairings = [];
@@ -448,6 +451,23 @@
     window.localStorage.setItem('vaultnote.theme', theme);
   }
 
+  function openThemeDrawer(): void {
+    syncSettingsOpen = false;
+    themeDrawerOpen = true;
+  }
+
+  function closeThemeDrawer(restoreFocus = true): void {
+    themeDrawerOpen = false;
+    if (restoreFocus) {
+      requestAnimationFrame(() => themeButton?.focus());
+    }
+  }
+
+  function toggleSyncSettings(): void {
+    themeDrawerOpen = false;
+    syncSettingsOpen = !syncSettingsOpen;
+  }
+
   function showFeedback(message: string): void {
     feedbackMessage = message;
     if (feedbackTimer !== undefined) {
@@ -496,8 +516,10 @@
         agendaOpen = false;
       } else if (metadataPanel !== null) {
         metadataPanel = null;
-      } else if (securityPanelOpen) {
-        securityPanelOpen = false;
+      } else if (themeDrawerOpen) {
+        closeThemeDrawer();
+      } else if (syncSettingsOpen) {
+        syncSettingsOpen = false;
       }
     }
   }
@@ -745,7 +767,8 @@
       const hadNoRequests = pendingNearbyPairings.length === 0;
       pendingNearbyPairings = requests;
       if (hadNoRequests && requests.length > 0) {
-        securityPanelOpen = true;
+        themeDrawerOpen = false;
+        syncSettingsOpen = true;
       }
     } catch (error) {
       actionError = commandError(error);
@@ -1284,7 +1307,8 @@
   async function synchronize(interactive = true): Promise<void> {
     if (!syncConnection?.unlocked) {
       if (interactive) {
-        securityPanelOpen = true;
+        themeDrawerOpen = false;
+        syncSettingsOpen = true;
         syncMessage = syncConnection?.requiresPassword
           ? 'Enter the sync password to continue.'
           : 'Pair a LAN relay to sync with Android.';
@@ -1504,8 +1528,25 @@
       </button>
       {#if authentication?.unlocked}
         <button class="secondary-button" onclick={showAgenda}>Calendar</button>
-        <button class="secondary-button" onclick={() => (securityPanelOpen = !securityPanelOpen)}>
-          Settings
+        <button
+          class="secondary-button"
+          aria-expanded={syncSettingsOpen}
+          onclick={toggleSyncSettings}
+        >
+          Sync settings
+        </button>
+        <button
+          bind:this={themeButton}
+          class="theme-toolbar-button"
+          aria-label="Choose theme"
+          aria-expanded={themeDrawerOpen}
+          title="Choose theme"
+          onclick={openThemeDrawer}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19.2 15.5A8 8 0 0 1 8.5 4.8a8.1 8.1 0 1 0 10.7 10.7Z"></path>
+            <circle cx="17.7" cy="5.2" r="1.1"></circle>
+          </svg>
         </button>
         {#if authentication.encryptionMode === 'PASSWORD'}
           <button class="secondary-button" onclick={lockVault}>Lock</button>
@@ -1514,15 +1555,8 @@
     </div>
   </header>
 
-  {#if securityPanelOpen && authentication?.unlocked}
-    <section class="security-panel" aria-label="Vault security">
-      <div class="security-group appearance-controls">
-        <div>
-          <strong>Appearance</strong>
-          <p>Choose a complete dark palette with a matching gradient.</p>
-        </div>
-        <ThemePicker selected={themePreference} onSelect={applyTheme} />
-      </div>
+  {#if syncSettingsOpen && authentication?.unlocked}
+    <section class="security-panel" aria-label="Sync, protection, and backup settings">
       <div class="security-group vault-protection">
         {#if authentication.encryptionMode === 'PASSWORD'}
           <p><strong>Local encryption is on.</strong> Your password protects the database and files and is never recoverable.</p>
@@ -1871,6 +1905,14 @@
         {#if backupMessage}<p role="status">{backupMessage}</p>{/if}
       </div>
     </section>
+  {/if}
+
+  {#if themeDrawerOpen && authentication?.unlocked}
+    <ThemeDrawer
+      selected={themePreference}
+      onSelect={applyTheme}
+      onClose={() => closeThemeDrawer()}
+    />
   {/if}
 
   {#if actionError !== null}
