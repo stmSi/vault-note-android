@@ -163,9 +163,11 @@ jobs:
             exit 1
           }
           certificate_sha256="$(
-            "$apksigner" verify --print-certs VaultNote-Android.apk |
-              sed -n 's/^Signer #1 certificate SHA-256 digest: //p' |
-              head -n 1
+            "$apksigner" verify --print-certs-pem VaultNote-Android.apk |
+              awk '/-----BEGIN CERTIFICATE-----/{capture=1} capture{print} /-----END CERTIFICATE-----/{exit}' |
+              openssl x509 -outform DER |
+              sha256sum |
+              awk '{print $1}'
           )"
           [[ -n "$certificate_sha256" ]] || {
             echo "Unable to determine the canonical APK signing certificate." >&2
