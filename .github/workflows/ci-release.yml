@@ -94,7 +94,7 @@ jobs:
           [[ -n "$KEY_PASSWORD" ]] && configured=$((configured + 1))
           if [[ "$configured" -eq 0 ]]; then
             echo "signing=unsigned" >> "$GITHUB_OUTPUT"
-            echo "::warning::Android signing secrets are absent. Publishing an installable debug APK and clearly labeled unsigned release APKs."
+            echo "::warning::Android signing secrets are absent. VaultNote-Android.apk will be an installable debug build; optimized release APKs are clearly labeled unsigned."
             exit 0
           fi
           if [[ "$configured" -ne 4 ]]; then
@@ -131,27 +131,26 @@ jobs:
 
       - name: Collect Android release files
         env:
-          RELEASE_VERSION: ${{ needs.version.outputs.version }}
           SIGNING: ${{ steps.signing.outputs.signing }}
         shell: bash
         run: |
           output="$RUNNER_TEMP/android-release"
           mkdir -p "$output"
-          cp android/app/build/outputs/apk/debug/app-universal-debug.apk \
-            "$output/VaultNote-Android-${RELEASE_VERSION}-universal-debug.apk"
           if [[ "$SIGNING" == "signed" ]]; then
             cp android/app/build/outputs/apk/release/app-universal-release.apk \
-              "$output/VaultNote-Android-${RELEASE_VERSION}-universal-signed.apk"
+              "$output/VaultNote-Android.apk"
             cp android/app/build/outputs/apk/release/app-arm64-v8a-release.apk \
-              "$output/VaultNote-Android-${RELEASE_VERSION}-arm64-v8a-signed.apk"
+              "$output/VaultNote-Android-arm64-v8a-signed.apk"
           else
+            cp android/app/build/outputs/apk/debug/app-universal-debug.apk \
+              "$output/VaultNote-Android.apk"
             cp android/app/build/outputs/apk/release/app-universal-release-unsigned.apk \
-              "$output/VaultNote-Android-${RELEASE_VERSION}-universal-unsigned.apk"
+              "$output/VaultNote-Android-universal-unsigned.apk"
             cp android/app/build/outputs/apk/release/app-arm64-v8a-release-unsigned.apk \
-              "$output/VaultNote-Android-${RELEASE_VERSION}-arm64-v8a-unsigned.apk"
+              "$output/VaultNote-Android-arm64-v8a-unsigned.apk"
           fi
           cd "$output"
-          sha256sum VaultNote-Android-*.apk > SHA256SUMS-Android.txt
+          sha256sum VaultNote-Android*.apk > SHA256SUMS-Android.txt
 
       - name: Remove temporary signing key
         if: always()
@@ -246,12 +245,12 @@ jobs:
           bundle="desktop/src-tauri/target/release/bundle"
           mkdir -p "$output"
           cp "$bundle/appimage/VaultNote_${RELEASE_VERSION}_amd64.AppImage" \
-            "$output/VaultNote-Desktop-${RELEASE_VERSION}-x86_64.AppImage"
+            "$output/VaultNote-Desktop-x86_64.AppImage"
           cp "$bundle/deb/VaultNote_${RELEASE_VERSION}_amd64.deb" \
-            "$output/VaultNote-Desktop-${RELEASE_VERSION}-amd64.deb"
+            "$output/VaultNote-Desktop-amd64.deb"
           cp "$bundle/rpm/VaultNote-${RELEASE_VERSION}-1.x86_64.rpm" \
-            "$output/VaultNote-Desktop-${RELEASE_VERSION}-x86_64.rpm"
-          chmod +x "$output/VaultNote-Desktop-${RELEASE_VERSION}-x86_64.AppImage"
+            "$output/VaultNote-Desktop-x86_64.rpm"
+          chmod +x "$output/VaultNote-Desktop-x86_64.AppImage"
           cd "$output"
           sha256sum VaultNote-Desktop-* > SHA256SUMS-Desktop.txt
 

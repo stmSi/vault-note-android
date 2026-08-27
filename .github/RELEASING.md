@@ -21,3 +21,5 @@ Configure all four repository Actions secrets to publish APKs signed by a stable
 Keep the keystore and its passwords in a separate secure backup. Losing the key prevents future APKs from upgrading an installed production build.
 
 If no signing secrets are configured, the workflow succeeds but labels release APKs as unsigned and also publishes an installable debug APK. A partially configured signing secret set fails closed.
+
+The stable `VaultNote-Android.apk` release asset is the production-signed universal APK when signing is configured and the installable debug APK otherwise. Stable asset names keep the `/releases/latest/download/...` links in the root README valid across versions.

@@ -2,6 +2,16 @@
 
 VaultNote is organized as a multi-platform workspace.
 
+## Download
+
+- [Download the latest Android APK](https://github.com/stmSi/vault-note-android/releases/latest/download/VaultNote-Android.apk)
+- [Download the latest Linux AppImage](https://github.com/stmSi/vault-note-android/releases/latest/download/VaultNote-Desktop-x86_64.AppImage)
+- [Download the latest Debian/Ubuntu package](https://github.com/stmSi/vault-note-android/releases/latest/download/VaultNote-Desktop-amd64.deb)
+- [Download the latest Fedora/RHEL package](https://github.com/stmSi/vault-note-android/releases/latest/download/VaultNote-Desktop-x86_64.rpm)
+- [Browse every release and checksum](https://github.com/stmSi/vault-note-android/releases/latest)
+
+`VaultNote-Android.apk` is production-signed when the repository signing secrets are configured. Otherwise, it is an installable debug build; unsigned optimized APKs remain available on the release page for verification.
+
 ## Platforms
 
 - [Android](android/) — the existing native Android application.
