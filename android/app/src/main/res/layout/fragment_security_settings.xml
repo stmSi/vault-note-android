@@ -149,6 +149,90 @@
             android:minHeight="@dimen/touch_target"
             android:text="@string/conflicts_title" />
 
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_l"
+            android:text="@string/about_updates_title"
+            android:textAppearance="?attr/textAppearanceTitleMedium"
+            android:textColor="?attr/colorOnSurface" />
+
+        <TextView
+            android:id="@+id/current_version"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_xs"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/automatic_update_checks_switch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_m"
+            android:filterTouchesWhenObscured="true"
+            android:minHeight="@dimen/touch_target"
+            android:text="@string/automatic_update_checks"
+            android:textColor="?attr/colorOnSurface" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_xs"
+            android:text="@string/automatic_update_checks_description"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <TextView
+            android:id="@+id/update_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_m"
+            android:accessibilityLiveRegion="polite"
+            android:text="@string/update_status_not_checked"
+            android:textColor="?attr/colorOnSurface"
+            android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/check_update_button"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_s"
+            android:filterTouchesWhenObscured="true"
+            android:minHeight="@dimen/touch_target"
+            android:text="@string/check_for_updates" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/install_update_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_s"
+            android:filterTouchesWhenObscured="true"
+            android:minHeight="@dimen/touch_target"
+            android:text="@string/download_and_install_update"
+            android:visibility="gone" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/github_repository_button"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_m"
+            android:filterTouchesWhenObscured="true"
+            android:minHeight="@dimen/touch_target"
+            android:text="@string/open_github_repository" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/github_releases_button"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_s"
+            android:filterTouchesWhenObscured="true"
+            android:minHeight="@dimen/touch_target"
+            android:text="@string/open_github_releases" />
+
         <com.google.android.material.progressindicator.LinearProgressIndicator
             android:id="@+id/saving_indicator"
             android:layout_width="match_parent"

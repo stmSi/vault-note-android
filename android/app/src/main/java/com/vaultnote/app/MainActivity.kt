@@ -66,6 +66,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
     private var secureExternalHandoffBackgroundedAt: Long? = null
     private var secureExternalHandoffLockJob: Job? = null
     private var pendingReminderItemId: String? = null
+    private var pendingAppUpdateSettings = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -95,6 +96,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         }
         observeSecurityState()
         consumeReminderIntent(intent)
+        consumeAppUpdateIntent(intent)
         val restoredImport = savedInstanceState != null &&
             supportFragmentManager.findFragmentById(R.id.fragment_container) is ImportPreviewFragment
         if (restoredImport && intent.isIncomingShare()) {
@@ -108,6 +110,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         super.onNewIntent(intent)
         setIntent(intent)
         consumeReminderIntent(intent)
+        consumeAppUpdateIntent(intent)
         binding.root.post { consumeIncomingIntent(intent) }
     }
 
@@ -408,6 +411,10 @@ class MainActivity : AppCompatActivity(), MainNavigator {
                 standaloneFiles = deferred.standaloneFiles,
             )
         }
+        if (pendingAppUpdateSettings) {
+            pendingAppUpdateSettings = false
+            openSecuritySettings()
+        }
         pendingReminderItemId?.let { itemId ->
             pendingReminderItemId = null
             openNoteEditor(itemId)
@@ -425,6 +432,16 @@ class MainActivity : AppCompatActivity(), MainNavigator {
             binding.root.post { openNoteEditor(itemId) }
         } else {
             pendingReminderItemId = itemId
+        }
+    }
+
+    private fun consumeAppUpdateIntent(sourceIntent: Intent) {
+        if (sourceIntent.action != ACTION_OPEN_APP_UPDATE) return
+        sourceIntent.action = Intent.ACTION_MAIN
+        if (appContainer().lockManager.isContentAccessAllowed()) {
+            binding.root.post { openSecuritySettings() }
+        } else {
+            pendingAppUpdateSettings = true
         }
     }
 
@@ -657,6 +674,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
 
     companion object {
         const val ACTION_OPEN_REMINDER = "com.vaultnote.action.OPEN_REMINDER"
+        const val ACTION_OPEN_APP_UPDATE = "com.vaultnote.action.OPEN_APP_UPDATE"
         const val EXTRA_REMINDER_ITEM_ID = "reminder_item_id"
         const val EXTRA_REMINDER_ENTRY_ID = "reminder_entry_id"
         const val SECURITY_MIGRATION_BATCH = 8

@@ -32,6 +32,10 @@ import com.vaultnote.core.sync.lan.LanSyncConnectionRepository
 import com.vaultnote.core.sync.lan.RelayHttpBackend
 import com.vaultnote.core.sync.lan.SyncCredentialStore
 import com.vaultnote.core.sync.lan.SyncEnvelopeCrypto
+import com.vaultnote.core.update.AppUpdateRepository
+import com.vaultnote.core.update.AppUpdateScheduler
+import com.vaultnote.core.update.GitHubAppUpdateRepository
+import com.vaultnote.core.update.WorkManagerAppUpdateScheduler
 import com.vaultnote.feature.viewer.AndroidFileViewer
 import com.vaultnote.feature.viewer.AndroidAttachmentExporter
 import com.vaultnote.feature.viewer.AttachmentExporter
@@ -70,6 +74,8 @@ interface AppContainer {
     val syncScheduler: SyncScheduler
     val lanSyncConnectionRepository: LanSyncConnectionRepository
     val reminderScheduler: ReminderScheduler
+    val appUpdateRepository: AppUpdateRepository
+    val appUpdateScheduler: AppUpdateScheduler
 }
 
 class DefaultAppContainer(context: Context) : AppContainer {
@@ -84,6 +90,19 @@ class DefaultAppContainer(context: Context) : AppContainer {
     }
     override val syncScheduler: SyncScheduler by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         WorkManagerSyncScheduler(applicationContext)
+    }
+    override val appUpdateScheduler: AppUpdateScheduler by lazy(
+        LazyThreadSafetyMode.SYNCHRONIZED,
+    ) {
+        WorkManagerAppUpdateScheduler(applicationContext)
+    }
+    override val appUpdateRepository: AppUpdateRepository by lazy(
+        LazyThreadSafetyMode.SYNCHRONIZED,
+    ) {
+        GitHubAppUpdateRepository(
+            context = applicationContext,
+            dispatchers = DefaultDispatcherProvider,
+        )
     }
     private val syncCredentialStore: SyncCredentialStore by lazy(
         LazyThreadSafetyMode.SYNCHRONIZED,

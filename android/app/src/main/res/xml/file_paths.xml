@@ -3,4 +3,7 @@
     <cache-path
         name="camera_captures"
         path="camera-captures/" />
+    <cache-path
+        name="verified_updates"
+        path="updates/" />
 </paths>

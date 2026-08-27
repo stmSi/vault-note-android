@@ -1,10 +1,20 @@
 package com.vaultnote.feature.settings
 
+import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
+import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
@@ -15,9 +25,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.snackbar.Snackbar
+import com.vaultnote.BuildConfig
 import com.vaultnote.R
-import com.vaultnote.app.appContainer
 import com.vaultnote.app.MainNavigator
+import com.vaultnote.app.appContainer
 import com.vaultnote.core.security.LockPolicy
 import com.vaultnote.core.theme.VaultThemePreferences
 import com.vaultnote.core.theme.VaultThemes
@@ -29,10 +40,43 @@ import kotlinx.coroutines.launch
 class SecuritySettingsFragment : Fragment() {
     private var binding: FragmentSecuritySettingsBinding? = null
     private var isRendering = false
+    private var externalHandoffActive = false
+    private var installAfterPermission = false
     private lateinit var authenticator: VaultAuthenticator
     private val viewModel: SecuritySettingsViewModel by viewModels {
         val container = requireContext().appContainer()
         SecuritySettingsViewModel.Factory(container.lockPolicyRepository, container.lockManager)
+    }
+    private val appUpdateViewModel: AppUpdateViewModel by viewModels {
+        val container = requireContext().appContainer()
+        AppUpdateViewModel.Factory(container.appUpdateRepository, container.appUpdateScheduler)
+    }
+    private val unknownSourcesLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        finishExternalHandoff()
+        if (installAfterPermission && canRequestPackageInstalls()) {
+            installAfterPermission = false
+            appUpdateViewModel.prepareInstall()
+        } else {
+            installAfterPermission = false
+            showMessage(R.string.update_install_permission_required)
+        }
+    }
+    private val installerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        finishExternalHandoff()
+    }
+    private val webLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        finishExternalHandoff()
+    }
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) showMessage(R.string.update_notification_permission_denied)
     }
 
     override fun onCreateView(
@@ -82,11 +126,30 @@ class SecuritySettingsFragment : Fragment() {
         currentBinding.backupRestoreButton.setOnClickListener {
             (activity as? MainNavigator)?.openBackupRestore()
         }
+        currentBinding.automaticUpdateChecksSwitch.setOnCheckedChangeListener { _, enabled ->
+            if (!isRendering) {
+                appUpdateViewModel.setAutomaticChecksEnabled(enabled)
+                if (enabled) requestUpdateNotificationPermission()
+            }
+        }
+        currentBinding.checkUpdateButton.setOnClickListener {
+            appUpdateViewModel.checkForUpdate()
+        }
+        currentBinding.installUpdateButton.setOnClickListener { requestUpdateInstall() }
+        currentBinding.githubRepositoryButton.setOnClickListener { openWebPage(GITHUB_REPOSITORY_URL) }
+        currentBinding.githubReleasesButton.setOnClickListener { openWebPage(GITHUB_RELEASES_URL) }
+        currentBinding.currentVersion.text = getString(
+            R.string.current_app_version,
+            BuildConfig.VERSION_NAME,
+            BuildConfig.VERSION_CODE,
+        )
         applyInsets(currentBinding)
         collectState(currentBinding)
+        collectUpdateState(currentBinding)
     }
 
     override fun onDestroyView() {
+        finishExternalHandoff()
         binding = null
         super.onDestroyView()
     }
@@ -108,6 +171,21 @@ class SecuritySettingsFragment : Fragment() {
                             }
                             SecuritySettingsEvent.ShowSaveError ->
                                 showMessage(R.string.security_settings_failed)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun collectUpdateState(currentBinding: FragmentSecuritySettingsBinding) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch { appUpdateViewModel.state.collect { renderUpdate(currentBinding, it) } }
+                launch {
+                    appUpdateViewModel.events.collect { event ->
+                        when (event) {
+                            is AppUpdateSettingsEvent.ApkReady -> launchPackageInstaller(event.file)
                         }
                     }
                 }
@@ -141,6 +219,148 @@ class SecuritySettingsFragment : Fragment() {
         currentBinding.backupRestoreButton.isEnabled = !state.isSaving
         currentBinding.syncStatusButton.isEnabled = !state.isSaving
         currentBinding.conflictsButton.isEnabled = !state.isSaving
+    }
+
+    private fun renderUpdate(
+        currentBinding: FragmentSecuritySettingsBinding,
+        state: AppUpdateSettingsState,
+    ) {
+        isRendering = true
+        try {
+            currentBinding.automaticUpdateChecksSwitch.isChecked = state.automaticChecksEnabled
+        } finally {
+            isRendering = false
+        }
+        val busy = state.status is AppUpdateUiStatus.Checking ||
+            state.status is AppUpdateUiStatus.Downloading
+        currentBinding.checkUpdateButton.isEnabled = !busy
+        currentBinding.installUpdateButton.isVisible = state.availableUpdate != null
+        currentBinding.installUpdateButton.isEnabled = !busy
+        currentBinding.installUpdateButton.setText(
+            if (state.status is AppUpdateUiStatus.Downloading) {
+                R.string.update_downloading_button
+            } else {
+                R.string.download_and_install_update
+            },
+        )
+        currentBinding.updateStatus.text = when (val status = state.status) {
+            AppUpdateUiStatus.Idle -> getString(R.string.update_status_not_checked)
+            AppUpdateUiStatus.Checking -> getString(R.string.update_status_checking)
+            AppUpdateUiStatus.UpToDate -> getString(R.string.update_status_current)
+            is AppUpdateUiStatus.Available ->
+                getString(R.string.update_status_available, status.versionName)
+            is AppUpdateUiStatus.Downloading ->
+                getString(R.string.update_status_downloading, status.percent)
+            is AppUpdateUiStatus.Incompatible -> getString(
+                when (status.reason) {
+                    com.vaultnote.core.update.AppUpdateIncompatibility.PACKAGE,
+                    com.vaultnote.core.update.AppUpdateIncompatibility.CHANNEL,
+                    -> R.string.update_status_different_channel
+                    com.vaultnote.core.update.AppUpdateIncompatibility.SIGNING_CERTIFICATE ->
+                        R.string.update_status_different_signature
+                },
+            )
+            is AppUpdateUiStatus.Failed -> getString(
+                when (status.failure) {
+                    com.vaultnote.core.update.AppUpdateFailure.NETWORK ->
+                        R.string.update_error_network
+                    com.vaultnote.core.update.AppUpdateFailure.SERVER ->
+                        R.string.update_error_server
+                    com.vaultnote.core.update.AppUpdateFailure.BACKGROUND_SCHEDULING ->
+                        R.string.update_error_background_schedule
+                    com.vaultnote.core.update.AppUpdateFailure.INSUFFICIENT_STORAGE ->
+                        R.string.update_error_storage
+                    com.vaultnote.core.update.AppUpdateFailure.CHECKSUM_MISMATCH ->
+                        R.string.update_error_checksum
+                    com.vaultnote.core.update.AppUpdateFailure.INVALID_APK,
+                    com.vaultnote.core.update.AppUpdateFailure.INVALID_METADATA,
+                    -> R.string.update_error_invalid
+                },
+            )
+        }
+    }
+
+    private fun requestUpdateInstall() {
+        if (canRequestPackageInstalls()) {
+            appUpdateViewModel.prepareInstall()
+            return
+        }
+        installAfterPermission = true
+        val intent = Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            "package:${requireContext().packageName}".toUri(),
+        )
+        if (!beginExternalHandoff()) {
+            installAfterPermission = false
+            return
+        }
+        try {
+            unknownSourcesLauncher.launch(intent)
+        } catch (_: ActivityNotFoundException) {
+            finishExternalHandoff()
+            installAfterPermission = false
+            showMessage(R.string.update_install_permission_unavailable)
+        }
+    }
+
+    private fun canRequestPackageInstalls(): Boolean =
+        requireContext().packageManager.canRequestPackageInstalls()
+
+    private fun requestUpdateNotificationPermission() {
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                requireContext(),
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    private fun launchPackageInstaller(file: java.io.File) {
+        val uri = FileProvider.getUriForFile(
+            requireContext(),
+            "${BuildConfig.APPLICATION_ID}.files",
+            file,
+        )
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, APK_MIME_TYPE)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (!beginExternalHandoff()) return
+        try {
+            installerLauncher.launch(intent)
+        } catch (_: ActivityNotFoundException) {
+            finishExternalHandoff()
+            showMessage(R.string.update_installer_unavailable)
+        } catch (_: SecurityException) {
+            finishExternalHandoff()
+            showMessage(R.string.update_installer_unavailable)
+        }
+    }
+
+    private fun openWebPage(url: String) {
+        if (!beginExternalHandoff()) return
+        try {
+            webLauncher.launch(Intent(Intent.ACTION_VIEW, url.toUri()))
+        } catch (_: ActivityNotFoundException) {
+            finishExternalHandoff()
+            showMessage(R.string.web_browser_unavailable)
+        }
+    }
+
+    private fun beginExternalHandoff(): Boolean {
+        if (externalHandoffActive) return false
+        val navigator = activity as? MainNavigator ?: return false
+        if (!navigator.beginSecureExternalHandoff()) return false
+        externalHandoffActive = true
+        return true
+    }
+
+    private fun finishExternalHandoff() {
+        if (!externalHandoffActive) return
+        externalHandoffActive = false
+        (activity as? MainNavigator)?.endSecureExternalHandoff()
     }
 
     private fun timeoutOptions(): List<TimeoutOption> = listOf(
@@ -192,6 +412,11 @@ class SecuritySettingsFragment : Fragment() {
 
     companion object {
         const val BACK_STACK_NAME = "security_settings"
+        private const val GITHUB_REPOSITORY_URL =
+            "https://github.com/stmSi/vault-note-android"
+        private const val GITHUB_RELEASES_URL =
+            "https://github.com/stmSi/vault-note-android/releases"
+        private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
         fun newInstance(): SecuritySettingsFragment = SecuritySettingsFragment()
     }
 }

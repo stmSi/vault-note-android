@@ -131,17 +131,23 @@ jobs:
 
       - name: Collect Android release files
         env:
+          ANDROID_VERSION_CODE: ${{ needs.version.outputs.android_version_code }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
           SIGNING: ${{ steps.signing.outputs.signing }}
         shell: bash
         run: |
           output="$RUNNER_TEMP/android-release"
           mkdir -p "$output"
           if [[ "$SIGNING" == "signed" ]]; then
+            channel="production"
+            package_name="com.vaultnote"
             cp android/app/build/outputs/apk/release/app-universal-release.apk \
               "$output/VaultNote-Android.apk"
             cp android/app/build/outputs/apk/release/app-arm64-v8a-release.apk \
               "$output/VaultNote-Android-arm64-v8a-signed.apk"
           else
+            channel="debug"
+            package_name="com.vaultnote.debug"
             cp android/app/build/outputs/apk/debug/app-universal-debug.apk \
               "$output/VaultNote-Android.apk"
             cp android/app/build/outputs/apk/release/app-universal-release-unsigned.apk \
@@ -150,7 +156,32 @@ jobs:
               "$output/VaultNote-Android-arm64-v8a-unsigned.apk"
           fi
           cd "$output"
-          sha256sum VaultNote-Android*.apk > SHA256SUMS-Android.txt
+          apk_sha256="$(sha256sum VaultNote-Android.apk | cut -d ' ' -f 1)"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          [[ -n "$apksigner" && -x "$apksigner" ]] || {
+            echo "Android apksigner was not found in the SDK build tools." >&2
+            exit 1
+          }
+          certificate_sha256="$(
+            "$apksigner" verify --print-certs VaultNote-Android.apk |
+              sed -n 's/^Signer #1 certificate SHA-256 digest: //p' |
+              head -n 1
+          )"
+          [[ -n "$certificate_sha256" ]] || {
+            echo "Unable to determine the canonical APK signing certificate." >&2
+            exit 1
+          }
+          node "$GITHUB_WORKSPACE/.github/scripts/create-update-manifest.mjs" \
+            "$output/VaultNote-Android.apk" \
+            "$output/VaultNote-Android-update.json" \
+            "$RELEASE_VERSION" \
+            "$ANDROID_VERSION_CODE" \
+            "$package_name" \
+            "$channel" \
+            "$certificate_sha256" \
+            "$apk_sha256"
+          sha256sum VaultNote-Android*.apk VaultNote-Android-update.json \
+            > SHA256SUMS-Android.txt
 
       - name: Remove temporary signing key
         if: always()
