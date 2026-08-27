@@ -1,4 +1,4 @@
-import type { NoteBlockType, NoteBodyDocument } from './models';
+import type { NoteBlock, NoteBlockType, NoteBodyDocument } from './models';
 
 export function newBlock(type: NoteBlockType = 'PARAGRAPH', text = '') {
   return {
@@ -10,11 +10,33 @@ export function newBlock(type: NoteBlockType = 'PARAGRAPH', text = '') {
 }
 
 export function documentFromPlainText(body: string): NoteBodyDocument {
-  const lines = body.split('\n');
   return {
     version: 1,
-    blocks: (lines.length === 0 ? [''] : lines).map((line) => newBlock('PARAGRAPH', line)),
+    blocks: [newBlock('PARAGRAPH', body)],
   };
+}
+
+export function normalizeNoteBodyDocument(document: NoteBodyDocument): NoteBodyDocument {
+  if (document.blocks.length === 0) {
+    return { version: 1, blocks: [newBlock()] };
+  }
+
+  const blocks: NoteBlock[] = [];
+  for (const block of document.blocks) {
+    const previous = blocks.at(-1);
+    if (previous?.type === 'PARAGRAPH' && block.type === 'PARAGRAPH') {
+      blocks[blocks.length - 1] = {
+        ...previous,
+        text: `${previous.text}\n${block.text}`,
+      };
+    } else {
+      blocks.push(block);
+    }
+  }
+
+  return blocks.length === document.blocks.length
+    ? document
+    : { version: 1, blocks };
 }
 
 export function derivePlainText(document: NoteBodyDocument): string {

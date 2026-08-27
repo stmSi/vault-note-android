@@ -63,7 +63,11 @@
   } from './lib/api';
   import { DebouncedAutosaver, type AutosaveStatus } from './lib/autosave';
   import { previewableImages } from './lib/attachments';
-  import { derivePlainText, documentFromPlainText } from './lib/noteBody';
+  import {
+    derivePlainText,
+    documentFromPlainText,
+    normalizeNoteBodyDocument,
+  } from './lib/noteBody';
   import { reconcileReminderNotifications } from './lib/reminders';
   import { parseThemePreference, type ThemePreference } from './lib/themes';
   import type {
@@ -1031,7 +1035,9 @@
     closeAttachmentPreview();
     selected = note;
     editorTitle = note.title;
-    editorDocument = note.bodyDocument ?? documentFromPlainText(note.body);
+    editorDocument = normalizeNoteBodyDocument(
+      note.bodyDocument ?? documentFromPlainText(note.body),
+    );
     autosaveStatus = 'saved';
     actionError = null;
     attachments = [];

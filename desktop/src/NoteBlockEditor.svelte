@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { NoteBlock, NoteBlockType, NoteBodyDocument } from './lib/models';
-  import { newBlock } from './lib/noteBody';
+  import { newBlock, normalizeNoteBodyDocument } from './lib/noteBody';
 
   export let document: NoteBodyDocument;
   export let readonly = false;
@@ -11,10 +11,10 @@
   let root: HTMLDivElement;
 
   function replaceBlocks(blocks: NoteBlock[]): void {
-    onDocumentChange({
+    onDocumentChange(normalizeNoteBodyDocument({
       version: 1,
       blocks: blocks.length === 0 ? [newBlock()] : blocks,
-    });
+    }));
   }
 
   function updateBlock(index: number, patch: Partial<NoteBlock>): void {
@@ -58,7 +58,11 @@
     index: number,
     target: HTMLTextAreaElement,
   ): void {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (
+      event.key === 'Enter' &&
+      !event.shiftKey &&
+      document.blocks[index]?.type === 'CHECKLIST_ITEM'
+    ) {
       event.preventDefault();
       splitBlock(index, target);
       return;
@@ -130,23 +134,23 @@
 
   .blocks {
     min-height: 0;
-    padding: 4px 2px 16px;
+    padding: 2px 2px 10px;
     overflow: auto;
   }
 
   .block-row {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    min-height: 34px;
+    gap: 6px;
+    min-height: 28px;
   }
 
   .block-row textarea {
     width: 100%;
-    min-height: 34px;
-    padding: 5px 2px;
+    min-height: 28px;
+    padding: 2px;
     overflow: hidden;
-    line-height: 1.65;
+    line-height: 1.45;
     color: var(--vn-text);
     resize: none;
     background: transparent;
@@ -160,7 +164,7 @@
   .block-check {
     width: 18px;
     height: 18px;
-    margin: 10px 0 0;
+    margin: 4px 0 0;
     accent-color: var(--vn-accent);
   }
 
