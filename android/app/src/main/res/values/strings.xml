@@ -39,6 +39,7 @@
     <string name="item_archived">Archived</string>
     <string name="item_moved_to_trash">Moved to Trash</string>
     <string name="undo">Undo</string>
+    <string name="redo">Redo</string>
     <string name="note_pinned">Pinned</string>
     <string name="note_not_pinned">Not pinned</string>
     <string name="note_favorite">Favorite</string>

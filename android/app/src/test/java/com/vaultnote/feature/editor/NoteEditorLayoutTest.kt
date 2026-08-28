@@ -29,5 +29,9 @@ class NoteEditorLayoutTest {
         assertTrue(binding.toolbar.minimumHeight >= touchTarget)
         assertEquals(ViewGroup.LayoutParams.WRAP_CONTENT, binding.editorActionBar.layoutParams.height)
         assertEquals(touchTarget, binding.editorActionBar.minimumHeight)
+        assertEquals(touchTarget, binding.undoButton.layoutParams.height)
+        assertEquals(touchTarget, binding.redoButton.layoutParams.height)
+        assertTrue(binding.undoButton.text.isNotBlank())
+        assertTrue(binding.redoButton.text.isNotBlank())
     }
 }

@@ -20,6 +20,7 @@ internal class NoteBlockAdapter(
     private val onDocumentChanged: (NoteBodyDocument) -> Unit,
     private val onBodyFocusChanged: (Boolean) -> Unit,
     private val onBlockFocusRequested: (Int) -> Unit,
+    private val onHistoryShortcut: (KeyEvent) -> Boolean = { false },
 ) : RecyclerView.Adapter<NoteBlockAdapter.Holder>() {
     private val blocks = mutableListOf<NoteBlock>()
     private var pendingFocus: PendingFocus? = null
@@ -180,7 +181,8 @@ internal class NoteBlockAdapter(
                 if (focused) text.requestCursorVisibility()
             }
             text.setOnKeyListener { _, keyCode, event ->
-                keyCode == KeyEvent.KEYCODE_DEL &&
+                onHistoryShortcut(event) ||
+                    keyCode == KeyEvent.KEYCODE_DEL &&
                     event.action == KeyEvent.ACTION_DOWN &&
                     text.text.isNullOrEmpty() &&
                     boundId?.let(::deleteEmptyBlock) == true

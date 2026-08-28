@@ -188,6 +188,22 @@
             android:paddingHorizontal="@dimen/space_s">
 
             <com.google.android.material.button.MaterialButton
+                android:id="@+id/undo_button"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/touch_target"
+                android:enabled="false"
+                android:text="@string/undo" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/redo_button"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/touch_target"
+                android:enabled="false"
+                android:text="@string/redo" />
+
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/attachments_button"
                 style="@style/Widget.Material3.Button.TextButton"
                 android:layout_width="wrap_content"

@@ -53,6 +53,8 @@ internal sealed interface EditorUiState {
         val draft: EditorDraft,
         val editVersion: Long,
         val saveStatus: EditorSaveStatus,
+        val canUndo: Boolean = false,
+        val canRedo: Boolean = false,
         val saveRetryable: Boolean = false,
         val isClosing: Boolean = false,
         val isMetadataSaving: Boolean = false,
@@ -89,6 +91,7 @@ internal class NoteEditorViewModel(
     private var metadataJob: Job? = null
     private var metadataOutcome: RepositoryResult<Unit>? = null
     private var lastSaveError: AppError? = null
+    private val history = BoundedEditorHistory()
 
     private val autosaver = DebouncedAutosaver(
         scope = viewModelScope,
@@ -126,6 +129,18 @@ internal class NoteEditorViewModel(
         val body = runCatching { NoteBodyCodec.derivePlainText(document) }.getOrNull() ?: return
         if (body.codePointCount(0, body.length) > VaultConstraints.MAX_NOTE_BODY_CHARACTERS) return
         updateDraft { it.copy(body = body, bodyDocument = document) }
+    }
+
+    fun undo() {
+        val current = mutableUiState.value as? EditorUiState.Content ?: return
+        if (current.isClosing) return
+        history.undo(current.draft.toHistorySnapshot())?.let { restoreHistory(current, it) }
+    }
+
+    fun redo() {
+        val current = mutableUiState.value as? EditorUiState.Content ?: return
+        if (current.isClosing) return
+        history.redo(current.draft.toHistorySnapshot())?.let { restoreHistory(current, it) }
     }
 
     fun saveDatedEntry(draft: DatedEntryDraft) {
@@ -245,6 +260,7 @@ internal class NoteEditorViewModel(
         val current = mutableUiState.value
         if (!hasLoadedInitialNote || current !is EditorUiState.Content) {
             hasLoadedInitialNote = true
+            history.clear()
             mutableUiState.value = EditorUiState.Content(
                 draft = note.toEditorDraft(),
                 editVersion = 0L,
@@ -254,7 +270,11 @@ internal class NoteEditorViewModel(
         }
 
         val updatedDraft = if (current.saveStatus == EditorSaveStatus.SAVED) {
-            note.toEditorDraft()
+            note.toEditorDraft().also { databaseDraft ->
+                if (databaseDraft.toHistorySnapshot() != current.draft.toHistorySnapshot()) {
+                    history.clear()
+                }
+            }
         } else {
             current.draft.copy(
                 isPinned = note.isPinned,
@@ -264,7 +284,11 @@ internal class NoteEditorViewModel(
                 datedEntries = note.datedEntries,
             )
         }
-        mutableUiState.value = current.copy(draft = updatedDraft)
+        mutableUiState.value = current.copy(
+            draft = updatedDraft,
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
     }
 
     private fun updateDraft(transform: (EditorDraft) -> EditorDraft) {
@@ -272,11 +296,36 @@ internal class NoteEditorViewModel(
         if (current.isClosing) return
         val nextDraft = transform(current.draft)
         if (nextDraft == current.draft) return
+        history.record(current.draft.toHistorySnapshot())
         val version = autosaver.submit(nextDraft.toPersistedDraft())
         mutableUiState.value = current.copy(
             draft = nextDraft,
             editVersion = version,
             saveStatus = EditorSaveStatus.DIRTY,
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+    }
+
+    private fun restoreHistory(
+        current: EditorUiState.Content,
+        snapshot: EditorHistorySnapshot,
+    ) {
+        val body = NoteBodyCodec.derivePlainText(snapshot.bodyDocument)
+        val nextDraft = current.draft.copy(
+            title = snapshot.title,
+            body = body,
+            bodyDocument = snapshot.bodyDocument,
+            tagsText = snapshot.tagsText,
+        )
+        val version = autosaver.submit(nextDraft.toPersistedDraft())
+        mutableUiState.value = current.copy(
+            draft = nextDraft,
+            editVersion = version,
+            saveStatus = EditorSaveStatus.DIRTY,
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+            saveRetryable = false,
         )
     }
 
@@ -417,6 +466,12 @@ internal class NoteEditorViewModel(
         body = body,
         bodyDocument = bodyDocument,
         tagNames = tagsText.split(',').map(String::trim),
+    )
+
+    private fun EditorDraft.toHistorySnapshot(): EditorHistorySnapshot = EditorHistorySnapshot(
+        title = title,
+        bodyDocument = bodyDocument,
+        tagsText = tagsText,
     )
 
     private fun VaultNote.toEditorDraft(): EditorDraft = EditorDraft(

@@ -3,6 +3,9 @@ package com.vaultnote.feature.editor
 import com.vaultnote.core.common.AppError
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.model.ItemSyncStatus
+import com.vaultnote.core.common.model.NoteBlock
+import com.vaultnote.core.common.model.NoteBlockType
+import com.vaultnote.core.common.model.NoteBodyDocument
 import com.vaultnote.core.common.model.VaultItemSummary
 import com.vaultnote.core.common.model.VaultNote
 import com.vaultnote.core.common.model.VaultItemColor
@@ -133,9 +136,73 @@ class NoteEditorViewModelTest {
             assertFalse(content.isClosing)
         }
 
+    @Test
+    fun `undo and redo restore the current structured draft`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val repository = EditorFakeRepository()
+            val viewModel = NoteEditorViewModel(ITEM_ID, repository)
+            runCurrent()
+            val initial = (viewModel.uiState.value as EditorUiState.Content).draft
+            val editedDocument = NoteBodyDocument(
+                blocks = listOf(
+                    NoteBlock("paragraph", NoteBlockType.PARAGRAPH, "Edited body"),
+                    NoteBlock("check", NoteBlockType.CHECKLIST_ITEM, "Task", isChecked = true),
+                ),
+            )
+
+            viewModel.onTitleChanged("Edited title")
+            viewModel.onBodyDocumentChanged(editedDocument)
+            viewModel.onTagsChanged("work, urgent")
+            var content = viewModel.uiState.value as EditorUiState.Content
+            assertTrue(content.canUndo)
+            assertFalse(content.canRedo)
+
+            viewModel.undo()
+            viewModel.undo()
+            viewModel.undo()
+            content = viewModel.uiState.value as EditorUiState.Content
+            assertEquals(initial.title, content.draft.title)
+            assertEquals(initial.bodyDocument, content.draft.bodyDocument)
+            assertEquals(initial.tagsText, content.draft.tagsText)
+            assertFalse(content.canUndo)
+            assertTrue(content.canRedo)
+
+            viewModel.redo()
+            viewModel.redo()
+            viewModel.redo()
+            content = viewModel.uiState.value as EditorUiState.Content
+            assertEquals("Edited title", content.draft.title)
+            assertEquals(editedDocument, content.draft.bodyDocument)
+            assertEquals("work, urgent", content.draft.tagsText)
+            assertTrue(content.canUndo)
+            assertFalse(content.canRedo)
+        }
+
+    @Test
+    fun `new typing after undo clears redo and closing saves the visible draft`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val repository = EditorFakeRepository()
+            val viewModel = NoteEditorViewModel(ITEM_ID, repository)
+            runCurrent()
+
+            viewModel.onTitleChanged("First edit")
+            viewModel.onTitleChanged("Second edit")
+            viewModel.undo()
+            viewModel.onTitleChanged("Replacement edit")
+            assertFalse((viewModel.uiState.value as EditorUiState.Content).canRedo)
+
+            val event = async { viewModel.events.first() }
+            viewModel.requestClose()
+            runCurrent()
+
+            assertEquals("Replacement edit", repository.savedTitles.single())
+            assertEquals(EditorEvent.NavigateBack, event.await())
+        }
+
     private class EditorFakeRepository : VaultRepository {
         private val note = MutableStateFlow(baseNote())
         val saveStarted = CompletableDeferred<Unit>()
+        val savedTitles = mutableListOf<String>()
         val savedBodies = mutableListOf<String>()
         var nextSaveResult: CompletableDeferred<RepositoryResult<Unit>>? = null
         var nextPinResult: CompletableDeferred<RepositoryResult<Unit>>? = null
@@ -175,6 +242,7 @@ class NoteEditorViewModelTest {
             body: String,
             tagNames: Collection<String>,
         ): RepositoryResult<Unit> {
+            savedTitles += title
             savedBodies += body
             saveStarted.complete(Unit)
             val result = nextSaveResult?.await() ?: RepositoryResult.Success(Unit)

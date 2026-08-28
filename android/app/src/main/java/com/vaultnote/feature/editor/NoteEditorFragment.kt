@@ -14,6 +14,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
+import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.MenuItem
 import android.view.View
@@ -296,6 +297,11 @@ class NoteEditorFragment : Fragment() {
         currentBinding.titleInput.addCodePointLimit(VaultConstraints.MAX_NOTE_TITLE_CHARACTERS)
         currentBinding.tagsInput.addCodePointLimit(VaultConstraints.MAX_NOTE_TAG_TEXT_CHARACTERS)
         currentBinding.saveRetryButton.setOnClickListener { viewModel.retrySave() }
+        currentBinding.undoButton.setOnClickListener { viewModel.undo() }
+        currentBinding.redoButton.setOnClickListener { viewModel.redo() }
+        currentBinding.root.setOnKeyListener { _, _, event -> handleHistoryShortcut(event) }
+        currentBinding.titleInput.setOnKeyListener { _, _, event -> handleHistoryShortcut(event) }
+        currentBinding.tagsInput.setOnKeyListener { _, _, event -> handleHistoryShortcut(event) }
         currentBinding.addParagraphButton.setOnClickListener {
             noteBlockAdapter.addBlock(NoteBlockType.PARAGRAPH)
         }
@@ -330,6 +336,7 @@ class NoteEditorFragment : Fragment() {
                     currentBinding.bodyBlocks.scrollToPosition(position)
                 }
             },
+            onHistoryShortcut = ::handleHistoryShortcut,
         )
         currentBinding.bodyBlocks.layoutManager = LinearLayoutManager(requireContext())
         currentBinding.bodyBlocks.adapter = noteBlockAdapter
@@ -409,6 +416,8 @@ class NoteEditorFragment : Fragment() {
         currentBinding.errorState.isVisible = state is EditorUiState.Error
         currentBinding.saveStatusRow.isVisible = false
         currentBinding.saveRetryButton.isVisible = false
+        currentBinding.undoButton.isEnabled = false
+        currentBinding.redoButton.isEnabled = false
         currentBinding.titleContainer.isVisible = isContent
         currentBinding.bodyBlocks.isVisible = isContent
         currentBinding.editorActionBar.isVisible = isContent
@@ -477,6 +486,8 @@ class NoteEditorFragment : Fragment() {
         currentBinding.saveStatusRow.isVisible =
             state.saveStatus == EditorSaveStatus.FAILED
         val editorEnabled = !state.isClosing
+        currentBinding.undoButton.isEnabled = editorEnabled && state.canUndo
+        currentBinding.redoButton.isEnabled = editorEnabled && state.canRedo
         currentBinding.titleInput.isEnabled = editorEnabled
         currentBinding.tagsInput.isEnabled = editorEnabled
         currentBinding.bodyBlocks.isEnabled = editorEnabled
@@ -548,6 +559,25 @@ class NoteEditorFragment : Fragment() {
                 true
             }
 
+            else -> false
+        }
+    }
+
+    private fun handleHistoryShortcut(event: KeyEvent): Boolean {
+        if (event.action != KeyEvent.ACTION_DOWN || !event.isCtrlPressed) return false
+        return when {
+            event.keyCode == KeyEvent.KEYCODE_Z && event.isShiftPressed -> {
+                viewModel.redo()
+                true
+            }
+            event.keyCode == KeyEvent.KEYCODE_Z -> {
+                viewModel.undo()
+                true
+            }
+            event.keyCode == KeyEvent.KEYCODE_Y -> {
+                viewModel.redo()
+                true
+            }
             else -> false
         }
     }
