@@ -32,6 +32,7 @@ import java.util.Locale
 internal data class RestoreAttachmentPlan(
     val originalId: String,
     val finalId: String,
+    val action: RestoreAttachmentAction,
     val entryPath: String,
     val filename: String,
     val mimeType: String,
@@ -42,7 +43,49 @@ internal data class RestoreAttachmentPlan(
     val relativePath: String?,
 )
 
-internal data class RestoreMappingStats(val copiedItems: Long)
+internal data class RestoreItemPlan(
+    val originalId: String,
+    val action: RestoreItemAction,
+    val item: VaultItemEntity,
+)
+
+private data class StagedItemMapping(
+    val finalId: String,
+    val action: RestoreItemAction,
+)
+
+internal enum class RestoreItemAction {
+    ADD,
+    UPDATE,
+    UNCHANGED,
+    KEEP_LOCAL,
+    CONFLICT_COPY,
+}
+
+internal enum class RestoreAttachmentAction {
+    ADD,
+    SKIP,
+}
+
+internal data class RestoreMappingStats(
+    val addedItems: Long,
+    val updatedItems: Long,
+    val unchangedItems: Long,
+    val keptLocalItems: Long,
+    val conflictItems: Long,
+    val addedAttachments: Long,
+    val skippedAttachments: Long,
+) {
+    fun toSummary(): RestoreMergeSummary = RestoreMergeSummary(
+        addedItemCount = addedItems,
+        updatedItemCount = updatedItems,
+        unchangedItemCount = unchangedItems,
+        keptLocalItemCount = keptLocalItems,
+        conflictItemCount = conflictItems,
+        addedAttachmentCount = addedAttachments,
+        skippedAttachmentCount = skippedAttachments,
+    )
+}
 
 /** Private, bounded-memory SQLite staging area populated only after backup authentication. */
 internal class RestoreStagingStore private constructor(
@@ -210,6 +253,11 @@ internal class RestoreStagingStore private constructor(
         }
     }
 
+    /**
+     * Plans an idempotent merge without using device timestamps as conflict truth. A stable item
+     * UUID identifies the logical item; equal content is skipped, a strictly higher local revision
+     * wins, and divergent equal revisions become conflict copies so neither body is overwritten.
+     */
     suspend fun planMappings(
         itemDao: VaultItemDao,
         tagDao: TagDao,
@@ -218,18 +266,41 @@ internal class RestoreStagingStore private constructor(
         idGenerator: IdGenerator,
     ): RestoreMappingStats {
         check(finished)
-        var copiedItems = 0L
-        query("SELECT original_id FROM $ITEMS ORDER BY original_id").use { cursor ->
+        var addedItems = 0L
+        var updatedItems = 0L
+        var unchangedItems = 0L
+        var keptLocalItems = 0L
+        var conflictItems = 0L
+        query(
+            """
+            SELECT original_id, type, color, title, body, body_document, ocr_text,
+                   is_pinned, is_favorite, is_archived, sort_position, created_at,
+                   updated_at, local_revision, deleted_at, conflict_origin_id
+            FROM $ITEMS
+            ORDER BY original_id
+            """.trimIndent(),
+        ).use { cursor ->
             while (cursor.moveToNext()) {
-                val originalId = cursor.getString(0)
-                val collision = itemDao.getById(originalId) != null
-                val finalId = if (collision) {
-                    copiedItems += 1L
+                val originalId = cursor.requiredString(0)
+                val incoming = cursor.toVaultItem(id = originalId, offset = 1)
+                val existing = itemDao.getById(originalId)
+                val action = when {
+                    existing == null -> RestoreItemAction.ADD.also { addedItems += 1L }
+                    existing.localRevision == incoming.localRevision &&
+                        existing.hasSameVaultContent(incoming) ->
+                        RestoreItemAction.UNCHANGED.also { unchangedItems += 1L }
+                    incoming.localRevision > existing.localRevision ->
+                        RestoreItemAction.UPDATE.also { updatedItems += 1L }
+                    incoming.localRevision < existing.localRevision ->
+                        RestoreItemAction.KEEP_LOCAL.also { keptLocalItems += 1L }
+                    else -> RestoreItemAction.CONFLICT_COPY.also { conflictItems += 1L }
+                }
+                val finalId = if (action == RestoreItemAction.CONFLICT_COPY) {
                     uniqueItemId(itemDao, idGenerator)
                 } else {
                     originalId
                 }
-                updateFinalId(ITEMS, originalId, finalId)
+                updateItemPlan(originalId, finalId, action)
             }
         }
         query("SELECT original_id, normalized_name FROM $TAGS ORDER BY original_id").use { cursor ->
@@ -246,48 +317,116 @@ internal class RestoreStagingStore private constructor(
                 updateFinalId(TAGS, originalId, finalId)
             }
         }
-        query("SELECT original_id FROM $ATTACHMENTS ORDER BY original_id").use { cursor ->
-            while (cursor.moveToNext()) {
-                val originalId = cursor.getString(0)
-                val finalId = if (attachmentDao.getById(originalId) == null) {
-                    originalId
-                } else {
-                    uniqueAttachmentId(attachmentDao, idGenerator)
-                }
-                updateFinalId(ATTACHMENTS, originalId, finalId)
-            }
-        }
-        query("SELECT original_id FROM $DATED_ENTRIES ORDER BY original_id").use { cursor ->
+        var addedAttachments = 0L
+        var skippedAttachments = 0L
+        query(
+            """
+            SELECT original_id, parent_item_id, file_size, sha256
+            FROM $ATTACHMENTS
+            ORDER BY original_id
+            """.trimIndent(),
+        ).use { cursor ->
             while (cursor.moveToNext()) {
                 val originalId = cursor.requiredString(0)
-                val finalId = if (datedEntryDao.getEntry(originalId) == null) {
-                    originalId
+                val parent = itemPlan(cursor.requiredString(1))
+                val fileSize = cursor.getLong(2)
+                val checksum = cursor.requiredString(3)
+                val existingById = attachmentDao.getById(originalId)
+                val skipForParent = parent.action == RestoreItemAction.UNCHANGED ||
+                    parent.action == RestoreItemAction.KEEP_LOCAL
+                val isolatedParent = parent.action == RestoreItemAction.ADD ||
+                    parent.action == RestoreItemAction.CONFLICT_COPY
+                val duplicateForParent = if (
+                    skipForParent || isolatedParent
+                ) {
+                    null
                 } else {
-                    uniqueDatedEntryId(datedEntryDao, idGenerator)
+                    attachmentDao.findForItemByChecksum(parent.finalId, checksum)
+                }
+                val action = when {
+                    skipForParent -> RestoreAttachmentAction.SKIP
+                    isolatedParent -> RestoreAttachmentAction.ADD
+                    existingById != null &&
+                        existingById.fileSize == fileSize &&
+                        existingById.sha256Checksum == checksum -> RestoreAttachmentAction.SKIP
+                    existingById == null && duplicateForParent != null ->
+                        RestoreAttachmentAction.SKIP
+                    else -> RestoreAttachmentAction.ADD
+                }
+                val finalId = if (
+                    action == RestoreAttachmentAction.ADD && existingById != null
+                ) {
+                    uniqueAttachmentId(attachmentDao, idGenerator)
+                } else {
+                    originalId
+                }
+                if (action == RestoreAttachmentAction.ADD) {
+                    addedAttachments += 1L
+                } else {
+                    skippedAttachments += 1L
+                }
+                updateAttachmentPlan(originalId, finalId, action)
+            }
+        }
+        query("SELECT original_id, item_id FROM $DATED_ENTRIES ORDER BY original_id").use { cursor ->
+            while (cursor.moveToNext()) {
+                val originalId = cursor.requiredString(0)
+                val parent = itemPlan(cursor.requiredString(1))
+                val existing = datedEntryDao.getEntry(originalId)
+                val finalId = when {
+                    parent.action == RestoreItemAction.UPDATE && existing?.itemId == parent.finalId ->
+                        originalId
+                    parent.action == RestoreItemAction.UNCHANGED ||
+                        parent.action == RestoreItemAction.KEEP_LOCAL -> originalId
+                    existing == null -> originalId
+                    else -> uniqueDatedEntryId(datedEntryDao, idGenerator)
                 }
                 updateFinalId(DATED_ENTRIES, originalId, finalId)
             }
         }
-        query("SELECT original_id FROM $DATED_ENTRY_ALERTS ORDER BY original_id").use { cursor ->
+        query(
+            """
+            SELECT alerts.original_id, dates.item_id
+            FROM $DATED_ENTRY_ALERTS alerts
+            JOIN $DATED_ENTRIES dates ON dates.original_id = alerts.entry_id
+            ORDER BY alerts.original_id
+            """.trimIndent(),
+        ).use { cursor ->
             while (cursor.moveToNext()) {
                 val originalId = cursor.requiredString(0)
-                val finalId = if (datedEntryDao.getAlert(originalId) == null) {
-                    originalId
-                } else {
-                    uniqueDatedEntryAlertId(datedEntryDao, idGenerator)
+                val parent = itemPlan(cursor.requiredString(1))
+                val existingAlert = datedEntryDao.getAlert(originalId)
+                val existingAlertItemId = existingAlert?.let { alert ->
+                    datedEntryDao.getEntry(alert.entryId)?.itemId
+                }
+                val finalId = when {
+                    parent.action == RestoreItemAction.UPDATE &&
+                        existingAlertItemId == parent.finalId -> originalId
+                    parent.action == RestoreItemAction.UNCHANGED ||
+                        parent.action == RestoreItemAction.KEEP_LOCAL -> originalId
+                    existingAlert == null -> originalId
+                    else -> uniqueDatedEntryAlertId(datedEntryDao, idGenerator)
                 }
                 updateFinalId(DATED_ENTRY_ALERTS, originalId, finalId)
             }
         }
-        return RestoreMappingStats(copiedItems)
+        return RestoreMappingStats(
+            addedItems = addedItems,
+            updatedItems = updatedItems,
+            unchangedItems = unchangedItems,
+            keptLocalItems = keptLocalItems,
+            conflictItems = conflictItems,
+            addedAttachments = addedAttachments,
+            skippedAttachments = skippedAttachments,
+        )
     }
 
     fun attachmentPlansPage(afterOriginalId: String, limit: Int): List<RestoreAttachmentPlan> {
         check(finished)
         return query(
             """
-            SELECT original_id, final_id, content_entry, filename, mime_type, file_size, sha256,
-                   pending_file, destination_file, local_path
+            SELECT original_id, final_id, merge_action, content_entry, filename, mime_type,
+                   file_size, sha256, pending_file, destination_file, local_path
             FROM $ATTACHMENTS
             WHERE original_id > ?
             ORDER BY original_id
@@ -301,14 +440,15 @@ internal class RestoreStagingStore private constructor(
                         RestoreAttachmentPlan(
                             originalId = cursor.requiredString(0),
                             finalId = cursor.requiredString(1),
-                            entryPath = cursor.requiredString(2),
-                            filename = cursor.requiredString(3),
-                            mimeType = cursor.requiredString(4),
-                            fileSize = cursor.getLong(5),
-                            sha256 = cursor.requiredString(6),
-                            pendingFile = cursor.optionalString(7),
-                            destinationFile = cursor.optionalString(8),
-                            relativePath = cursor.optionalString(9),
+                            action = enumValueOf(cursor.requiredString(2)),
+                            entryPath = cursor.requiredString(3),
+                            filename = cursor.requiredString(4),
+                            mimeType = cursor.requiredString(5),
+                            fileSize = cursor.getLong(6),
+                            sha256 = cursor.requiredString(7),
+                            pendingFile = cursor.optionalString(8),
+                            destinationFile = cursor.optionalString(9),
+                            relativePath = cursor.optionalString(10),
                         ),
                     )
                 }
@@ -382,13 +522,14 @@ internal class RestoreStagingStore private constructor(
     fun readItemsPage(
         afterOriginalId: String,
         limit: Int,
-    ): List<Pair<String, VaultItemEntity>> = query(
+    ): List<RestoreItemPlan> = query(
         """
-        SELECT original_id, final_id, type, color, title, body, body_document, ocr_text,
+        SELECT original_id, final_id, merge_action, type, color, title, body, body_document, ocr_text,
                is_pinned, is_favorite, is_archived, sort_position, created_at, updated_at,
                local_revision, deleted_at, conflict_origin_id
         FROM $ITEMS
         WHERE original_id > ?
+          AND merge_action IN ('ADD', 'UPDATE', 'CONFLICT_COPY')
         ORDER BY original_id
         LIMIT ?
         """.trimIndent(),
@@ -396,29 +537,22 @@ internal class RestoreStagingStore private constructor(
     ).use { cursor ->
         buildList {
             while (cursor.moveToNext()) {
-                val mappedConflict = cursor.optionalString(16)?.let(::mappedItemId)
+                val originalId = cursor.requiredString(0)
+                val action = enumValueOf<RestoreItemAction>(cursor.requiredString(2))
+                val mappedConflict = if (action == RestoreItemAction.CONFLICT_COPY) {
+                    originalId
+                } else {
+                    cursor.optionalString(17)?.let(::mappedItemId)
+                }
                 add(
-                    cursor.requiredString(0) to VaultItemEntity(
-                        id = cursor.requiredString(1),
-                        type = enumValueOf<VaultItemType>(cursor.requiredString(2)),
-                        color = enumValueOf<VaultItemColor>(cursor.requiredString(3)),
-                        title = cursor.requiredString(4),
-                        body = cursor.requiredString(5),
-                        ocrText = cursor.requiredString(7),
-                        isPinned = cursor.getInt(8) != 0,
-                        isFavorite = cursor.getInt(9) != 0,
-                        isArchived = cursor.getInt(10) != 0,
-                        sortPosition = cursor.getLong(11),
-                        createdAt = cursor.getLong(12),
-                        updatedAt = cursor.getLong(13),
-                        localRevision = cursor.getLong(14).coerceAtLeast(1L),
-                        remoteRevision = null,
-                        lastSyncedRevision = null,
-                        serverVersionToken = null,
-                        syncStatus = ItemSyncStatus.PENDING,
-                        deletedAt = cursor.optionalLong(15),
-                        conflictOriginId = mappedConflict,
-                        bodyDocumentJson = cursor.optionalString(6),
+                    RestoreItemPlan(
+                        originalId = originalId,
+                        action = action,
+                        item = cursor.toVaultItem(
+                            id = cursor.requiredString(1),
+                            offset = 3,
+                            conflictOriginId = mappedConflict,
+                        ),
                     ),
                 )
             }
@@ -431,6 +565,12 @@ internal class RestoreStagingStore private constructor(
         FROM $TAGS
         WHERE final_id NOT IN (SELECT id FROM live_tag_ids)
           AND original_id > ?
+          AND EXISTS (
+              SELECT 1 FROM $ITEM_TAGS refs
+              JOIN $ITEMS items ON items.original_id = refs.item_id
+              WHERE refs.tag_id = $TAGS.original_id
+                AND items.merge_action IN ('ADD', 'UPDATE', 'CONFLICT_COPY')
+          )
         ORDER BY original_id
         LIMIT ?
         """.trimIndent(),
@@ -469,7 +609,8 @@ internal class RestoreStagingStore private constructor(
         FROM $ITEM_TAGS refs
         JOIN $ITEMS items ON items.original_id = refs.item_id
         JOIN $TAGS tags ON tags.original_id = refs.tag_id
-        WHERE refs.item_id > ? OR (refs.item_id = ? AND refs.tag_id > ?)
+        WHERE items.merge_action IN ('ADD', 'UPDATE', 'CONFLICT_COPY')
+          AND (refs.item_id > ? OR (refs.item_id = ? AND refs.tag_id > ?))
         ORDER BY refs.item_id, refs.tag_id
         LIMIT ?
         """.trimIndent(),
@@ -503,6 +644,7 @@ internal class RestoreStagingStore private constructor(
         FROM $ATTACHMENTS attachments
         JOIN $ITEMS items ON items.original_id = attachments.parent_item_id
         WHERE attachments.original_id > ?
+          AND attachments.merge_action = 'ADD'
         ORDER BY attachments.original_id
         LIMIT ?
         """.trimIndent(),
@@ -552,6 +694,7 @@ internal class RestoreStagingStore private constructor(
         FROM $DATED_ENTRIES dates
         JOIN $ITEMS items ON items.original_id = dates.item_id
         WHERE dates.original_id > ?
+          AND items.merge_action IN ('ADD', 'UPDATE', 'CONFLICT_COPY')
         ORDER BY dates.original_id
         LIMIT ?
         """.trimIndent(),
@@ -590,7 +733,9 @@ internal class RestoreStagingStore private constructor(
                alerts.lead_time_minutes, alerts.created_at
         FROM $DATED_ENTRY_ALERTS alerts
         JOIN $DATED_ENTRIES dates ON dates.original_id = alerts.entry_id
+        JOIN $ITEMS items ON items.original_id = dates.item_id
         WHERE alerts.original_id > ?
+          AND items.merge_action IN ('ADD', 'UPDATE', 'CONFLICT_COPY')
         ORDER BY alerts.original_id
         LIMIT ?
         """.trimIndent(),
@@ -678,10 +823,97 @@ internal class RestoreStagingStore private constructor(
         check(updated == 1)
     }
 
+    private fun updateItemPlan(
+        originalId: String,
+        finalId: String,
+        action: RestoreItemAction,
+    ) {
+        val updated = sqlite.update(
+            ITEMS,
+            ContentValues().apply {
+                put("final_id", finalId)
+                put("merge_action", action.name)
+            },
+            "original_id = ?",
+            arrayOf(originalId),
+        )
+        check(updated == 1)
+    }
+
+    private fun updateAttachmentPlan(
+        originalId: String,
+        finalId: String,
+        action: RestoreAttachmentAction,
+    ) {
+        val updated = sqlite.update(
+            ATTACHMENTS,
+            ContentValues().apply {
+                put("final_id", finalId)
+                put("merge_action", action.name)
+            },
+            "original_id = ?",
+            arrayOf(originalId),
+        )
+        check(updated == 1)
+    }
+
+    private fun itemPlan(originalId: String): StagedItemMapping = query(
+        "SELECT final_id, merge_action FROM $ITEMS WHERE original_id = ? LIMIT 1",
+        arrayOf(originalId),
+    ).use { cursor ->
+        check(cursor.moveToFirst())
+        StagedItemMapping(
+            finalId = cursor.requiredString(0),
+            action = enumValueOf(cursor.requiredString(1)),
+        )
+    }
+
     private fun mappedItemId(originalId: String): String = query(
         "SELECT final_id FROM $ITEMS WHERE original_id = ? LIMIT 1",
         arrayOf(originalId),
     ).use { cursor -> if (cursor.moveToFirst()) cursor.requiredString(0) else originalId }
+
+    private fun Cursor.toVaultItem(
+        id: String,
+        offset: Int,
+        conflictOriginId: String? = optionalString(offset + 14),
+    ): VaultItemEntity = VaultItemEntity(
+        id = id,
+        type = enumValueOf(requiredString(offset)),
+        color = enumValueOf(requiredString(offset + 1)),
+        title = requiredString(offset + 2),
+        body = requiredString(offset + 3),
+        bodyDocumentJson = optionalString(offset + 4),
+        ocrText = requiredString(offset + 5),
+        isPinned = getInt(offset + 6) != 0,
+        isFavorite = getInt(offset + 7) != 0,
+        isArchived = getInt(offset + 8) != 0,
+        sortPosition = getLong(offset + 9),
+        createdAt = getLong(offset + 10),
+        updatedAt = getLong(offset + 11),
+        localRevision = getLong(offset + 12).coerceAtLeast(1L),
+        remoteRevision = null,
+        lastSyncedRevision = null,
+        serverVersionToken = null,
+        syncStatus = ItemSyncStatus.PENDING,
+        deletedAt = optionalLong(offset + 13),
+        conflictOriginId = conflictOriginId,
+    )
+
+    private fun VaultItemEntity.hasSameVaultContent(other: VaultItemEntity): Boolean =
+        type == other.type &&
+            color == other.color &&
+            title == other.title &&
+            body == other.body &&
+            bodyDocumentJson == other.bodyDocumentJson &&
+            ocrText == other.ocrText &&
+            isPinned == other.isPinned &&
+            isFavorite == other.isFavorite &&
+            isArchived == other.isArchived &&
+            sortPosition == other.sortPosition &&
+            createdAt == other.createdAt &&
+            deletedAt == other.deletedAt &&
+            conflictOriginId == other.conflictOriginId
 
     private fun query(sql: String, args: Array<String>? = null): Cursor = sqlite.rawQuery(sql, args)
 
@@ -822,6 +1054,7 @@ internal class RestoreStagingStore private constructor(
                 CREATE TABLE $ITEMS (
                     original_id TEXT PRIMARY KEY NOT NULL,
                     final_id TEXT UNIQUE,
+                    merge_action TEXT,
                     type TEXT NOT NULL,
                     color TEXT NOT NULL,
                     title TEXT NOT NULL,
@@ -905,6 +1138,7 @@ internal class RestoreStagingStore private constructor(
                 CREATE TABLE $ATTACHMENTS (
                     original_id TEXT PRIMARY KEY NOT NULL,
                     final_id TEXT UNIQUE,
+                    merge_action TEXT,
                     parent_item_id TEXT NOT NULL REFERENCES $ITEMS(original_id),
                     filename TEXT NOT NULL,
                     mime_type TEXT NOT NULL,

@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.vaultnote.core.backup.BackupRepository
 import com.vaultnote.core.backup.BackupSummary
 import com.vaultnote.core.backup.PreparedBackupRestore
+import com.vaultnote.core.backup.RestoreMergeSummary
 import com.vaultnote.core.backup.RestoreSummary
 import com.vaultnote.core.common.RepositoryResult
 import java.util.concurrent.CancellationException
@@ -28,7 +29,7 @@ internal data class BackupRestoreState(
 
 internal data class RestoreConfirmation(
     val summary: BackupSummary,
-    val copiedItemCount: Long,
+    val mergeSummary: RestoreMergeSummary,
 )
 
 internal sealed interface BackupRestoreEvent {
@@ -71,7 +72,7 @@ internal class BackupRestoreViewModel(
                             hasSource = true,
                             confirmation = RestoreConfirmation(
                                 summary = result.value.backupSummary,
-                                copiedItemCount = result.value.copiedItemCount,
+                                mergeSummary = result.value.mergeSummary,
                             ),
                         )
                     }

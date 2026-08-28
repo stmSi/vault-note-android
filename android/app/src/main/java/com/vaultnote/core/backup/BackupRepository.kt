@@ -18,6 +18,7 @@ import com.vaultnote.core.database.VaultDatabase
 import com.vaultnote.core.database.entity.AttachmentFileCleanupEntity
 import com.vaultnote.core.database.entity.SearchDocumentEntity
 import com.vaultnote.core.database.entity.SyncOperationEntity
+import com.vaultnote.core.files.AttachmentContentValidator
 import com.vaultnote.core.files.RestoredAttachmentStorage
 import com.vaultnote.core.files.StagedRestoredAttachment
 import com.vaultnote.core.security.VaultLockManager
@@ -61,7 +62,7 @@ class PreparedBackupExport internal constructor(
 class PreparedBackupRestore internal constructor(
     internal val stagingDirectory: File,
     val backupSummary: BackupSummary,
-    internal val copiedItemCount: Long,
+    val mergeSummary: RestoreMergeSummary,
 ) {
     override fun toString(): String = "PreparedBackupRestore(redacted)"
 }
@@ -268,7 +269,7 @@ internal class AndroidBackupRepository(
                         PreparedBackupRestore(
                             stagingDirectory = stagingDirectory,
                             backupSummary = summary,
-                            copiedItemCount = mapping.copiedItems,
+                            mergeSummary = mapping.toSummary(),
                         ),
                     )
                 }
@@ -465,26 +466,38 @@ internal class AndroidBackupRepository(
                 commitStagedFiles(staging)
                 databaseTransactionStarted = true
                 database.withTransaction { commitStagedDatabase(staging) }
-                reminderScheduler.reconcileAll()
-                val scheduled = try {
-                    syncScheduler.requestSync()
-                } catch (_: RuntimeException) {
-                    SyncScheduleResult.Rejected(SYNC_SCHEDULER_UNAVAILABLE)
+                val hasChanges = prepared.mergeSummary.addedItemCount > 0L ||
+                    prepared.mergeSummary.updatedItemCount > 0L ||
+                    prepared.mergeSummary.conflictItemCount > 0L ||
+                    prepared.mergeSummary.addedAttachmentCount > 0L
+                val warning = if (hasChanges) {
+                    reminderScheduler.reconcileAll()
+                    val scheduled = try {
+                        syncScheduler.requestSync()
+                    } catch (_: RuntimeException) {
+                        SyncScheduleResult.Rejected(SYNC_SCHEDULER_UNAVAILABLE)
+                    }
+                    when (scheduled) {
+                        SyncScheduleResult.Scheduled,
+                        SyncScheduleResult.Coalesced,
+                        -> null
+                        is SyncScheduleResult.Rejected ->
+                            AppError.SyncSchedulingFailure(scheduled.reason)
+                    }
+                } else {
+                    null
                 }
-                val warning = when (scheduled) {
-                    SyncScheduleResult.Scheduled,
-                    SyncScheduleResult.Coalesced,
-                    -> null
-                    is SyncScheduleResult.Rejected ->
-                        AppError.SyncSchedulingFailure(scheduled.reason)
-                }
-                val counts = staging.counts()
                 staging.delete()
                 RepositoryResult.Success(
                     RestoreSummary(
-                        restoredItemCount = counts.first,
-                        restoredAttachmentCount = counts.second,
-                        copiedItemCount = prepared.copiedItemCount,
+                        restoredItemCount = prepared.mergeSummary.addedItemCount +
+                            prepared.mergeSummary.updatedItemCount +
+                            prepared.mergeSummary.conflictItemCount,
+                        restoredAttachmentCount = prepared.mergeSummary.addedAttachmentCount,
+                        updatedItemCount = prepared.mergeSummary.updatedItemCount,
+                        unchangedItemCount = prepared.mergeSummary.unchangedItemCount,
+                        keptLocalItemCount = prepared.mergeSummary.keptLocalItemCount,
+                        conflictItemCount = prepared.mergeSummary.conflictItemCount,
                     ),
                     warning = warning,
                 )
@@ -955,6 +968,10 @@ internal class AndroidBackupRepository(
         plan: RestoreAttachmentPlan,
         plaintext: File,
     ) {
+        if (plan.action == RestoreAttachmentAction.SKIP) {
+            verifyRestoredAttachment(plan, plaintext)
+            return
+        }
         val staged = when (
             val result = restoredAttachmentStore.stage(
                 plaintext = plaintext,
@@ -976,12 +993,48 @@ internal class AndroidBackupRepository(
         )
     }
 
+    private suspend fun verifyRestoredAttachment(
+        plan: RestoreAttachmentPlan,
+        plaintext: File,
+    ) {
+        if (!plaintext.isFile || plaintext.length() != plan.fileSize) {
+            abortValidation(AppError.BackupValidationReason.CHECKSUM_MISMATCH)
+        }
+        val digest = MessageDigest.getInstance(SHA256_ALGORITHM)
+        FileInputStream(plaintext).buffered(BUFFER_BYTES).use { input ->
+            val buffer = ByteArray(BUFFER_BYTES)
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count > 0) digest.update(buffer, 0, count)
+            }
+        }
+        if (digest.digest().toHex() != plan.sha256) {
+            abortValidation(AppError.BackupValidationReason.CHECKSUM_MISMATCH)
+        }
+        when (
+            val validation = AttachmentContentValidator().validateStored(
+                plaintext,
+                plan.filename,
+                plan.mimeType,
+            )
+        ) {
+            is RepositoryResult.Failure -> abort(validation.error)
+            is RepositoryResult.Success -> {
+                if (validation.value.format.canonicalMimeType != plan.mimeType) {
+                    abort(AppError.UnsupportedFile)
+                }
+            }
+        }
+    }
+
     private suspend fun persistCleanupJournal(staging: RestoreStagingStore) {
         val cleanupDao = database.attachmentFileCleanupDao()
         var after = ""
         while (true) {
             val page = staging.attachmentPlansPage(after, BackupFormat.PAGE_SIZE)
-            val entries = page.map { plan ->
+            val entries = page.filter { it.action == RestoreAttachmentAction.ADD }.map { plan ->
                 AttachmentFileCleanupEntity(
                     cleanupId = cleanupId(plan.finalId),
                     localRelativePath = requireNotNull(plan.relativePath),
@@ -1002,6 +1055,7 @@ internal class AndroidBackupRepository(
         while (true) {
             val page = staging.attachmentPlansPage(after, BackupFormat.PAGE_SIZE)
             for (plan in page) {
+                if (plan.action != RestoreAttachmentAction.ADD) continue
                 val staged = plan.toStagedAttachment()
                 when (val committed = restoredAttachmentStore.commit(staged)) {
                     is RepositoryResult.Success -> Unit
@@ -1025,14 +1079,32 @@ internal class AndroidBackupRepository(
         var after = ""
         while (true) {
             val page = staging.readItemsPage(after, BackupFormat.PAGE_SIZE)
-            page.forEach { (_, item) -> itemDao.insert(item) }
+            page.forEach { plan ->
+                when (plan.action) {
+                    RestoreItemAction.ADD,
+                    RestoreItemAction.CONFLICT_COPY,
+                    -> itemDao.insert(plan.item)
+                    RestoreItemAction.UPDATE -> {
+                        check(itemDao.update(plan.item) == 1) {
+                            "Restore update lost its target item"
+                        }
+                        tagDao.deleteCrossRefsForItem(plan.item.id)
+                        datedEntryDao.deleteEntriesForItem(plan.item.id)
+                    }
+                    RestoreItemAction.UNCHANGED,
+                    RestoreItemAction.KEEP_LOCAL,
+                    -> error("Uncommittable restore item action")
+                }
+            }
             if (page.size < BackupFormat.PAGE_SIZE) break
-            after = page.last().first
+            after = page.last().originalId
         }
         after = ""
         while (true) {
             val page = staging.readNewTagsPage(after, BackupFormat.PAGE_SIZE)
-            if (page.isNotEmpty()) tagDao.insertTags(page.map(Pair<String, com.vaultnote.core.database.entity.TagEntity>::second))
+            if (page.isNotEmpty()) {
+                tagDao.insertTags(page.map { it.second })
+            }
             if (page.size < BackupFormat.PAGE_SIZE) break
             after = page.last().first
         }
@@ -1072,20 +1144,26 @@ internal class AndroidBackupRepository(
         after = ""
         while (true) {
             val page = staging.readItemsPage(after, BackupFormat.PAGE_SIZE)
-            for ((_, item) in page) {
+            for (plan in page) {
+                val item = plan.item
                 val tags = tagDao.getTagsForItem(item.id).joinToString("\n") { it.name }
                 val filenames = attachmentDao.getSearchableFilenames(item.id).orEmpty()
-                val row = searchDao.insertDocument(
-                    SearchDocumentEntity(
-                        itemId = item.id,
-                        title = item.title,
-                        body = item.body,
-                        tags = tags,
-                        attachmentFilenames = filenames,
-                        ocrText = item.ocrText,
-                    ),
+                val currentDocument = searchDao.getDocumentForItem(item.id)
+                val document = SearchDocumentEntity(
+                    rowId = currentDocument?.rowId ?: 0L,
+                    itemId = item.id,
+                    title = item.title,
+                    body = item.body,
+                    tags = tags,
+                    attachmentFilenames = filenames,
+                    ocrText = item.ocrText,
                 )
-                check(row != -1L)
+                val indexed = if (currentDocument == null) {
+                    searchDao.insertDocument(document) != -1L
+                } else {
+                    searchDao.updateDocument(document) == 1
+                }
+                check(indexed) { "Restore could not refresh the search index" }
                 enqueueSyncOperation(
                     syncDao = syncDao,
                     dedupeKey = "item:${item.id}",
@@ -1100,7 +1178,7 @@ internal class AndroidBackupRepository(
                 )
             }
             if (page.size < BackupFormat.PAGE_SIZE) break
-            after = page.last().first
+            after = page.last().originalId
         }
 
         after = ""
@@ -1126,8 +1204,11 @@ internal class AndroidBackupRepository(
         after = ""
         while (true) {
             val page = staging.attachmentPlansPage(after, BackupFormat.PAGE_SIZE)
-            if (page.isNotEmpty()) {
-                cleanupDao.deleteByCleanupIds(page.map { cleanupId(it.finalId) })
+            val cleanupIds = page
+                .filter { it.action == RestoreAttachmentAction.ADD }
+                .map { cleanupId(it.finalId) }
+            if (cleanupIds.isNotEmpty()) {
+                cleanupDao.deleteByCleanupIds(cleanupIds)
             }
             if (page.size < BackupFormat.PAGE_SIZE) break
             after = page.last().originalId
@@ -1364,7 +1445,12 @@ internal class AndroidBackupRepository(
         while (true) {
             val page = staging.attachmentPlansPage(after, BackupFormat.PAGE_SIZE)
             page.forEach { plan ->
-                if (plan.pendingFile != null && plan.destinationFile != null && plan.relativePath != null) {
+                if (
+                    plan.action == RestoreAttachmentAction.ADD &&
+                    plan.pendingFile != null &&
+                    plan.destinationFile != null &&
+                    plan.relativePath != null
+                ) {
                     restoredAttachmentStore.discard(plan.toStagedAttachment())
                 }
             }

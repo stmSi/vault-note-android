@@ -209,8 +209,8 @@
     <string name="backup_insufficient_storage">There isn’t enough free space for this backup operation.</string>
     <string name="backup_operation_failed">The backup operation could not be completed.</string>
     <string name="confirm_backup_restore_title">Merge this backup?</string>
-    <string name="confirm_backup_restore_message">Validated %1$d items and %2$d attachments. Existing content will not be overwritten; %3$d colliding items will become restored copies.</string>
-    <string name="confirm_plaintext_backup_restore_message">Validated an unencrypted backup containing %1$d items and %2$d attachments. Existing content will not be overwritten; %3$d colliding items will become restored copies.</string>
+    <string name="confirm_backup_restore_message">Validated %1$d items and %2$d attachments. Smart merge will add %3$d, update %4$d, leave %5$d unchanged, keep %6$d newer local versions, and create %7$d conflict copies. Attachments: %8$d added and %9$d already present.</string>
+    <string name="confirm_plaintext_backup_restore_message">Validated an unencrypted backup containing %1$d items and %2$d attachments. Smart merge will add %3$d, update %4$d, leave %5$d unchanged, keep %6$d newer local versions, and create %7$d conflict copies. Attachments: %8$d added and %9$d already present.</string>
     <string name="vault_locked_title">Vault locked</string>
     <string name="vault_locked_message">Use your biometric or device screen lock to continue.</string>
     <string name="unlock_vault">Unlock</string>

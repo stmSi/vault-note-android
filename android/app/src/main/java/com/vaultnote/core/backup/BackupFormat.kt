@@ -88,7 +88,20 @@ data class BackupSummary(
 data class RestoreSummary(
     val restoredItemCount: Long,
     val restoredAttachmentCount: Long,
-    val copiedItemCount: Long,
+    val updatedItemCount: Long,
+    val unchangedItemCount: Long,
+    val keptLocalItemCount: Long,
+    val conflictItemCount: Long,
+)
+
+data class RestoreMergeSummary(
+    val addedItemCount: Long,
+    val updatedItemCount: Long,
+    val unchangedItemCount: Long,
+    val keptLocalItemCount: Long,
+    val conflictItemCount: Long,
+    val addedAttachmentCount: Long,
+    val skippedAttachmentCount: Long,
 )
 
 internal object BackupManifestCodec {

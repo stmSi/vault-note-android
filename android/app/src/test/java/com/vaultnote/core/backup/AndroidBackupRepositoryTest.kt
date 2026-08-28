@@ -23,6 +23,7 @@ import com.vaultnote.core.common.model.VaultItemType
 import com.vaultnote.core.database.VaultDatabase
 import com.vaultnote.core.database.entity.ItemTagCrossRef
 import com.vaultnote.core.database.entity.AttachmentEntity
+import com.vaultnote.core.database.entity.SearchDocumentEntity
 import com.vaultnote.core.database.entity.TagEntity
 import com.vaultnote.core.database.entity.VaultItemEntity
 import com.vaultnote.core.encryption.CURRENT_ATTACHMENT_ENCRYPTION_FORMAT_VERSION
@@ -111,7 +112,7 @@ class AndroidBackupRepositoryTest {
     }
 
     @Test
-    fun `export then restore stages first and preserves colliding content as a copy`() = runBlocking {
+    fun `restoring the same backup twice is idempotent`() = runBlocking {
         database.vaultItemDao().insert(originalItem())
         database.attachmentDao().insert(originalAttachment())
         val export = repository.prepareExport(PASSWORD.copyOf()).successValue()
@@ -131,41 +132,161 @@ class AndroidBackupRepositoryTest {
 
         assertEquals(1L, prepared.backupSummary.itemCount)
         assertEquals(1L, prepared.backupSummary.attachmentCount)
-        assertEquals(1L, prepared.copiedItemCount)
+        assertEquals(0L, prepared.mergeSummary.addedItemCount)
+        assertEquals(0L, prepared.mergeSummary.updatedItemCount)
+        assertEquals(1L, prepared.mergeSummary.unchangedItemCount)
+        assertEquals(0L, prepared.mergeSummary.conflictItemCount)
+        assertEquals(0L, prepared.mergeSummary.addedAttachmentCount)
+        assertEquals(1L, prepared.mergeSummary.skippedAttachmentCount)
         assertEquals(1L, database.backupDao().countItems())
 
-        failSyncScheduling = true
         val restoredResult = repository.commitRestore(prepared)
         val restored = restoredResult.successValue()
         val items = database.backupDao().getItemsPage("", 10)
         val attachments = database.backupDao().getAttachmentsPage("", 10)
 
-        assertEquals(1L, restored.restoredItemCount)
-        assertEquals(1L, restored.restoredAttachmentCount)
-        assertEquals(1L, restored.copiedItemCount)
-        assertEquals(2, items.size)
-        val copy = items.single { it.id != ORIGINAL_ID }
-        assertNotEquals(ORIGINAL_ID, copy.id)
-        assertEquals("Encrypted backup note", copy.title)
-        assertEquals("private body", copy.body)
-        assertEquals(VaultItemColor.BLUE, copy.color)
-        assertEquals(42_000L, copy.sortPosition)
-        val copiedAttachment = attachments.single { it.id != ORIGINAL_ATTACHMENT_ID }
-        assertEquals(copy.id, copiedAttachment.parentItemId)
-        assertEquals(ORIGINAL_FILENAME, copiedAttachment.originalFilename)
-        assertEquals(2, attachments.size)
-        assertTrue(restoredStorage.restoredPayloads.single().contentEquals(ATTACHMENT_PAYLOAD))
-        assertEquals(
-            ORIGINAL_FILENAME,
-            database.searchDao().getDocumentForItem(copy.id)?.attachmentFilenames,
-        )
-        assertTrue(database.syncOperationDao().getByDedupeKey("item:${copy.id}") != null)
-        assertTrue(
-            database.syncOperationDao()
-                .getByDedupeKey("attachment:${copiedAttachment.id}") != null,
-        )
-        assertTrue((restoredResult as RepositoryResult.Success).warning != null)
+        assertEquals(0L, restored.restoredItemCount)
+        assertEquals(0L, restored.restoredAttachmentCount)
+        assertEquals(1L, restored.unchangedItemCount)
+        assertEquals(0L, restored.conflictItemCount)
+        assertEquals(1, items.size)
+        assertEquals(1, attachments.size)
+        assertTrue(restoredStorage.restoredPayloads.isEmpty())
+        assertTrue((restoredResult as RepositoryResult.Success).warning == null)
         assertEquals(0, syncRequests.get())
+    }
+
+    @Test
+    fun `newer backup revision updates the existing item in place`() = runBlocking {
+        database.vaultItemDao().insert(originalItem())
+        database.attachmentDao().insert(originalAttachment())
+        exportAndRegister()
+        val olderLocal = originalItem().copy(
+            body = "older local body",
+            updatedAt = FIXED_TIME - 500L,
+            localRevision = 2L,
+        )
+        assertEquals(1, database.vaultItemDao().update(olderLocal))
+        assertTrue(
+            database.searchDao().insertDocument(
+                SearchDocumentEntity(
+                    itemId = ORIGINAL_ID,
+                    title = olderLocal.title,
+                    body = olderLocal.body,
+                    tags = "",
+                    attachmentFilenames = ORIGINAL_FILENAME,
+                    ocrText = "",
+                ),
+            ) != -1L,
+        )
+
+        val prepared = repository.prepareRestore(ARCHIVE_URI, PASSWORD.copyOf()).successValue()
+
+        assertEquals(1L, prepared.mergeSummary.updatedItemCount)
+        assertEquals(0L, prepared.mergeSummary.conflictItemCount)
+        assertEquals(0L, prepared.mergeSummary.addedAttachmentCount)
+        assertEquals(1L, prepared.mergeSummary.skippedAttachmentCount)
+
+        val restored = repository.commitRestore(prepared).successValue()
+        val item = requireNotNull(database.vaultItemDao().getById(ORIGINAL_ID))
+
+        assertEquals(1L, restored.restoredItemCount)
+        assertEquals(1L, restored.updatedItemCount)
+        assertEquals("private body", item.body)
+        assertEquals(3L, item.localRevision)
+        assertEquals(
+            "private body",
+            database.searchDao().getDocumentForItem(ORIGINAL_ID)?.body,
+        )
+        assertEquals(1L, database.backupDao().countItems())
+        assertEquals(1L, database.backupDao().countAttachments())
+        assertTrue(restoredStorage.restoredPayloads.isEmpty())
+        assertTrue(database.syncOperationDao().getByDedupeKey("item:$ORIGINAL_ID") != null)
+        assertEquals(1, syncRequests.get())
+    }
+
+    @Test
+    fun `higher revision is retained for attachment or tag only changes`() = runBlocking {
+        database.vaultItemDao().insert(originalItem())
+        database.attachmentDao().insert(originalAttachment())
+        exportAndRegister()
+        assertEquals(
+            1,
+            database.vaultItemDao().update(
+                originalItem().copy(
+                    updatedAt = FIXED_TIME - 500L,
+                    localRevision = 2L,
+                ),
+            ),
+        )
+
+        val prepared = repository.prepareRestore(ARCHIVE_URI, PASSWORD.copyOf()).successValue()
+
+        assertEquals(1L, prepared.mergeSummary.updatedItemCount)
+        assertEquals(0L, prepared.mergeSummary.unchangedItemCount)
+        repository.cancelRestore(prepared)
+    }
+
+    @Test
+    fun `newer local revision is preserved without creating a copy`() = runBlocking {
+        database.vaultItemDao().insert(originalItem())
+        database.attachmentDao().insert(originalAttachment())
+        exportAndRegister()
+        val newerLocal = originalItem().copy(
+            body = "newer local body",
+            updatedAt = FIXED_TIME + 500L,
+            localRevision = 4L,
+        )
+        assertEquals(1, database.vaultItemDao().update(newerLocal))
+
+        val prepared = repository.prepareRestore(ARCHIVE_URI, PASSWORD.copyOf()).successValue()
+
+        assertEquals(1L, prepared.mergeSummary.keptLocalItemCount)
+        assertEquals(0L, prepared.mergeSummary.conflictItemCount)
+
+        val restored = repository.commitRestore(prepared).successValue()
+        val item = requireNotNull(database.vaultItemDao().getById(ORIGINAL_ID))
+
+        assertEquals(0L, restored.restoredItemCount)
+        assertEquals(1L, restored.keptLocalItemCount)
+        assertEquals("newer local body", item.body)
+        assertEquals(1L, database.backupDao().countItems())
+        assertEquals(1L, database.backupDao().countAttachments())
+        assertTrue(restoredStorage.restoredPayloads.isEmpty())
+        assertEquals(0, syncRequests.get())
+    }
+
+    @Test
+    fun `equal divergent revisions preserve the backup as a conflict copy`() = runBlocking {
+        database.vaultItemDao().insert(originalItem())
+        database.attachmentDao().insert(originalAttachment())
+        exportAndRegister()
+        val divergentLocal = originalItem().copy(
+            body = "divergent local body",
+            updatedAt = FIXED_TIME + 500L,
+        )
+        assertEquals(1, database.vaultItemDao().update(divergentLocal))
+
+        val prepared = repository.prepareRestore(ARCHIVE_URI, PASSWORD.copyOf()).successValue()
+
+        assertEquals(1L, prepared.mergeSummary.conflictItemCount)
+        assertEquals(1L, prepared.mergeSummary.addedAttachmentCount)
+
+        val restored = repository.commitRestore(prepared).successValue()
+        val items = database.backupDao().getItemsPage("", 10)
+        val attachments = database.backupDao().getAttachmentsPage("", 10)
+        val conflict = items.single { it.id != ORIGINAL_ID }
+
+        assertEquals(1L, restored.conflictItemCount)
+        assertEquals(2, items.size)
+        assertNotEquals(ORIGINAL_ID, conflict.id)
+        assertEquals(ORIGINAL_ID, conflict.conflictOriginId)
+        assertEquals("private body", conflict.body)
+        assertEquals(2, attachments.size)
+        assertEquals(conflict.id, attachments.single { it.id != ORIGINAL_ATTACHMENT_ID }.parentItemId)
+        assertTrue(restoredStorage.restoredPayloads.single().contentEquals(ATTACHMENT_PAYLOAD))
+        assertTrue(database.syncOperationDao().getByDedupeKey("item:${conflict.id}") != null)
+        assertEquals(1, syncRequests.get())
     }
 
     @Test
@@ -351,6 +472,15 @@ class AndroidBackupRepositoryTest {
         ocrFailureCode = null,
         ocrUpdatedAt = FIXED_TIME,
     )
+
+    private suspend fun exportAndRegister() {
+        val export = repository.prepareExport(PASSWORD.copyOf()).successValue()
+        repository.export(export, ARCHIVE_URI).successValue()
+        Shadows.shadowOf(resolver).registerInputStream(
+            ARCHIVE_URI,
+            FileInputStream(provider.archive),
+        )
+    }
 
     private fun rewriteArchiveEntry(path: String, transform: (ByteArray) -> ByteArray) {
         val replacement = File(provider.archive.parentFile, "rewritten-backup.vnb")

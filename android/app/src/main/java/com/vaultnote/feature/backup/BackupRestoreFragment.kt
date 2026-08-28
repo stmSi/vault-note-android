@@ -103,7 +103,13 @@ class BackupRestoreFragment : Fragment() {
                     },
                     confirmation.summary.itemCount,
                     confirmation.summary.attachmentCount,
-                    confirmation.copiedItemCount,
+                    confirmation.mergeSummary.addedItemCount,
+                    confirmation.mergeSummary.updatedItemCount,
+                    confirmation.mergeSummary.unchangedItemCount,
+                    confirmation.mergeSummary.keptLocalItemCount,
+                    confirmation.mergeSummary.conflictItemCount,
+                    confirmation.mergeSummary.addedAttachmentCount,
+                    confirmation.mergeSummary.skippedAttachmentCount,
                 ),
             )
             .setNegativeButton(android.R.string.cancel) { _, _ ->
