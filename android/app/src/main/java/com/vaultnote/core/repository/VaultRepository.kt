@@ -74,6 +74,16 @@ interface VaultRepository {
     ): RepositoryResult<String> =
         RepositoryResult.Failure(AppError.InvalidItemState(itemId, "dated_entries_unsupported"))
 
+    suspend fun setNoteReadOnly(id: String, readOnly: Boolean): RepositoryResult<Unit> =
+        RepositoryResult.Failure(AppError.InvalidItemState(id, "read_only_unsupported"))
+
+    suspend fun setNoteBlockReadOnly(
+        id: String,
+        blockId: String,
+        readOnly: Boolean,
+    ): RepositoryResult<Unit> =
+        RepositoryResult.Failure(AppError.InvalidItemState(id, "read_only_unsupported"))
+
     suspend fun deleteDatedEntry(entryId: String): RepositoryResult<Unit> =
         RepositoryResult.Failure(AppError.InvalidItemState(entryId, "dated_entries_unsupported"))
 

@@ -31,11 +31,13 @@ export interface NoteBlock {
   type: NoteBlockType;
   text: string;
   checked: boolean;
+  readOnly?: boolean;
 }
 
 export interface NoteBodyDocument {
-  version: 1;
+  version: 1 | 2;
   blocks: NoteBlock[];
+  readOnly?: boolean;
 }
 
 export type DatedEntryType = 'REMINDER' | 'DEADLINE' | 'IMPORTANT_DATE' | 'RENEWAL';

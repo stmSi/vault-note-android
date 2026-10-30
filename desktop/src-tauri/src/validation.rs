@@ -44,7 +44,7 @@ pub fn validate_note_document(
     document: &NoteBodyDocument,
 ) -> Result<String, AppError> {
     validate_text("title", title, MAX_TITLE_CHARACTERS)?;
-    if document.version != 1 || document.blocks.len() > MAX_BODY_BLOCKS {
+    if !matches!(document.version, 1 | 2) || document.blocks.len() > MAX_BODY_BLOCKS {
         return Err(invalid("body", "unsupported block document"));
     }
     let mut ids = HashSet::with_capacity(document.blocks.len());

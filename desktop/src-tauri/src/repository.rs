@@ -10,9 +10,9 @@ use crate::{
     error::AppError,
     models::{
         AgendaEntry, AttachmentRecord, DatedEntry, DatedEntryAlert, DatedEntryDraft,
-        PortableAttachment, PortableDatedEntry, PortableItem, PortableItemTag, PortableSnapshot,
-        PortableTag, ScheduledAlert, SearchResult, SyncQueueStatus, VaultAttachment,
-        VaultItemSummary, VaultNote, VaultSection,
+        NoteBodyDocument, PortableAttachment, PortableDatedEntry, PortableItem, PortableItemTag,
+        PortableSnapshot, PortableTag, ScheduledAlert, SearchResult, SyncQueueStatus,
+        VaultAttachment, VaultItemSummary, VaultNote, VaultSection,
     },
 };
 
@@ -204,13 +204,21 @@ impl VaultRepository for SqliteVaultRepository {
             if current.title == title && current.body == body {
                 return Ok(false);
             }
+            let document = current_note_document(&transaction, id)?;
+            if document.as_ref().is_some_and(|document| {
+                document.read_only
+                    || current.body != body && document.blocks.iter().any(|block| block.read_only)
+            }) {
+                return Err(read_only_error());
+            }
             let revision = next_revision(current.local_revision)?;
             let updated_at = now.max(current.updated_at);
             let changed = transaction.execute(
                 r#"
                 UPDATE vault_items
                 SET title = ?1, body = ?2, updated_at = ?3, local_revision = ?4,
-                    sync_status = 'PENDING', body_document_json = NULL
+                    sync_status = 'PENDING',
+                    body_document_json = CASE WHEN body = ?2 THEN body_document_json ELSE NULL END
                 WHERE id = ?5 AND type = 'NOTE'
                 "#,
                 params![title, body, updated_at, revision, id],
@@ -240,6 +248,32 @@ impl VaultRepository for SqliteVaultRepository {
                 [id],
                 |row| row.get(0),
             )?;
+            let next: NoteBodyDocument =
+                serde_json::from_str(body_document_json).map_err(|_| AppError::InvalidInput {
+                    field: "body",
+                    reason: "Invalid note document".into(),
+                })?;
+            let previous = current_note_document(&transaction, id)?;
+            if let Some(previous) = previous {
+                if previous.read_only
+                    && (current.title != title || current.body != body || previous != next)
+                    || previous.read_only != next.read_only
+                    || previous
+                        .blocks
+                        .iter()
+                        .filter(|block| block.read_only)
+                        .collect::<Vec<_>>()
+                        != next
+                            .blocks
+                            .iter()
+                            .filter(|block| block.read_only)
+                            .collect::<Vec<_>>()
+                {
+                    return Err(read_only_error());
+                }
+            } else if next.read_only || next.blocks.iter().any(|block| block.read_only) {
+                return Err(read_only_error());
+            }
             if current.title == title
                 && current.body == body
                 && existing_document.as_deref() == Some(body_document_json)
@@ -1114,6 +1148,31 @@ fn current_item(transaction: &Transaction<'_>, id: &str) -> Result<CurrentItem, 
         .ok_or(AppError::NotFound)
 }
 
+fn current_note_document(
+    transaction: &Transaction<'_>,
+    id: &str,
+) -> Result<Option<NoteBodyDocument>, AppError> {
+    let json: Option<String> = transaction.query_row(
+        "SELECT body_document_json FROM vault_items WHERE id = ?1",
+        [id],
+        |row| row.get(0),
+    )?;
+    json.map(|value| {
+        serde_json::from_str(&value).map_err(|_| AppError::InvalidInput {
+            field: "body",
+            reason: "Invalid note document".into(),
+        })
+    })
+    .transpose()
+}
+
+fn read_only_error() -> AppError {
+    AppError::InvalidInput {
+        field: "body",
+        reason: "This content is read-only. Turn off its lock in Android to edit it.".into(),
+    }
+}
+
 fn require_editable(item: &CurrentItem) -> Result<(), AppError> {
     if item.deleted_at.is_some() {
         Err(AppError::InvalidState)
@@ -1650,6 +1709,97 @@ mod tests {
                 .search(&updated_expression, 100)
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn protected_android_notes_are_readable_and_cannot_be_overwritten() {
+        let repository = repository();
+        let id = repository
+            .create_note("Personal", "Personal info", 1_000)
+            .unwrap();
+        let document = r#"{"version":2,"readOnly":true,"blocks":[{"id":"00000000-0000-0000-0000-000000000201","type":"PARAGRAPH","text":"Personal info","checked":false,"readOnly":true}]}"#;
+        repository
+            .database
+            .with_connection(|connection| {
+                connection.execute(
+                    "UPDATE vault_items SET body_document_json = ?1 WHERE id = ?2",
+                    params![document, id],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(
+            repository
+                .get_note(&id)
+                .unwrap()
+                .body_document
+                .unwrap()
+                .read_only
+        );
+        assert!(
+            repository
+                .save_note(&id, "Changed", "Overwritten", 1_001)
+                .is_err()
+        );
+        assert!(
+            repository
+                .save_structured_note(&id, "Changed", "Personal info", document, 1_001)
+                .is_err()
+        );
+        assert_eq!(repository.get_note(&id).unwrap().body, "Personal info");
+    }
+
+    #[test]
+    fn protected_android_lines_allow_new_content_but_cannot_be_removed() {
+        let repository = repository();
+        let id = repository
+            .create_note("Personal", "Personal info", 1_000)
+            .unwrap();
+        let document = r#"{"version":2,"blocks":[{"id":"00000000-0000-0000-0000-000000000201","type":"PARAGRAPH","text":"Personal info","checked":false,"readOnly":true}]}"#;
+        repository
+            .database
+            .with_connection(|connection| {
+                connection.execute(
+                    "UPDATE vault_items SET body_document_json = ?1 WHERE id = ?2",
+                    params![document, id],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let mut appended: serde_json::Value = serde_json::from_str(document).unwrap();
+        appended["blocks"].as_array_mut().unwrap().push(serde_json::json!({
+            "id": "00000000-0000-0000-0000-000000000202", "type": "PARAGRAPH", "text": "New info", "checked": false,
+        }));
+        repository
+            .save_structured_note(
+                &id,
+                "Personal",
+                "Personal info\nNew info",
+                &appended.to_string(),
+                1_001,
+            )
+            .unwrap();
+        assert!(
+            repository
+                .save_note(&id, "Personal", "Overwritten", 1_002)
+                .is_err()
+        );
+        appended["blocks"][0]["text"] = serde_json::json!("Overwritten");
+        assert!(
+            repository
+                .save_structured_note(
+                    &id,
+                    "Personal",
+                    "Overwritten\nNew info",
+                    &appended.to_string(),
+                    1_002
+                )
+                .is_err()
+        );
+        assert_eq!(
+            repository.get_note(&id).unwrap().body,
+            "Personal info\nNew info"
         );
     }
 

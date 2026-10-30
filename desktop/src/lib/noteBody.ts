@@ -17,6 +17,8 @@ export function documentFromPlainText(body: string): NoteBodyDocument {
 }
 
 export function normalizeNoteBodyDocument(document: NoteBodyDocument): NoteBodyDocument {
+  // Protection refers to stable line IDs; never merge or replace those lines.
+  if (document.version === 2) return document;
   if (document.blocks.length === 0) {
     return { version: 1, blocks: [newBlock()] };
   }

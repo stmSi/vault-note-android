@@ -337,6 +337,7 @@ class NoteEditorFragment : Fragment() {
                 }
             },
             onHistoryShortcut = ::handleHistoryShortcut,
+            onBlockReadOnlyChanged = viewModel::setBlockReadOnly,
         )
         currentBinding.bodyBlocks.layoutManager = LinearLayoutManager(requireContext())
         currentBinding.bodyBlocks.adapter = noteBlockAdapter
@@ -465,6 +466,15 @@ class NoteEditorFragment : Fragment() {
         currentBinding.toolbar.title = state.draft.title.ifBlank {
             getString(R.string.untitled_note)
         }
+        val document = state.draft.bodyDocument
+        val protectedLines = document.blocks.count { it.isReadOnly }
+        currentBinding.toolbar.subtitle = when {
+            document.isReadOnly -> getString(R.string.note_read_only_status)
+            protectedLines > 0 -> resources.getQuantityString(
+                R.plurals.protected_lines_status, protectedLines, protectedLines,
+            )
+            else -> null
+        }
         val colorStyle = state.draft.color.toStyle()
         val surfaceColor = colorStyle.resolveSurface(requireContext())
         val titleColor = colorStyle.resolveTitle(requireContext())
@@ -485,17 +495,25 @@ class NoteEditorFragment : Fragment() {
                 !state.isClosing
         currentBinding.saveStatusRow.isVisible =
             state.saveStatus == EditorSaveStatus.FAILED
-        val editorEnabled = !state.isClosing
+        val interactionEnabled = !state.isClosing && !state.isProtectionSaving
+        val editorEnabled = interactionEnabled && !document.isReadOnly
         currentBinding.undoButton.isEnabled = editorEnabled && state.canUndo
         currentBinding.redoButton.isEnabled = editorEnabled && state.canRedo
         currentBinding.titleInput.isEnabled = editorEnabled
         currentBinding.tagsInput.isEnabled = editorEnabled
         currentBinding.bodyBlocks.isEnabled = editorEnabled
         currentBinding.editorActionBar.isEnabled = editorEnabled
+        noteBlockAdapter.setInteractionEnabled(interactionEnabled)
+        currentBinding.addParagraphButton.isEnabled = editorEnabled
+        currentBinding.addChecklistButton.isEnabled = editorEnabled
         setEditorActionsEnabled(
             currentBinding,
-            enabled = !state.isClosing && !state.isMetadataSaving,
+            enabled = interactionEnabled && !state.isMetadataSaving,
         )
+        currentBinding.toolbar.menu.findItem(R.id.action_read_only).apply {
+            isChecked = document.isReadOnly
+            setTitle(if (document.isReadOnly) R.string.note_read_only_off else R.string.note_read_only_on)
+        }
 
         val pinItem = currentBinding.toolbar.menu.findItem(R.id.action_pin)
         pinItem.isCheckable = true
@@ -534,6 +552,11 @@ class NoteEditorFragment : Fragment() {
     private fun onMenuItemSelected(item: MenuItem): Boolean {
         val state = viewModel.uiState.value as? EditorUiState.Content ?: return false
         return when (item.itemId) {
+            R.id.action_read_only -> {
+                leaveBodyTypingMode(requireNotNull(binding))
+                viewModel.setReadOnly(!state.draft.bodyDocument.isReadOnly)
+                true
+            }
             R.id.action_pin -> {
                 viewModel.setPinned(!state.draft.isPinned)
                 true
@@ -932,6 +955,11 @@ class NoteEditorFragment : Fragment() {
     private fun showError(error: AppError) {
         val root = binding?.root ?: return
         val message = when (error) {
+            is AppError.InvalidItemState -> if (error.state == "read_only") {
+                R.string.read_only_edit_blocked
+            } else {
+                R.string.operation_failed
+            }
             is AppError.SyncSchedulingFailure -> R.string.sync_schedule_failed
             is AppError.InvalidInput -> {
                 if (error.field == "tags") {

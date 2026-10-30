@@ -7,6 +7,7 @@ import com.vaultnote.core.common.AppError
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.VaultConstraints
 import com.vaultnote.core.common.NoteBodyCodec
+import com.vaultnote.core.common.NoteEditPolicy
 import com.vaultnote.core.common.model.DatedEntryDraft
 import com.vaultnote.core.common.model.DatedEntry
 import com.vaultnote.core.common.model.NoteBlock
@@ -26,6 +27,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 internal data class EditorDraft(
@@ -58,6 +60,7 @@ internal sealed interface EditorUiState {
         val saveRetryable: Boolean = false,
         val isClosing: Boolean = false,
         val isMetadataSaving: Boolean = false,
+        val isProtectionSaving: Boolean = false,
     ) : EditorUiState
 
     data class Error(
@@ -89,6 +92,7 @@ internal class NoteEditorViewModel(
     private var hasLoadedInitialNote = false
     private var isLeaving = false
     private var metadataJob: Job? = null
+    private var protectionJob: Job? = null
     private var metadataOutcome: RepositoryResult<Unit>? = null
     private var lastSaveError: AppError? = null
     private val history = BoundedEditorHistory()
@@ -126,6 +130,8 @@ internal class NoteEditorViewModel(
     }
 
     fun onBodyDocumentChanged(document: NoteBodyDocument) {
+        val current = mutableUiState.value as? EditorUiState.Content ?: return
+        if (!NoteEditPolicy.allowsBodyChange(current.draft.bodyDocument, document)) return
         val body = runCatching { NoteBodyCodec.derivePlainText(document) }.getOrNull() ?: return
         if (body.codePointCount(0, body.length) > VaultConstraints.MAX_NOTE_BODY_CHARACTERS) return
         updateDraft { it.copy(body = body, bodyDocument = document) }
@@ -133,14 +139,51 @@ internal class NoteEditorViewModel(
 
     fun undo() {
         val current = mutableUiState.value as? EditorUiState.Content ?: return
-        if (current.isClosing) return
+        if (current.isClosing || current.isProtectionSaving || current.draft.bodyDocument.isReadOnly) return
         history.undo(current.draft.toHistorySnapshot())?.let { restoreHistory(current, it) }
     }
 
     fun redo() {
         val current = mutableUiState.value as? EditorUiState.Content ?: return
-        if (current.isClosing) return
+        if (current.isClosing || current.isProtectionSaving || current.draft.bodyDocument.isReadOnly) return
         history.redo(current.draft.toHistorySnapshot())?.let { restoreHistory(current, it) }
+    }
+
+    fun setReadOnly(readOnly: Boolean) {
+        updateProtection { repository.setNoteReadOnly(itemId, readOnly) }
+    }
+
+    fun setBlockReadOnly(blockId: String, readOnly: Boolean) {
+        val current = mutableUiState.value as? EditorUiState.Content ?: return
+        if (current.draft.bodyDocument.isReadOnly) return
+        updateProtection { repository.setNoteBlockReadOnly(itemId, blockId, readOnly) }
+    }
+
+    private fun updateProtection(operation: suspend () -> RepositoryResult<Unit>) {
+        val current = mutableUiState.value as? EditorUiState.Content ?: return
+        if (current.isClosing || current.isProtectionSaving) return
+        // Flush before toggling so the lock protects exactly the visible text and stable IDs.
+        mutableUiState.value = current.copy(isProtectionSaving = true)
+        protectionJob = viewModelScope.launch {
+            metadataJob?.join()
+            autosaver.submit(current.draft.toPersistedDraft())
+            if (autosaver.flush()) {
+                when (val result = operation()) {
+                    is RepositoryResult.Success -> {
+                        repository.observeNote(itemId).first()?.let(::applyDatabaseNote)
+                        history.clear()
+                        result.warning?.let { mutableEvents.send(EditorEvent.ShowError(it)) }
+                    }
+                    is RepositoryResult.Failure -> mutableEvents.send(EditorEvent.ShowError(result.error))
+                }
+            }
+            val latest = mutableUiState.value as? EditorUiState.Content ?: return@launch
+            mutableUiState.value = latest.copy(
+                isProtectionSaving = false,
+                canUndo = history.canUndo,
+                canRedo = history.canRedo,
+            )
+        }
     }
 
     fun saveDatedEntry(draft: DatedEntryDraft) {
@@ -293,8 +336,9 @@ internal class NoteEditorViewModel(
 
     private fun updateDraft(transform: (EditorDraft) -> EditorDraft) {
         val current = mutableUiState.value as? EditorUiState.Content ?: return
-        if (current.isClosing) return
+        if (current.isClosing || current.isProtectionSaving || current.draft.bodyDocument.isReadOnly) return
         val nextDraft = transform(current.draft)
+        if (!NoteEditPolicy.allowsBodyChange(current.draft.bodyDocument, nextDraft.bodyDocument)) return
         if (nextDraft == current.draft) return
         history.record(current.draft.toHistorySnapshot())
         val version = autosaver.submit(nextDraft.toPersistedDraft())
@@ -311,6 +355,7 @@ internal class NoteEditorViewModel(
         current: EditorUiState.Content,
         snapshot: EditorHistorySnapshot,
     ) {
+        if (!NoteEditPolicy.allowsBodyChange(current.draft.bodyDocument, snapshot.bodyDocument)) return
         val body = NoteBodyCodec.derivePlainText(snapshot.bodyDocument)
         val nextDraft = current.draft.copy(
             title = snapshot.title,
@@ -335,7 +380,7 @@ internal class NoteEditorViewModel(
         operation: suspend () -> RepositoryResult<Unit>,
     ) {
         val current = mutableUiState.value as? EditorUiState.Content ?: return
-        if (current.isClosing || current.isMetadataSaving) return
+        if (current.isClosing || current.isMetadataSaving || current.isProtectionSaving) return
         val previousDraft = current.draft
         val nextDraft = transform(previousDraft)
         if (nextDraft == previousDraft) return
@@ -377,11 +422,13 @@ internal class NoteEditorViewModel(
         if (isLeaving) return
         isLeaving = true
         val pendingMetadata = metadataJob?.takeIf { !it.isCompleted }
+        val pendingProtection = protectionJob?.takeIf { !it.isCompleted }
         val content = mutableUiState.value as? EditorUiState.Content
         if (content != null) {
             mutableUiState.value = content.copy(isClosing = true)
         }
         viewModelScope.launch {
+            pendingProtection?.join()
             pendingMetadata?.join()
             if (pendingMetadata != null && metadataOutcome is RepositoryResult.Failure) {
                 cancelLeaving()

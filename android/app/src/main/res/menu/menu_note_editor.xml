@@ -17,6 +17,12 @@
         android:title="@string/choose_item_color"
         app:showAsAction="never" />
     <item
+        android:id="@+id/action_read_only"
+        android:checkable="true"
+        android:icon="@drawable/ic_lock"
+        android:title="@string/note_read_only_on"
+        app:showAsAction="never" />
+    <item
         android:id="@+id/action_archive"
         android:icon="@drawable/ic_archive"
         android:title="@string/archive_note"

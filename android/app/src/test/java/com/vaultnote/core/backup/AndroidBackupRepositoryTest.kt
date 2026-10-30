@@ -15,6 +15,10 @@ import com.vaultnote.core.common.AppError
 import com.vaultnote.core.common.DispatcherProvider
 import com.vaultnote.core.common.IdGenerator
 import com.vaultnote.core.common.RepositoryResult
+import com.vaultnote.core.common.NoteBodyCodec
+import com.vaultnote.core.common.model.NoteBodyDocument
+import com.vaultnote.core.common.model.NoteBlock
+import com.vaultnote.core.common.model.NoteBlockType
 import com.vaultnote.core.common.model.AttachmentUploadStatus
 import com.vaultnote.core.common.model.ItemSyncStatus
 import com.vaultnote.core.common.model.OcrState
@@ -113,7 +117,11 @@ class AndroidBackupRepositoryTest {
 
     @Test
     fun `restoring the same backup twice is idempotent`() = runBlocking {
-        database.vaultItemDao().insert(originalItem())
+        val protectedDocument = NoteBodyCodec.encode(NoteBodyDocument(
+            blocks = listOf(NoteBlock("personal", NoteBlockType.PARAGRAPH, originalItem().body, isReadOnly = true)),
+            isReadOnly = true,
+        ))
+        database.vaultItemDao().insert(originalItem().copy(bodyDocumentJson = protectedDocument))
         database.attachmentDao().insert(originalAttachment())
         val export = repository.prepareExport(PASSWORD.copyOf()).successValue()
 
@@ -150,6 +158,7 @@ class AndroidBackupRepositoryTest {
         assertEquals(1L, restored.unchangedItemCount)
         assertEquals(0L, restored.conflictItemCount)
         assertEquals(1, items.size)
+        assertEquals(protectedDocument, items.single().bodyDocumentJson)
         assertEquals(1, attachments.size)
         assertTrue(restoredStorage.restoredPayloads.isEmpty())
         assertTrue((restoredResult as RepositoryResult.Success).warning == null)

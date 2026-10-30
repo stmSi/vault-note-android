@@ -52,6 +52,8 @@ pub struct VaultNote {
 pub struct NoteBodyDocument {
     pub version: u32,
     pub blocks: Vec<NoteBlock>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -62,6 +64,12 @@ pub struct NoteBlock {
     pub block_type: String,
     pub text: String,
     pub checked: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub read_only: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

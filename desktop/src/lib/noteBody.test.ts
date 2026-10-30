@@ -6,6 +6,18 @@ import {
 } from './noteBody';
 
 describe('note body documents', () => {
+  it('preserves protected Android lines and their identities', () => {
+    const document = {
+      version: 2 as const,
+      readOnly: false,
+      blocks: [
+        { id: 'personal', type: 'PARAGRAPH' as const, text: 'Personal info', checked: false, readOnly: true },
+        { id: 'new', type: 'PARAGRAPH' as const, text: 'More info', checked: false },
+      ],
+    };
+    expect(normalizeNoteBodyDocument(document)).toEqual(document);
+    expect(derivePlainText(document)).toBe('Personal info\nMore info');
+  });
   it('keeps legacy text in one multiline paragraph', () => {
     vi.spyOn(crypto, 'randomUUID')
       .mockReturnValueOnce('00000000-0000-0000-0000-000000000001');

@@ -27,10 +27,13 @@ object NoteBodyCodec {
     fun encode(document: NoteBodyDocument): String {
         require(document.version == NoteBodyDocument.CURRENT_VERSION)
         validate(document)
+        // Keep unprotected notes readable by existing version-1 clients.
+        val encodedVersion = if (document.isReadOnly || document.blocks.any { it.isReadOnly }) 2 else 1
         return json.encodeToString(
             JsonObject.serializer(),
             buildJsonObject {
-                put("version", document.version)
+                put("version", encodedVersion)
+                if (encodedVersion >= 2) put("readOnly", document.isReadOnly)
                 put(
                     "blocks",
                     buildJsonArray {
@@ -41,6 +44,7 @@ object NoteBodyCodec {
                                     put("type", block.type.name)
                                     put("text", block.text)
                                     put("checked", block.isChecked)
+                                    if (encodedVersion >= 2) put("readOnly", block.isReadOnly)
                                 },
                             )
                         }
@@ -54,20 +58,26 @@ object NoteBodyCodec {
         if (value == null) return null
         return runCatching {
             val root = json.parseToJsonElement(value).jsonObject
-            require(root.keys == setOf("version", "blocks"))
             val version = root.getValue("version").jsonPrimitive.int
-            require(version == NoteBodyDocument.CURRENT_VERSION)
+            require(version == 1 || version == NoteBodyDocument.CURRENT_VERSION)
+            val rootKeys = setOf("version", "blocks")
+            require(root.keys == rootKeys || version >= 2 && root.keys == rootKeys + "readOnly")
             val blocks = root.getValue("blocks").jsonArray.map { element ->
                 val block = element.jsonObject
-                require(block.keys == setOf("id", "type", "text", "checked"))
+                val blockKeys = setOf("id", "type", "text", "checked")
+                require(block.keys == blockKeys || version >= 2 && block.keys == blockKeys + "readOnly")
                 NoteBlock(
                     id = block.getValue("id").jsonPrimitive.contentOrNull.orEmpty(),
                     type = enumValueOf(block.getValue("type").jsonPrimitive.content),
                     text = block.getValue("text").jsonPrimitive.content,
                     isChecked = block.getValue("checked").jsonPrimitive.boolean,
+                    isReadOnly = version >= 2 && (block["readOnly"]?.jsonPrimitive?.boolean ?: false),
                 )
             }
-            NoteBodyDocument(version = version, blocks = blocks).also(::validate)
+            NoteBodyDocument(
+                blocks = blocks,
+                isReadOnly = version >= 2 && (root["readOnly"]?.jsonPrimitive?.boolean ?: false),
+            ).also(::validate)
         }.getOrNull()
     }
 

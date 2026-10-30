@@ -422,4 +422,14 @@
     <string name="theme_blue_hour">Blue Hour</string>
     <string name="theme_terminal">Terminal</string>
     <string name="theme_velvet">Velvet</string>
+    <string name="note_read_only_on">Turn on read-only</string>
+    <string name="note_read_only_off">Turn off read-only</string>
+    <string name="note_read_only_status">Read-only · turn off in the menu to edit</string>
+    <string name="line_read_only_on">Protect this line</string>
+    <string name="line_read_only_off">Allow editing this line</string>
+    <string name="read_only_edit_blocked">This content is read-only. Turn off its lock to edit it.</string>
+    <plurals name="protected_lines_status">
+        <item quantity="one">%d protected line · you can add more</item>
+        <item quantity="other">%d protected lines · you can add more</item>
+    </plurals>
 </resources>

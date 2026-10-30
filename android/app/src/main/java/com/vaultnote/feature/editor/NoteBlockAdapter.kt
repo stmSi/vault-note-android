@@ -3,6 +3,7 @@ package com.vaultnote.feature.editor
 import android.graphics.Rect
 import android.text.Editable
 import android.text.TextWatcher
+import android.text.InputFilter
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
@@ -21,9 +22,12 @@ internal class NoteBlockAdapter(
     private val onBodyFocusChanged: (Boolean) -> Unit,
     private val onBlockFocusRequested: (Int) -> Unit,
     private val onHistoryShortcut: (KeyEvent) -> Boolean = { false },
+    private val onBlockReadOnlyChanged: (String, Boolean) -> Unit = { _, _ -> },
 ) : RecyclerView.Adapter<NoteBlockAdapter.Holder>() {
     private val blocks = mutableListOf<NoteBlock>()
     private var pendingFocus: PendingFocus? = null
+    private var documentReadOnly = false
+    private var interactionEnabled = true
 
     init {
         setHasStableIds(true)
@@ -49,13 +53,24 @@ internal class NoteBlockAdapter(
     }
 
     fun submitDocument(document: NoteBodyDocument) {
-        if (blocks == document.blocks) return
+        if (blocks == document.blocks && documentReadOnly == document.isReadOnly) return
+        documentReadOnly = document.isReadOnly
         blocks.clear()
         blocks.addAll(document.blocks)
         notifyDataSetChanged()
     }
 
+    fun setInteractionEnabled(enabled: Boolean) {
+        if (interactionEnabled == enabled) return
+        interactionEnabled = enabled
+        notifyItemRangeChanged(0, itemCount)
+    }
+
+    private fun canEdit(blockId: String): Boolean = interactionEnabled && !documentReadOnly &&
+        blocks.firstOrNull { it.id == blockId }?.isReadOnly == false
+
     fun addBlock(type: NoteBlockType) {
+        if (!interactionEnabled || documentReadOnly) return
         val position = blocks.size
         val block = NoteBlock(
             id = UUID.randomUUID().toString(),
@@ -71,6 +86,7 @@ internal class NoteBlockAdapter(
     }
 
     private fun updateText(blockId: String, value: String) {
+        if (!canEdit(blockId)) return
         val index = blocks.indexOfFirst { it.id == blockId }
         if (index == -1 || blocks[index].text == value) return
         blocks[index] = blocks[index].copy(text = value)
@@ -78,6 +94,7 @@ internal class NoteBlockAdapter(
     }
 
     private fun updateChecked(blockId: String, checked: Boolean) {
+        if (!canEdit(blockId)) return
         val index = blocks.indexOfFirst { it.id == blockId }
         if (index == -1 || blocks[index].isChecked == checked) return
         blocks[index] = blocks[index].copy(isChecked = checked)
@@ -85,6 +102,7 @@ internal class NoteBlockAdapter(
     }
 
     private fun splitBlock(blockId: String, before: String, after: String) {
+        if (!canEdit(blockId)) return
         val index = blocks.indexOfFirst { it.id == blockId }
         if (index == -1) return
         val original = blocks[index]
@@ -96,25 +114,29 @@ internal class NoteBlockAdapter(
         } else {
             original.type
         }
-        val nextBlock = NoteBlock(
-            id = UUID.randomUUID().toString(),
-            type = nextType,
-            text = after,
-        )
-        blocks.add(index + 1, nextBlock)
+        val nextBlocks = after.split('\n').map { line ->
+            NoteBlock(id = UUID.randomUUID().toString(), type = nextType, text = line)
+        }
+        val nextBlock = nextBlocks.first()
+        blocks.addAll(index + 1, nextBlocks)
         pendingFocus = PendingFocus(nextBlock.id, 0)
         notifyItemChanged(index)
-        notifyItemInserted(index + 1)
+        notifyItemRangeInserted(index + 1, nextBlocks.size)
         dispatchDocument()
         onBlockFocusRequested(index + 1)
     }
 
     private fun deleteEmptyBlock(blockId: String): Boolean {
+        if (!canEdit(blockId)) return false
         val index = blocks.indexOfFirst { it.id == blockId }
         if (index <= 0 || blocks[index].text.isNotEmpty()) return false
         val previousBlock = blocks[index - 1]
         blocks.removeAt(index)
-        pendingFocus = PendingFocus(previousBlock.id, previousBlock.text.length)
+        pendingFocus = if (canEdit(previousBlock.id)) {
+            PendingFocus(previousBlock.id, previousBlock.text.length)
+        } else {
+            null
+        }
         notifyItemRemoved(index)
         notifyItemChanged(index - 1)
         dispatchDocument()
@@ -123,7 +145,7 @@ internal class NoteBlockAdapter(
     }
 
     private fun dispatchDocument() {
-        onDocumentChanged(NoteBodyDocument(blocks = blocks.toList()))
+        onDocumentChanged(NoteBodyDocument(blocks = blocks.toList(), isReadOnly = documentReadOnly))
     }
 
     inner class Holder(
@@ -132,6 +154,13 @@ internal class NoteBlockAdapter(
         private var watcher: TextWatcher? = null
         private var boundId: String? = null
         private var rendering = false
+        private val editableKeyListener = binding.text.keyListener
+
+        init {
+            binding.text.filters = binding.text.filters + InputFilter { _, _, _, dest, start, end ->
+                if (rendering || boundId?.let(::canEdit) == true) null else dest.subSequence(start, end)
+            }
+        }
 
         fun bind(block: NoteBlock, showBodyHint: Boolean) = with(binding) {
             recycle()
@@ -147,6 +176,26 @@ internal class NoteBlockAdapter(
             checkBox.visibility =
                 if (block.type == NoteBlockType.CHECKLIST_ITEM) View.VISIBLE else View.GONE
             checkBox.isChecked = block.isChecked
+            val editable = canEdit(block.id)
+            text.keyListener = if (editable) editableKeyListener else null
+            text.setTextIsSelectable(true)
+            text.isCursorVisible = editable
+            text.showSoftInputOnFocus = editable
+            checkBox.isEnabled = editable
+            readOnlyButton.setImageResource(
+                if (block.isReadOnly) com.vaultnote.R.drawable.ic_lock else com.vaultnote.R.drawable.ic_lock_open,
+            )
+            readOnlyButton.contentDescription = text.context.getString(
+                if (block.isReadOnly) com.vaultnote.R.string.line_read_only_off
+                else com.vaultnote.R.string.line_read_only_on,
+            )
+            readOnlyButton.tooltipText = readOnlyButton.contentDescription
+            readOnlyButton.isEnabled = interactionEnabled && !documentReadOnly
+            readOnlyButton.setOnClickListener {
+                if (interactionEnabled && !documentReadOnly) {
+                    onBlockReadOnlyChanged(block.id, !block.isReadOnly)
+                }
+            }
             rendering = false
             watcher = object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) =
@@ -157,6 +206,12 @@ internal class NoteBlockAdapter(
 
                 override fun afterTextChanged(editable: Editable?) {
                     if (rendering) return
+                    if (boundId?.let(::canEdit) != true) {
+                        rendering = true
+                        text.setText(blocks.firstOrNull { it.id == boundId }?.text.orEmpty())
+                        rendering = false
+                        return
+                    }
                     val value = editable?.toString().orEmpty()
                     val newline = value.indexOf('\n')
                     if (newline >= 0) {
@@ -206,6 +261,7 @@ internal class NoteBlockAdapter(
             binding.checkBox.setOnCheckedChangeListener(null)
             binding.text.onFocusChangeListener = null
             binding.text.setOnKeyListener(null)
+            binding.readOnlyButton.setOnClickListener(null)
             boundId = null
         }
     }

@@ -7,9 +7,10 @@ package com.vaultnote.core.common.model
 data class NoteBodyDocument(
     val version: Int = CURRENT_VERSION,
     val blocks: List<NoteBlock>,
+    val isReadOnly: Boolean = false,
 ) {
     companion object {
-        const val CURRENT_VERSION: Int = 1
+        const val CURRENT_VERSION: Int = 2
     }
 }
 
@@ -23,6 +24,7 @@ data class NoteBlock(
     val type: NoteBlockType,
     val text: String,
     val isChecked: Boolean = false,
+    val isReadOnly: Boolean = false,
 )
 
 enum class DatedEntryType {

@@ -27,4 +27,13 @@
         android:saveEnabled="false"
         android:textAppearance="?attr/textAppearanceBodyLarge" />
 
+    <androidx.appcompat.widget.AppCompatImageButton
+        android:id="@+id/read_only_button"
+        android:layout_width="@dimen/touch_target"
+        android:layout_height="@dimen/touch_target"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@string/line_read_only_on"
+        android:padding="12dp"
+        android:src="@drawable/ic_lock_open" />
+
 </LinearLayout>

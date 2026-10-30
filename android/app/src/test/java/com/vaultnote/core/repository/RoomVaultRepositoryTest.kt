@@ -69,6 +69,52 @@ class RoomVaultRepositoryTest {
     }
 
     @Test
+    fun `read only note rejects content changes until explicitly unlocked`() = runBlocking {
+        val id = repository.createNote("Personal info", "Original").successValue()
+        repository.setNoteReadOnly(id, true).requireSuccess()
+        val locked = requireNotNull(repository.observeNote(id).first())
+        val document = requireNotNull(locked.bodyDocument)
+        assertTrue(document.isReadOnly)
+        assertTrue(repository.saveNote(id, "Changed", "Changed") is RepositoryResult.Failure)
+        assertTrue(repository.setTags(id, listOf("changed")) is RepositoryResult.Failure)
+        assertTrue(repository.saveStructuredNote(id, "Changed", document, emptyList()) is RepositoryResult.Failure)
+        assertTrue(repository.saveStructuredNote(id, locked.title, document.copy(isReadOnly = false), emptyList()) is RepositoryResult.Failure)
+        assertEquals(locked, repository.observeNote(id).first())
+        repository.setNoteReadOnly(id, false).requireSuccess()
+        repository.saveNote(id, "Updated", "More info").requireSuccess()
+        assertEquals("More info", repository.observeNote(id).first()?.body)
+    }
+
+    @Test
+    fun `protected line persists while new lines are saved and can be explicitly unlocked`() = runBlocking {
+        val id = repository.createNote("Personal info", "").successValue()
+        val original = NoteBodyDocument(blocks = listOf(
+            NoteBlock("personal", NoteBlockType.CHECKLIST_ITEM, "Passport number", isChecked = true),
+        ))
+        repository.saveStructuredNote(id, "Personal info", original, emptyList()).requireSuccess()
+        repository.setNoteBlockReadOnly(id, "personal", true).requireSuccess()
+        val locked = requireNotNull(repository.observeNote(id).first()?.bodyDocument)
+        assertTrue(locked.blocks.single().isReadOnly)
+        val appended = locked.copy(blocks = locked.blocks + NoteBlock("new", NoteBlockType.PARAGRAPH, "New info"))
+        repository.saveStructuredNote(id, "Personal info", appended, emptyList()).requireSuccess()
+        assertEquals(appended, repository.observeNote(id).first()?.bodyDocument)
+        val revision = repository.observeNote(id).first()?.localRevision
+        assertTrue(repository.saveNote(id, "Personal info", "Overwritten") is RepositoryResult.Failure)
+        assertTrue(repository.saveStructuredNote(id, "Personal info", appended.copy(blocks = listOf(appended.blocks.last())), emptyList()) is RepositoryResult.Failure)
+        assertTrue(repository.saveStructuredNote(id, "Personal info", appended.copy(blocks = listOf(locked.blocks.single().copy(isChecked = false))), emptyList()) is RepositoryResult.Failure)
+        assertEquals(revision, repository.observeNote(id).first()?.localRevision)
+        repository.setNoteReadOnly(id, true).requireSuccess()
+        repository.setNoteReadOnly(id, false).requireSuccess()
+        assertTrue(requireNotNull(repository.observeNote(id).first()?.bodyDocument).blocks.first().isReadOnly)
+        repository.setNoteBlockReadOnly(id, "personal", false).requireSuccess()
+        val unlocked = requireNotNull(repository.observeNote(id).first()?.bodyDocument)
+        repository.saveStructuredNote(id, "Personal info", unlocked.copy(blocks = unlocked.blocks.map {
+            if (it.id == "personal") it.copy(text = "Corrected number") else it
+        }), emptyList()).requireSuccess()
+        assertEquals("Corrected number", repository.observeNote(id).first()?.bodyDocument?.blocks?.first()?.text)
+    }
+
+    @Test
     fun `create and save update Room search tags and one coalesced sync slot`() = runBlocking {
         val itemId = repository.createNote().successValue()
         val initialNote = requireNotNull(repository.observeNote(itemId).first())

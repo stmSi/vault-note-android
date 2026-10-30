@@ -12,12 +12,13 @@
 
   function replaceBlocks(blocks: NoteBlock[]): void {
     onDocumentChange(normalizeNoteBodyDocument({
-      version: 1,
+      ...document,
       blocks: blocks.length === 0 ? [newBlock()] : blocks,
     }));
   }
 
   function updateBlock(index: number, patch: Partial<NoteBlock>): void {
+    if (readonly || document.readOnly || document.blocks[index]?.readOnly) return;
     replaceBlocks(
       document.blocks.map((block, blockIndex) =>
         blockIndex === index ? { ...block, ...patch } : block,
@@ -26,6 +27,7 @@
   }
 
   function addBlock(type: NoteBlockType): void {
+    if (readonly || document.readOnly) return;
     replaceBlocks([...document.blocks, newBlock(type)]);
   }
 
@@ -58,6 +60,7 @@
     index: number,
     target: HTMLTextAreaElement,
   ): void {
+    if (readonly || document.readOnly || document.blocks[index]?.readOnly) return;
     if (
       event.key === 'Enter' &&
       !event.shiftKey &&
@@ -96,7 +99,7 @@
             type="checkbox"
             aria-label="Toggle checklist item"
             checked={block.checked}
-            disabled={readonly}
+            disabled={readonly || document.readOnly || block.readOnly}
             onchange={(event) =>
               updateBlock(index, { checked: event.currentTarget.checked })}
           />
@@ -108,7 +111,7 @@
           rows={Math.max(1, block.text.split('\n').length)}
           maxlength="100000"
           value={block.text}
-          {readonly}
+          readonly={readonly || document.readOnly || block.readOnly}
           oninput={(event) => updateBlock(index, { text: event.currentTarget.value })}
           onkeydown={(event) => handleKeydown(event, index, event.currentTarget)}
         ></textarea>
@@ -116,7 +119,7 @@
     {/each}
   </div>
 
-  {#if !readonly}
+  {#if !readonly && !document.readOnly}
     <div class="block-toolbar" aria-label="Note actions">
       <button onclick={() => addBlock('PARAGRAPH')}>Text</button>
       <button onclick={() => addBlock('CHECKLIST_ITEM')}>☐ Checklist</button>

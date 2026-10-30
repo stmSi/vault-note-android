@@ -8,6 +8,7 @@ import com.vaultnote.core.common.IdGenerator
 import com.vaultnote.core.common.RepositoryResult
 import com.vaultnote.core.common.VaultConstraints
 import com.vaultnote.core.common.NoteBodyCodec
+import com.vaultnote.core.common.NoteEditPolicy
 import com.vaultnote.core.common.model.AgendaEntry
 import com.vaultnote.core.common.model.DatedEntry
 import com.vaultnote.core.common.model.DatedEntryAlert
@@ -237,6 +238,18 @@ class RoomVaultRepository(
                 current.title != title ||
                     current.body != body ||
                     current.bodyDocumentJson != encoded
+            val previousDocument = NoteBodyCodec.decodeOrNull(current.bodyDocumentJson)
+            if (previousDocument == null) {
+                if (bodyDocument.isReadOnly || bodyDocument.blocks.any { it.isReadOnly }) {
+                    abort(AppError.InvalidItemState(id, "protection_requires_explicit_toggle"))
+                }
+            } else {
+                if (!NoteEditPolicy.allowsBodyChange(previousDocument, bodyDocument) ||
+                    previousDocument.isReadOnly && (current.title != title || tagsChanged)
+                ) {
+                    abort(AppError.InvalidItemState(id, "read_only"))
+                }
+            }
             if (!contentChanged && !tagsChanged) {
                 return@runMutation MutationOutcome(Unit, changed = false)
             }
@@ -256,6 +269,38 @@ class RoomVaultRepository(
             enqueueItemOperation(updated, SyncOperationType.UPSERT_ITEM, now)
             MutationOutcome(Unit, changed = true)
         }
+    }
+
+    override suspend fun setNoteReadOnly(id: String, readOnly: Boolean): RepositoryResult<Unit> =
+        updateNoteProtection(id) { document -> document.copy(isReadOnly = readOnly) }
+
+    override suspend fun setNoteBlockReadOnly(
+        id: String,
+        blockId: String,
+        readOnly: Boolean,
+    ): RepositoryResult<Unit> = updateNoteProtection(id) { document ->
+        if (document.isReadOnly) abort(AppError.InvalidItemState(id, "read_only"))
+        if (document.blocks.none { it.id == blockId }) abort(AppError.ItemNotFound(blockId))
+        document.copy(blocks = document.blocks.map { block ->
+            if (block.id == blockId) block.copy(isReadOnly = readOnly) else block
+        })
+    }
+
+    private suspend fun updateNoteProtection(
+        id: String,
+        transform: (NoteBodyDocument) -> NoteBodyDocument,
+    ): RepositoryResult<Unit> = runMutation("set_note_read_only") {
+        val current = requireEditableItem(id)
+        if (current.type != VaultItemType.NOTE) abort(AppError.InvalidItemState(id, "not_a_note"))
+        val document = NoteBodyCodec.decodeOrNull(current.bodyDocumentJson)
+            ?: NoteBodyCodec.fromPlainText(current.body, idGenerator::newId)
+        val next = transform(document)
+        if (next == document) return@runMutation MutationOutcome(Unit, changed = false)
+        val now = clock.nowEpochMillis()
+        val updated = current.withLocalChange(now).copy(bodyDocumentJson = NoteBodyCodec.encode(next))
+        updateItemExactlyOnce(updated)
+        enqueueItemOperation(updated, SyncOperationType.UPSERT_ITEM, now)
+        MutationOutcome(Unit, changed = true)
     }
 
     override suspend fun saveDatedEntry(
@@ -449,8 +494,18 @@ class RoomVaultRepository(
             return@runMutation MutationOutcome(Unit, changed = false)
         }
 
+        val document = NoteBodyCodec.decodeOrNull(current.bodyDocumentJson)
+        if (document?.isReadOnly == true ||
+            current.body != body && document?.blocks?.any { it.isReadOnly } == true
+        ) {
+            abort(AppError.InvalidItemState(id, "read_only"))
+        }
         val now = clock.nowEpochMillis()
-        val updated = current.withLocalChange(now).copy(title = title, body = body)
+        val updated = current.withLocalChange(now).copy(
+            title = title,
+            body = body,
+            bodyDocumentJson = if (current.body == body) current.bodyDocumentJson else null,
+        )
         val resultingTags = if (tagsChanged) {
             replaceTagRelations(id, requestedTags.orEmpty(), now)
         } else {
@@ -588,6 +643,9 @@ class RoomVaultRepository(
             val requestedNormalizedNames = requestedTags.map(TagInput::normalizedName)
             if (existing.map(TagEntity::normalizedName).sorted() == requestedNormalizedNames.sorted()) {
                 return@runMutation MutationOutcome(Unit, changed = false)
+            }
+            if (NoteBodyCodec.decodeOrNull(current.bodyDocumentJson)?.isReadOnly == true) {
+                abort(AppError.InvalidItemState(id, "read_only"))
             }
 
             val now = clock.nowEpochMillis()

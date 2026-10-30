@@ -1246,7 +1246,7 @@
   }
 
   function draftChanged(): void {
-    if (selected === null || autosaver === null) {
+    if (selected === null || autosaver === null || editorDocument.readOnly) {
       return;
     }
     autosaver.submit({
@@ -2067,7 +2067,7 @@
             aria-label="Note title"
             placeholder="Untitled note"
             maxlength="500"
-            readonly={selected.deletedAtEpochMillis !== null}
+            readonly={selected.deletedAtEpochMillis !== null || editorDocument.readOnly}
             bind:value={editorTitle}
             oninput={draftChanged}
           />

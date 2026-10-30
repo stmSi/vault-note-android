@@ -2,6 +2,7 @@ package com.vaultnote.feature.editor
 
 import com.vaultnote.core.common.AppError
 import com.vaultnote.core.common.RepositoryResult
+import com.vaultnote.core.common.NoteBodyCodec
 import com.vaultnote.core.common.model.ItemSyncStatus
 import com.vaultnote.core.common.model.NoteBlock
 import com.vaultnote.core.common.model.NoteBlockType
@@ -199,8 +200,80 @@ class NoteEditorViewModelTest {
             assertEquals(EditorEvent.NavigateBack, event.await())
         }
 
-    private class EditorFakeRepository : VaultRepository {
-        private val note = MutableStateFlow(baseNote())
+    @Test
+    fun `read only note ignores text tags document and undo changes`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val document = NoteBodyDocument(
+                blocks = listOf(NoteBlock("personal", NoteBlockType.PARAGRAPH, "Personal info")),
+                isReadOnly = true,
+            )
+            val viewModel = NoteEditorViewModel(ITEM_ID, EditorFakeRepository(baseNote().copy(
+                body = "Personal info", bodyDocument = document,
+            )))
+            runCurrent()
+            val original = (viewModel.uiState.value as EditorUiState.Content).draft
+            viewModel.onTitleChanged("Changed")
+            viewModel.onBodyChanged("Changed")
+            viewModel.onTagsChanged("changed")
+            viewModel.onBodyDocumentChanged(document.copy(isReadOnly = false))
+            viewModel.undo()
+            assertEquals(original, (viewModel.uiState.value as EditorUiState.Content).draft)
+        }
+
+    @Test
+    fun `locking flushes visible content clears undo and permits adding unlocked lines`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val repository = EditorFakeRepository()
+            val viewModel = NoteEditorViewModel(ITEM_ID, repository)
+            runCurrent()
+            viewModel.onBodyChanged("Personal info")
+            val original = (viewModel.uiState.value as EditorUiState.Content).draft.bodyDocument
+            val blockId = original.blocks.single().id
+            viewModel.setBlockReadOnly(blockId, true)
+            // Input arriving during the flush must not race the protection write.
+            viewModel.onBodyChanged("Must be ignored")
+            runCurrent()
+            var content = viewModel.uiState.value as EditorUiState.Content
+            assertEquals("Personal info", repository.currentNote().body)
+            assertTrue(content.draft.bodyDocument.blocks.single().isReadOnly)
+            assertFalse(content.canUndo)
+            assertFalse(content.isProtectionSaving)
+            viewModel.undo()
+            viewModel.onBodyChanged("Overwrite")
+            assertEquals("Personal info", (viewModel.uiState.value as EditorUiState.Content).draft.body)
+            val appended = content.draft.bodyDocument.copy(blocks = content.draft.bodyDocument.blocks +
+                NoteBlock("new", NoteBlockType.PARAGRAPH, "New info"))
+            viewModel.onBodyDocumentChanged(appended)
+            content = viewModel.uiState.value as EditorUiState.Content
+            assertEquals("Personal info\nNew info", content.draft.body)
+            viewModel.undo()
+            assertEquals("Personal info", (viewModel.uiState.value as EditorUiState.Content).draft.body)
+            viewModel.setBlockReadOnly(blockId, false)
+            runCurrent()
+            viewModel.onBodyChanged("Can edit again")
+            assertEquals("Can edit again", (viewModel.uiState.value as EditorUiState.Content).draft.body)
+        }
+
+    @Test
+    fun `failed save does not enable a lock or discard the visible draft`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val repository = EditorFakeRepository()
+            val viewModel = NoteEditorViewModel(ITEM_ID, repository)
+            runCurrent()
+            repository.nextSaveResult = CompletableDeferred(RepositoryResult.Failure(AppError.DatabaseFailure("save")))
+            viewModel.onBodyChanged("Keep this text")
+            viewModel.setReadOnly(true)
+            runCurrent()
+            val content = viewModel.uiState.value as EditorUiState.Content
+            assertEquals("Keep this text", content.draft.body)
+            assertFalse(content.draft.bodyDocument.isReadOnly)
+            assertFalse(repository.currentNote().bodyDocument?.isReadOnly == true)
+            assertFalse(content.isProtectionSaving)
+            assertEquals(EditorSaveStatus.FAILED, content.saveStatus)
+        }
+
+    private class EditorFakeRepository(initialNote: VaultNote = baseNote()) : VaultRepository {
+        private val note = MutableStateFlow(initialNote)
         val saveStarted = CompletableDeferred<Unit>()
         val savedTitles = mutableListOf<String>()
         val savedBodies = mutableListOf<String>()
@@ -208,6 +281,30 @@ class NoteEditorViewModelTest {
         var nextPinResult: CompletableDeferred<RepositoryResult<Unit>>? = null
 
         fun currentNote(): VaultNote = note.value
+
+        override suspend fun saveStructuredNote(
+            id: String,
+            title: String,
+            bodyDocument: NoteBodyDocument,
+            tagNames: Collection<String>,
+        ): RepositoryResult<Unit> {
+            val result = saveNote(id, title, NoteBodyCodec.derivePlainText(bodyDocument), tagNames)
+            if (result is RepositoryResult.Success) note.value = note.value.copy(bodyDocument = bodyDocument)
+            return result
+        }
+
+        override suspend fun setNoteReadOnly(id: String, readOnly: Boolean): RepositoryResult<Unit> {
+            note.value = note.value.copy(bodyDocument = requireNotNull(note.value.bodyDocument).copy(isReadOnly = readOnly))
+            return RepositoryResult.Success(Unit)
+        }
+
+        override suspend fun setNoteBlockReadOnly(id: String, blockId: String, readOnly: Boolean): RepositoryResult<Unit> {
+            val document = requireNotNull(note.value.bodyDocument)
+            note.value = note.value.copy(bodyDocument = document.copy(blocks = document.blocks.map {
+                if (it.id == blockId) it.copy(isReadOnly = readOnly) else it
+            }))
+            return RepositoryResult.Success(Unit)
+        }
 
         override fun observeActiveItems(limit: Int, offset: Int): Flow<List<VaultItemSummary>> =
             emptyFlow()
