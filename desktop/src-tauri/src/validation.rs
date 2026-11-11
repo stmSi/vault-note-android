@@ -44,7 +44,10 @@ pub fn validate_note_document(
     document: &NoteBodyDocument,
 ) -> Result<String, AppError> {
     validate_text("title", title, MAX_TITLE_CHARACTERS)?;
-    if !matches!(document.version, 1 | 2) || document.blocks.len() > MAX_BODY_BLOCKS {
+    if !matches!(document.version, 1..=3)
+        || (document.packing_list && document.version < 3)
+        || document.blocks.len() > MAX_BODY_BLOCKS
+    {
         return Err(invalid("body", "unsupported block document"));
     }
     let mut ids = HashSet::with_capacity(document.blocks.len());
@@ -157,6 +160,7 @@ fn invalid(field: &'static str, reason: &str) -> AppError {
 pub fn parse_section(value: &str) -> Result<VaultSection, AppError> {
     match value {
         "active" => Ok(VaultSection::Active),
+        "packing" => Ok(VaultSection::Packing),
         "archived" => Ok(VaultSection::Archived),
         "trash" => Ok(VaultSection::Trash),
         _ => Err(AppError::InvalidInput {

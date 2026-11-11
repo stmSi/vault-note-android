@@ -28,11 +28,16 @@ object NoteBodyCodec {
         require(document.version == NoteBodyDocument.CURRENT_VERSION)
         validate(document)
         // Keep unprotected notes readable by existing version-1 clients.
-        val encodedVersion = if (document.isReadOnly || document.blocks.any { it.isReadOnly }) 2 else 1
+        val encodedVersion = when {
+            document.isPackingList -> 3
+            document.isReadOnly || document.blocks.any { it.isReadOnly } -> 2
+            else -> 1
+        }
         return json.encodeToString(
             JsonObject.serializer(),
             buildJsonObject {
                 put("version", encodedVersion)
+                if (document.isPackingList) put("packingList", true)
                 if (encodedVersion >= 2) put("readOnly", document.isReadOnly)
                 put(
                     "blocks",
@@ -59,9 +64,11 @@ object NoteBodyCodec {
         return runCatching {
             val root = json.parseToJsonElement(value).jsonObject
             val version = root.getValue("version").jsonPrimitive.int
-            require(version == 1 || version == NoteBodyDocument.CURRENT_VERSION)
+            require(version in 1..NoteBodyDocument.CURRENT_VERSION)
             val rootKeys = setOf("version", "blocks")
-            require(root.keys == rootKeys || version >= 2 && root.keys == rootKeys + "readOnly")
+            val allowedKeys = rootKeys + (if (version >= 2) setOf("readOnly") else emptySet()) +
+                (if (version >= 3) setOf("packingList") else emptySet())
+            require(root.keys.containsAll(rootKeys) && allowedKeys.containsAll(root.keys))
             val blocks = root.getValue("blocks").jsonArray.map { element ->
                 val block = element.jsonObject
                 val blockKeys = setOf("id", "type", "text", "checked")
@@ -77,6 +84,7 @@ object NoteBodyCodec {
             NoteBodyDocument(
                 blocks = blocks,
                 isReadOnly = version >= 2 && (root["readOnly"]?.jsonPrimitive?.boolean ?: false),
+                isPackingList = version >= 3 && (root["packingList"]?.jsonPrimitive?.boolean ?: false),
             ).also(::validate)
         }.getOrNull()
     }

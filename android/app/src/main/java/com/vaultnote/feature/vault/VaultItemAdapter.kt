@@ -84,7 +84,9 @@ internal class VaultItemAdapter(
             val colorStyle = item.color.toStyle()
             root.setBackgroundColor(colorStyle.resolveSurface(context))
             title.setTextColor(colorStyle.resolveTitle(context))
-            title.text = item.title.ifBlank { context.getString(R.string.untitled_note) }
+            title.text = item.title.ifBlank {
+                context.getString(if (row.section == VaultSection.PACKING) R.string.untitled_packing_list else R.string.untitled_note)
+            }
             bodyPreview.text = item.bodyPreview
             bodyPreview.visibility = if (item.bodyPreview.isBlank()) View.GONE else View.VISIBLE
             dateStatus.isVisible =
@@ -116,8 +118,8 @@ internal class VaultItemAdapter(
                 .format(dateFormatter)
             updatedAt.text = context.getString(R.string.updated_time, updatedDate)
 
-            if (row.section == VaultSection.ACTIVE) {
-                dragHandle.isVisible = true
+            if (row.section == VaultSection.ACTIVE || row.section == VaultSection.PACKING) {
+                dragHandle.isVisible = row.section == VaultSection.ACTIVE
                 dragHandle.setOnClickListener {}
                 dragHandle.setOnTouchListener { handle, event ->
                     when (event.actionMasked) {

@@ -17,11 +17,22 @@
         app:layout_constraintTop_toTopOf="parent">
 
         <TextView
+            android:id="@+id/section_title"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="@string/notes_title"
             android:textAppearance="?attr/textAppearanceHeadlineSmall" />
+
+        <ImageButton
+            android:id="@+id/open_search_button"
+            style="?attr/borderlessButtonStyle"
+            android:layout_width="@dimen/touch_target"
+            android:layout_height="@dimen/touch_target"
+            android:contentDescription="@string/search_title"
+            android:padding="12dp"
+            android:src="@drawable/ic_search"
+            app:tint="?attr/colorOnSurface" />
 
         <ImageButton
             android:id="@+id/open_calendar_button"

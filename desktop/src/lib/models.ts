@@ -1,4 +1,4 @@
-export type VaultSection = 'active' | 'archived' | 'trash';
+export type VaultSection = 'active' | 'packing' | 'archived' | 'trash';
 export type SyncStatus =
   | 'LOCAL_ONLY'
   | 'PENDING'
@@ -35,9 +35,10 @@ export interface NoteBlock {
 }
 
 export interface NoteBodyDocument {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   blocks: NoteBlock[];
   readOnly?: boolean;
+  packingList?: boolean;
 }
 
 export type DatedEntryType = 'REMINDER' | 'DEADLINE' | 'IMPORTANT_DATE' | 'RENEWAL';

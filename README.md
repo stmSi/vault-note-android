@@ -2,7 +2,7 @@
 
 Offline-first notes and files for Android, Windows, and Linux.
 
-Notes, checklists, attachments, search, reminders, and read-only protection.
+Notes, checklists, packing lists, attachments, search, reminders, and read-only protection.
 
 [Download Android APK](https://github.com/stmSi/vault-note-android/releases/latest/download/VaultNote-Android.apk) · [Desktop downloads and releases](https://github.com/stmSi/vault-note-android/releases/latest)
 

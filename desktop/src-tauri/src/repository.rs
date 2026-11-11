@@ -24,6 +24,7 @@ pub trait VaultRepository: Send + Sync {
     ) -> Result<Vec<VaultItemSummary>, AppError>;
     fn get_note(&self, id: &str) -> Result<VaultNote, AppError>;
     fn create_note(&self, title: &str, body: &str, now: i64) -> Result<String, AppError>;
+    fn create_packing_list(&self, now: i64) -> Result<String, AppError>;
     fn save_note(&self, id: &str, title: &str, body: &str, now: i64) -> Result<bool, AppError>;
     fn save_structured_note(
         &self,
@@ -78,6 +79,35 @@ pub struct SqliteVaultRepository {
 }
 
 impl SqliteVaultRepository {
+    fn create_item(
+        &self,
+        title: &str,
+        body: &str,
+        document_json: Option<&str>,
+        now: i64,
+    ) -> Result<String, AppError> {
+        self.database.with_connection(|connection| {
+            let transaction = connection.transaction()?;
+            let id = Uuid::new_v4().hyphenated().to_string();
+            transaction.execute(
+                r#"
+                INSERT INTO vault_items (
+                    id, type, color, title, body, ocr_text, is_pinned, is_favorite,
+                    is_archived, created_at, updated_at, local_revision, remote_revision,
+                    last_synced_revision, server_version_token, sync_status, deleted_at,
+                    conflict_origin_id, body_document_json
+                ) VALUES (?1, 'NOTE', 'DEFAULT', ?2, ?3, '', 0, 0, 0, ?4, ?4, 1,
+                          NULL, NULL, NULL, 'PENDING', NULL, NULL, ?5)
+                "#,
+                params![id, title, body, now, document_json],
+            )?;
+            refresh_fts(&transaction, &id, title, body)?;
+            enqueue_item_operation(&transaction, &id, 1, "UPSERT_ITEM", now)?;
+            transaction.commit()?;
+            Ok(id)
+        })
+    }
+
     pub fn new(database: Database) -> Self {
         Self { database }
     }
@@ -108,6 +138,19 @@ impl VaultRepository for SqliteVaultRepository {
                            )
                     FROM vault_items
                     WHERE type = 'NOTE' AND deleted_at IS NULL AND is_archived = 0
+                      AND instr(COALESCE(body_document_json, ''), '"packingList":true') = 0
+                    ORDER BY is_pinned DESC, updated_at DESC, id ASC
+                    LIMIT ?1
+                    "#
+                }
+                VaultSection::Packing => {
+                    r#"
+                    SELECT id, type, color, title, substr(body, 1, 180), is_pinned,
+                           is_favorite, is_archived, created_at, updated_at, sync_status, deleted_at,
+                           NULL, 0
+                    FROM vault_items
+                    WHERE type = 'NOTE' AND deleted_at IS NULL AND is_archived = 0
+                      AND instr(COALESCE(body_document_json, ''), '"packingList":true') > 0
                     ORDER BY is_pinned DESC, updated_at DESC, id ASC
                     LIMIT ?1
                     "#
@@ -174,26 +217,22 @@ impl VaultRepository for SqliteVaultRepository {
     }
 
     fn create_note(&self, title: &str, body: &str, now: i64) -> Result<String, AppError> {
-        self.database.with_connection(|connection| {
-            let transaction = connection.transaction()?;
-            let id = Uuid::new_v4().hyphenated().to_string();
-            transaction.execute(
-                r#"
-                INSERT INTO vault_items (
-                    id, type, color, title, body, ocr_text, is_pinned, is_favorite,
-                    is_archived, created_at, updated_at, local_revision, remote_revision,
-                    last_synced_revision, server_version_token, sync_status, deleted_at,
-                    conflict_origin_id
-                ) VALUES (?1, 'NOTE', 'DEFAULT', ?2, ?3, '', 0, 0, 0, ?4, ?4, 1,
-                          NULL, NULL, NULL, 'PENDING', NULL, NULL)
-                "#,
-                params![id, title, body, now],
-            )?;
-            refresh_fts(&transaction, &id, title, body)?;
-            enqueue_item_operation(&transaction, &id, 1, "UPSERT_ITEM", now)?;
-            transaction.commit()?;
-            Ok(id)
+        self.create_item(title, body, None, now)
+    }
+
+    fn create_packing_list(&self, now: i64) -> Result<String, AppError> {
+        let document = serde_json::json!({
+            "version": 3,
+            "packingList": true,
+            "blocks": [{
+                "id": Uuid::new_v4().hyphenated().to_string(),
+                "type": "CHECKLIST_ITEM",
+                "text": "",
+                "checked": false,
+            }],
         })
+        .to_string();
+        self.create_item("", "[ ] ", Some(&document), now)
     }
 
     fn save_note(&self, id: &str, title: &str, body: &str, now: i64) -> Result<bool, AppError> {
@@ -1607,6 +1646,98 @@ mod tests {
 
     fn repository() -> SqliteVaultRepository {
         SqliteVaultRepository::new(Database::open_in_memory().expect("database should open"))
+    }
+
+    #[test]
+    fn packing_lists_keep_checks_separate_and_survive_archive_trash_and_backup() {
+        let repository = repository();
+        let school_id = repository.create_packing_list(1_000).unwrap();
+        let business_id = repository.create_packing_list(1_001).unwrap();
+        let note_id = repository
+            .create_note("Regular note", "Text", 1_002)
+            .unwrap();
+        let mut document = repository
+            .get_note(&school_id)
+            .unwrap()
+            .body_document
+            .unwrap();
+        assert!(document.packing_list);
+        document.blocks[0].text = "Notebook".into();
+        document.blocks[0].checked = true;
+        let body = crate::validation::validate_note_document("School", &document).unwrap();
+        repository
+            .save_structured_note(
+                &school_id,
+                "School",
+                &body,
+                &serde_json::to_string(&document).unwrap(),
+                1_003,
+            )
+            .unwrap();
+        assert_eq!(
+            repository.list_items(VaultSection::Active, 100).unwrap()[0].id,
+            note_id
+        );
+        assert_eq!(
+            repository
+                .list_items(VaultSection::Packing, 100)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(
+            !repository
+                .get_note(&business_id)
+                .unwrap()
+                .body_document
+                .unwrap()
+                .blocks[0]
+                .checked
+        );
+        repository.set_archived(&school_id, true, 1_004).unwrap();
+        assert_eq!(
+            repository
+                .list_items(VaultSection::Packing, 100)
+                .unwrap()
+                .len(),
+            1
+        );
+        repository.set_archived(&school_id, false, 1_005).unwrap();
+        repository.move_to_trash(&school_id, 1_006).unwrap();
+        assert_eq!(
+            repository
+                .list_items(VaultSection::Packing, 100)
+                .unwrap()
+                .len(),
+            1
+        );
+        repository.restore(&school_id, 1_007).unwrap();
+        assert_eq!(
+            repository
+                .list_items(VaultSection::Packing, 100)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            repository.get_note(&school_id).unwrap().body_document,
+            Some(document.clone())
+        );
+        let restored = SqliteVaultRepository::new(Database::open_in_memory().unwrap());
+        restored
+            .restore_portable_snapshot(&repository.portable_snapshot().unwrap(), 2_000)
+            .unwrap();
+        assert_eq!(
+            restored
+                .list_items(VaultSection::Packing, 100)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            restored.get_note(&school_id).unwrap().body_document,
+            Some(document)
+        );
     }
 
     #[test]

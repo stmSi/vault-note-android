@@ -9,9 +9,9 @@
         android:icon="@drawable/ic_files"
         android:title="@string/files_title" />
     <item
-        android:id="@+id/navigation_search"
-        android:icon="@drawable/ic_search"
-        android:title="@string/search_title" />
+        android:id="@+id/navigation_packing"
+        android:icon="@drawable/ic_bag"
+        android:title="@string/packing_title" />
     <item
         android:id="@+id/navigation_archived"
         android:icon="@drawable/ic_archive"

@@ -15,6 +15,8 @@ import com.vaultnote.core.common.model.DatedEntryAlert
 import com.vaultnote.core.common.model.DatedEntryDraft
 import com.vaultnote.core.common.model.DatedEntryType
 import com.vaultnote.core.common.model.NoteBodyDocument
+import com.vaultnote.core.common.model.NoteBlock
+import com.vaultnote.core.common.model.NoteBlockType
 import com.vaultnote.core.common.model.RecurrenceRule
 import com.vaultnote.core.common.model.RecurrenceUnit
 import com.vaultnote.core.common.model.ItemSyncStatus
@@ -66,6 +68,22 @@ class RoomVaultRepository(
     private val syncOperationDao = database.syncOperationDao()
     private val searchDao = database.searchDao()
     private val datedEntryDao = database.datedEntryDao()
+
+    override fun observePackingLists(limit: Int, offset: Int): Flow<List<VaultItemSummary>> =
+        itemDao.observeActiveSummaries(
+            boundedListLimit(limit), offset.coerceAtLeast(0),
+            BODY_PREVIEW_CHARACTER_LIMIT, clock.nowEpochMillis(), packingOnly = true,
+        ).map { rows -> rows.map { it.toDomain() } }.flowOn(dispatchers.io)
+
+    override suspend fun createPackingList(): RepositoryResult<String> = createItem(
+        type = VaultItemType.NOTE,
+        title = "",
+        body = "[ ] ",
+        bodyDocument = NoteBodyDocument(
+            isPackingList = true,
+            blocks = listOf(NoteBlock(idGenerator.newId(), NoteBlockType.CHECKLIST_ITEM, "")),
+        ),
+    )
 
     override fun observeActiveItems(limit: Int, offset: Int): Flow<List<VaultItemSummary>> {
         val boundedLimit = boundedListLimit(limit)
@@ -146,6 +164,7 @@ class RoomVaultRepository(
         type: VaultItemType,
         title: String,
         body: String,
+        bodyDocument: NoteBodyDocument? = null,
     ): RepositoryResult<String> {
         validateNoteContentOffMain(title, body)?.let { return RepositoryResult.Failure(it) }
         return runMutation(OPERATION_CREATE_NOTE) {
@@ -171,6 +190,7 @@ class RoomVaultRepository(
                 syncStatus = ItemSyncStatus.PENDING,
                 deletedAt = null,
                 conflictOriginId = null,
+                bodyDocumentJson = bodyDocument?.let(NoteBodyCodec::encode),
             )
             itemDao.insert(item)
             updateSearchDocument(item = item, tags = emptyList())

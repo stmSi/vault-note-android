@@ -61,6 +61,9 @@ class VaultFragment : Fragment() {
             setHasFixedSize(true)
         }
         currentBinding.addNoteButton.setOnClickListener { viewModel.createNote() }
+        currentBinding.openSearchButton.setOnClickListener {
+            (activity as? MainNavigator)?.openSearch()
+        }
         currentBinding.openCalendarButton.setOnClickListener {
             (activity as? MainNavigator)?.openAgenda()
         }
@@ -115,10 +118,17 @@ class VaultFragment : Fragment() {
         currentBinding.emptyState.isVisible = state is VaultUiState.Empty
         currentBinding.errorState.isVisible = state is VaultUiState.Error
         currentBinding.noteList.isVisible = state is VaultUiState.Content
-        currentBinding.addNoteButton.isVisible = state.section == VaultSection.ACTIVE
-        currentBinding.archiveTrashToggle.isVisible = state.section != VaultSection.ACTIVE
-        currentBinding.notesHeader.isVisible = state.section == VaultSection.ACTIVE
-        if (state.section != VaultSection.ACTIVE) {
+        val isPacking = state.section == VaultSection.PACKING
+        val isActive = state.section == VaultSection.ACTIVE || isPacking
+        currentBinding.addNoteButton.isVisible = isActive
+        currentBinding.addNoteButton.contentDescription = getString(
+            if (isPacking) R.string.new_packing_list else R.string.new_note,
+        )
+        currentBinding.sectionTitle.setText(if (isPacking) R.string.packing_title else R.string.notes_title)
+        currentBinding.openCalendarButton.isVisible = !isPacking
+        currentBinding.archiveTrashToggle.isVisible = !isActive
+        currentBinding.notesHeader.isVisible = isActive
+        if (!isActive) {
             val checkedId = if (state.section == VaultSection.ARCHIVED) {
                 R.id.show_archived_button
             } else {
@@ -161,6 +171,7 @@ class VaultFragment : Fragment() {
             currentBinding.emptyTitle.setText(
                 when (state.section) {
                     VaultSection.ACTIVE -> R.string.empty_vault_title
+                    VaultSection.PACKING -> R.string.empty_packing_title
                     VaultSection.ARCHIVED -> R.string.empty_archived_title
                     VaultSection.TRASH -> R.string.empty_trash_title
                 },
@@ -168,6 +179,7 @@ class VaultFragment : Fragment() {
             currentBinding.emptyMessage.setText(
                 when (state.section) {
                     VaultSection.ACTIVE -> R.string.empty_vault_message
+                    VaultSection.PACKING -> R.string.empty_packing_message
                     VaultSection.ARCHIVED -> R.string.empty_archived_message
                     VaultSection.TRASH -> R.string.empty_trash_message
                 },
@@ -287,5 +299,5 @@ class VaultFragment : Fragment() {
                 ?: VaultSection.ACTIVE
     }
 
-    fun currentSection(): VaultSection = viewModel.uiState.value.section
+    fun currentSection(): VaultSection = viewModel.currentSection()
 }

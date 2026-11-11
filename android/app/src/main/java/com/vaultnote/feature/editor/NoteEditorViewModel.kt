@@ -137,6 +137,15 @@ internal class NoteEditorViewModel(
         updateDraft { it.copy(body = body, bodyDocument = document) }
     }
 
+    fun resetPackingChecks() {
+        val current = mutableUiState.value as? EditorUiState.Content ?: return
+        val document = current.draft.bodyDocument
+        if (!document.isPackingList) return
+        onBodyDocumentChanged(document.copy(blocks = document.blocks.map { block ->
+            if (block.isReadOnly) block else block.copy(isChecked = false)
+        }))
+    }
+
     fun undo() {
         val current = mutableUiState.value as? EditorUiState.Content ?: return
         if (current.isClosing || current.isProtectionSaving || current.draft.bodyDocument.isReadOnly) return

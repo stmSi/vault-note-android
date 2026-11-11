@@ -6,6 +6,12 @@ import {
 } from './noteBody';
 
 describe('note body documents', () => {
+  it('keeps packing list identity and an empty list when normalizing', () => {
+    const document = { version: 3 as const, packingList: true, blocks: [] };
+    expect(normalizeNoteBodyDocument(document)).toEqual(document);
+    expect(derivePlainText(document)).toBe('');
+  });
+
   it('preserves protected Android lines and their identities', () => {
     const document = {
       version: 2 as const,

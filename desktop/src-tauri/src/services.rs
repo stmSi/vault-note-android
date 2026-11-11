@@ -53,6 +53,11 @@ impl VaultService {
         self.repository.get_note(&id)
     }
 
+    pub fn create_packing_list(&self) -> Result<VaultNote, AppError> {
+        let id = self.repository.create_packing_list(now_epoch_millis()?)?;
+        self.repository.get_note(&id)
+    }
+
     pub fn save_note(&self, id: &str, title: &str, body: &str) -> Result<VaultNote, AppError> {
         validate_id(id)?;
         validate_note(title, body)?;

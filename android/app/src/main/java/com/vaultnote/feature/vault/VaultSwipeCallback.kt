@@ -44,7 +44,7 @@ internal class VaultSwipeCallback(
         val row = adapter.itemAt(viewHolder.bindingAdapterPosition)
             ?: return makeMovementFlags(0, 0)
         val swipeFlags = when (row.section) {
-            VaultSection.ACTIVE, VaultSection.ARCHIVED ->
+            VaultSection.ACTIVE, VaultSection.PACKING, VaultSection.ARCHIVED ->
                 ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT
             VaultSection.TRASH -> ItemTouchHelper.RIGHT
         }
@@ -89,7 +89,7 @@ internal class VaultSwipeCallback(
         }
         val change = when {
             direction == ItemTouchHelper.LEFT -> VaultItemChange.TRASHED
-            row.section == VaultSection.ACTIVE -> VaultItemChange.ARCHIVED
+            row.section == VaultSection.ACTIVE || row.section == VaultSection.PACKING -> VaultItemChange.ARCHIVED
             row.section == VaultSection.ARCHIVED -> VaultItemChange.RESTORED_FROM_ARCHIVE
             else -> VaultItemChange.RESTORED_FROM_TRASH
         }
@@ -136,7 +136,7 @@ internal class VaultSwipeCallback(
 
         val icon = when {
             isTrash -> trashIcon
-            row.section == VaultSection.ACTIVE -> archiveIcon
+            row.section == VaultSection.ACTIVE || row.section == VaultSection.PACKING -> archiveIcon
             else -> restoreIcon
         }
         val iconLeft = if (swipingRight) {

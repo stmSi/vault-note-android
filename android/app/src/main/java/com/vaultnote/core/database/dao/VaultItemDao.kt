@@ -151,6 +151,7 @@ interface VaultItemDao {
             ) AS has_overdue_entry
         FROM vault_items
         WHERE deleted_at IS NULL AND is_archived = 0 AND type = 'NOTE'
+          AND (instr(COALESCE(body_document_json, ''), '"packingList":true') > 0) = :packingOnly
         ORDER BY is_pinned DESC, sort_position ASC, updated_at DESC, id ASC
         LIMIT :limit
         OFFSET :offset
@@ -161,6 +162,7 @@ interface VaultItemDao {
         offset: Int,
         previewCharacterLimit: Int,
         now: Long,
+        packingOnly: Boolean = false,
     ): Flow<List<VaultItemSummaryWithTags>>
 
     @Transaction

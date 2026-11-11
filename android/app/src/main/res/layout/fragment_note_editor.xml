@@ -74,6 +74,33 @@
             android:textAppearance="?attr/textAppearanceHeadlineSmall" />
     </com.google.android.material.textfield.TextInputLayout>
 
+    <LinearLayout
+        android:id="@+id/packing_status_row"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="@dimen/space_m"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/title_container">
+
+        <TextView
+            android:id="@+id/packing_progress"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:accessibilityLiveRegion="polite"
+            android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/packing_reset_button"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/touch_target"
+            android:text="@string/packing_reset" />
+    </LinearLayout>
+
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/body_blocks"
         android:layout_width="0dp"
@@ -86,7 +113,7 @@
         app:layout_constraintBottom_toTopOf="@id/metadata_panel"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/title_container" />
+        app:layout_constraintTop_toBottomOf="@id/packing_status_row" />
 
     <LinearLayout
         android:id="@+id/metadata_panel"

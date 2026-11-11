@@ -1,5 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="packing_title">Packing</string>
+    <string name="new_packing_list">New packing list</string>
+    <string name="untitled_packing_list">Untitled packing list</string>
+    <string name="packing_name_hint">List name, e.g. School or Business</string>
+    <string name="empty_packing_title">Ready for your next trip?</string>
+    <string name="empty_packing_message">Tap + to create a list for School, Business, or any bag. Add what you need and check each item as you pack.</string>
+    <string name="packing_progress">%1$d of %2$d packed</string>
+    <string name="packing_add_item">Add item</string>
+    <string name="packing_remove_item">Remove item</string>
+    <string name="packing_item_hint">Item to bring</string>
+    <string name="packing_reset">Reset checks</string>
+    <string name="packing_reset_message">Uncheck the editable items in this list so you can pack again?</string>
     <string name="app_name">VaultNote</string>
     <string name="vault_title">Vault</string>
     <string name="notes_title">Notes</string>

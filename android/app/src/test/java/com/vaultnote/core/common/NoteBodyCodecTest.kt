@@ -11,6 +11,17 @@ import org.junit.Test
 
 class NoteBodyCodecTest {
     @Test
+    fun `packing list marker and individual checks survive Android and desktop encoding`() {
+        val desktopDocument = """{"version":3,"blocks":[{"id":"book","type":"CHECKLIST_ITEM","text":"Notebook","checked":true},{"id":"water","type":"CHECKLIST_ITEM","text":"Water","checked":false}],"packingList":true}"""
+        val document = requireNotNull(NoteBodyCodec.decodeOrNull(desktopDocument))
+        assertTrue(document.isPackingList)
+        assertEquals("[x] Notebook\n[ ] Water", NoteBodyCodec.derivePlainText(document))
+        assertEquals(document, NoteBodyCodec.decodeOrNull(NoteBodyCodec.encode(document)))
+        assertTrue(NoteBodyCodec.encode(document).contains("\"packingList\":true"))
+        assertFalse(requireNotNull(NoteBodyCodec.decodeOrNull("""{"version":2,"blocks":[]}""")).isPackingList)
+    }
+
+    @Test
     fun `read only settings survive encoding without changing searchable text`() {
         val document = NoteBodyDocument(
             blocks = listOf(NoteBlock("personal", NoteBlockType.PARAGRAPH, "Passport details", isReadOnly = true)),
@@ -89,7 +100,7 @@ class NoteBodyCodecTest {
 
     @Test
     fun `unknown versions duplicate IDs and paragraph checks are rejected`() {
-        assertNull(NoteBodyCodec.decodeOrNull("""{"version":3,"blocks":[]}"""))
+        assertNull(NoteBodyCodec.decodeOrNull("""{"version":4,"blocks":[]}"""))
         assertNull(
             NoteBodyCodec.decodeOrNull(
                 """

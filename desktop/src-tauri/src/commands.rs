@@ -169,6 +169,13 @@ pub fn create_note(state: State<'_, RuntimeState>) -> Result<VaultNote, CommandE
 }
 
 #[tauri::command]
+pub fn create_packing_list(state: State<'_, RuntimeState>) -> Result<VaultNote, CommandError> {
+    state
+        .with_services(|services| services.vault.create_packing_list())
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
 pub fn save_note(
     state: State<'_, RuntimeState>,
     request: SaveNoteRequest,

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VaultSection {
     Active,
+    Packing,
     Archived,
     Trash,
 }
@@ -54,6 +55,8 @@ pub struct NoteBodyDocument {
     pub blocks: Vec<NoteBlock>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub read_only: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub packing_list: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -14,6 +14,7 @@
     approveNearbyPairing,
     completeDatedEntry,
     createNote,
+    createPackingList,
     deleteDatedEntry,
     deleteAttachment,
     disconnectRelay,
@@ -1230,8 +1231,9 @@
     }
     try {
       searchQuery = '';
-      section = 'active';
-      const note = await createNote();
+      const packing = section === 'packing';
+      section = packing ? 'packing' : 'active';
+      const note = await (packing ? createPackingList() : createNote());
       installNote(note);
       await Promise.all([
         loadVisibleItems(false),
@@ -1239,7 +1241,7 @@
         refreshReminderSchedule(false),
       ]);
       requestAnimationFrame(() => titleInput?.focus());
-      showFeedback('New note ready');
+      showFeedback(packing ? 'New packing list ready' : 'New note ready');
     } catch (error) {
       actionError = commandError(error);
     }
@@ -1939,13 +1941,16 @@
 
   <main class="workspace">
     <aside class="sidebar" aria-label="Vault navigation">
-      <button class="new-note-button" title="New note (Ctrl+N)" onclick={newNote}>
-        <span>+ New note</span><kbd>Ctrl N</kbd>
+      <button class="new-note-button" title={section === 'packing' ? 'New packing list (Ctrl+N)' : 'New note (Ctrl+N)'} onclick={newNote}>
+        <span>{section === 'packing' ? '+ New packing list' : '+ New note'}</span><kbd>Ctrl N</kbd>
       </button>
 
       <nav class="section-tabs" aria-label="Note sections">
         <button class:active={section === 'active'} onclick={() => chooseSection('active')}>
           Notes
+        </button>
+        <button class:active={section === 'packing'} onclick={() => chooseSection('packing')}>
+          Packing
         </button>
         <button class:active={section === 'archived'} onclick={() => chooseSection('archived')}>
           Archive
@@ -1976,7 +1981,7 @@
         {:else if listState.kind === 'empty'}
           <div class="state-card">
             <p class="state-title">Nothing here yet</p>
-            <p>{searchQuery.trim() ? 'Try a different search.' : 'Create a note to get started.'}</p>
+            <p>{searchQuery.trim() ? 'Try a different search.' : section === 'packing' ? 'Create a list for School, Business, or any bag.' : 'Create a note to get started.'}</p>
           </div>
         {:else if listState.kind === 'error'}
           <div class="state-card error-state" role="alert">
@@ -1992,7 +1997,7 @@
               onclick={() => openNote(display.item.id)}
             >
               <span class="note-title-line">
-                <strong>{display.item.title || 'Untitled note'}</strong>
+                <strong>{display.item.title || (section === 'packing' ? 'Untitled packing list' : 'Untitled note')}</strong>
                 <span class="row-flags" aria-label="Note flags">
                   {display.item.isPinned ? '●' : ''}{display.item.isFavorite ? '★' : ''}
                 </span>
@@ -2018,8 +2023,8 @@
       {#if selected === null}
         <div class="editor-empty">
           <div class="empty-glyph" aria-hidden="true">✦</div>
-          <h2>Select a note</h2>
-          <p>Notes are stored locally in SQLite and remain available offline.</p>
+          <h2>{section === 'packing' ? 'Pack without forgetting' : 'Select a note'}</h2>
+          <p>{section === 'packing' ? 'Create a list, type what you need, and check each item as you pack.' : 'Notes are stored locally in SQLite and remain available offline.'}</p>
         </div>
       {:else}
         <header class="editor-toolbar">
@@ -2064,8 +2069,8 @@
           <input
             bind:this={titleInput}
             class="title-input"
-            aria-label="Note title"
-            placeholder="Untitled note"
+            aria-label={editorDocument.packingList ? 'Packing list name' : 'Note title'}
+            placeholder={editorDocument.packingList ? 'List name, e.g. School or Business' : 'Untitled note'}
             maxlength="500"
             readonly={selected.deletedAtEpochMillis !== null || editorDocument.readOnly}
             bind:value={editorTitle}

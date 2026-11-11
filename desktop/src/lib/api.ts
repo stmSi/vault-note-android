@@ -38,6 +38,10 @@ export function createNote(): Promise<VaultNote> {
   return invoke('create_note');
 }
 
+export function createPackingList(): Promise<VaultNote> {
+  return invoke('create_packing_list');
+}
+
 export function saveNote(id: string, title: string, body: string): Promise<VaultNote> {
   return invoke('save_note', { request: { id, title, body } });
 }

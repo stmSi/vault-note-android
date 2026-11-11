@@ -41,6 +41,34 @@ class NoteEditorViewModelTest {
     val mainDispatcherRule = MainDispatcherRule()
 
     @Test
+    fun `packing reset retains items skips protected checks and supports undo and persistence`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val document = NoteBodyDocument(isPackingList = true, blocks = listOf(
+                NoteBlock("book", NoteBlockType.CHECKLIST_ITEM, "Notebook", isChecked = true),
+                NoteBlock("keys", NoteBlockType.CHECKLIST_ITEM, "Keys", isChecked = true, isReadOnly = true),
+                NoteBlock("water", NoteBlockType.CHECKLIST_ITEM, "Water"),
+            ))
+            val repository = EditorFakeRepository(baseNote().copy(
+                title = "School", body = NoteBodyCodec.derivePlainText(document), bodyDocument = document,
+            ))
+            val viewModel = NoteEditorViewModel(ITEM_ID, repository)
+            runCurrent()
+            viewModel.resetPackingChecks()
+            val reset = (viewModel.uiState.value as EditorUiState.Content).draft.bodyDocument
+            assertEquals(listOf(false, true, false), reset.blocks.map { it.isChecked })
+            assertEquals(document.blocks.map { it.text }, reset.blocks.map { it.text })
+            assertTrue(reset.isPackingList)
+            viewModel.undo()
+            assertEquals(document, (viewModel.uiState.value as EditorUiState.Content).draft.bodyDocument)
+            viewModel.redo()
+            val event = async { viewModel.events.first() }
+            viewModel.requestClose()
+            runCurrent()
+            assertEquals(EditorEvent.NavigateBack, event.await())
+            assertEquals(reset, repository.currentNote().bodyDocument)
+        }
+
+    @Test
     fun `closing disables draft mutation and flushes the accepted snapshot`() =
         runTest(mainDispatcherRule.dispatcher) {
             val repository = EditorFakeRepository()

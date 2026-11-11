@@ -220,7 +220,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
     override fun openSearch() {
         showPrimaryDestination(
             fragment = SearchFragment.newInstance(),
-            navigationItemId = R.id.navigation_search,
+            navigationItemId = R.id.navigation_notes,
         )
     }
 
@@ -534,7 +534,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
                     R.id.navigation_files,
                 )
                 R.id.navigation_archived -> showVaultSection(VaultSection.ARCHIVED)
-                R.id.navigation_search -> openSearch()
+                R.id.navigation_packing -> showVaultSection(VaultSection.PACKING)
                 R.id.navigation_settings -> openSecuritySettings()
                 else -> return@setOnItemSelectedListener false
             }
@@ -602,6 +602,7 @@ class MainActivity : AppCompatActivity(), MainNavigator {
     private fun showVaultSection(section: VaultSection) {
         val itemId = when (section) {
             VaultSection.ACTIVE -> R.id.navigation_notes
+            VaultSection.PACKING -> R.id.navigation_packing
             VaultSection.ARCHIVED -> R.id.navigation_archived
             VaultSection.TRASH -> R.id.navigation_archived
         }
@@ -651,11 +652,12 @@ class MainActivity : AppCompatActivity(), MainNavigator {
         val selectedId = when (current) {
             is VaultFragment -> when (current.currentSection()) {
                 VaultSection.ACTIVE -> R.id.navigation_notes
+                VaultSection.PACKING -> R.id.navigation_packing
                 VaultSection.ARCHIVED -> R.id.navigation_archived
                 VaultSection.TRASH -> R.id.navigation_archived
             }
             is FilesFragment -> R.id.navigation_files
-            is SearchFragment -> R.id.navigation_search
+            is SearchFragment -> R.id.navigation_notes
             is SecuritySettingsFragment -> R.id.navigation_settings
             else -> null
         }

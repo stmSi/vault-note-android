@@ -69,6 +69,39 @@ class RoomVaultRepositoryTest {
     }
 
     @Test
+    fun `packing lists persist independent checks and stay separate from notes through restore`() = runBlocking {
+        val schoolId = repository.createPackingList().successValue()
+        val businessId = repository.createPackingList().successValue()
+        val noteId = repository.createNote("Regular note", "Text").successValue()
+        val school = requireNotNull(repository.observeNote(schoolId).first()?.bodyDocument)
+        assertTrue(school.isPackingList)
+        assertEquals(NoteBlockType.CHECKLIST_ITEM, school.blocks.single().type)
+        val packed = school.copy(blocks = listOf(
+            school.blocks.single().copy(text = "Notebook", isChecked = true),
+            NoteBlock("water", NoteBlockType.CHECKLIST_ITEM, "Water"),
+        ))
+        repository.saveStructuredNote(schoolId, "School", packed, emptyList()).requireSuccess()
+        val business = requireNotNull(repository.observeNote(businessId).first()?.bodyDocument)
+        repository.saveStructuredNote(businessId, "Business", business, emptyList()).requireSuccess()
+
+        assertEquals(setOf(schoolId, businessId), repository.observePackingLists().first().map { it.id }.toSet())
+        assertEquals(listOf(noteId), repository.observeActiveItems().first().map { it.id })
+        assertEquals(packed, repository.observeNote(schoolId).first()?.bodyDocument)
+        assertFalse(requireNotNull(repository.observeNote(businessId).first()?.bodyDocument).blocks.single().isChecked)
+        assertEquals(1, repository.observePackingLists(limit = 1, offset = 1).first().size)
+
+        repository.setArchived(schoolId, true).requireSuccess()
+        assertEquals(listOf(businessId), repository.observePackingLists().first().map { it.id })
+        repository.setArchived(schoolId, false).requireSuccess()
+        repository.moveToTrash(schoolId).requireSuccess()
+        assertEquals(listOf(businessId), repository.observePackingLists().first().map { it.id })
+        repository.restore(schoolId).requireSuccess()
+        assertEquals(packed, repository.observeNote(schoolId).first()?.bodyDocument)
+        assertEquals(2, repository.observePackingLists().first().size)
+        assertNotNull(database.syncOperationDao().getByDedupeKey("item:$schoolId"))
+    }
+
+    @Test
     fun `read only note rejects content changes until explicitly unlocked`() = runBlocking {
         val id = repository.createNote("Personal info", "Original").successValue()
         repository.setNoteReadOnly(id, true).requireSuccess()

@@ -308,6 +308,14 @@ class NoteEditorFragment : Fragment() {
         currentBinding.addChecklistButton.setOnClickListener {
             noteBlockAdapter.addBlock(NoteBlockType.CHECKLIST_ITEM)
         }
+        currentBinding.packingResetButton.setOnClickListener {
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(R.string.packing_reset)
+                .setMessage(R.string.packing_reset_message)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(R.string.packing_reset) { _, _ -> viewModel.resetPackingChecks() }
+                .show()
+        }
         currentBinding.tagsButton.setOnClickListener {
             toggleMetadataPanel(currentBinding, showTags = true)
         }
@@ -464,7 +472,7 @@ class NoteEditorFragment : Fragment() {
         }
 
         currentBinding.toolbar.title = state.draft.title.ifBlank {
-            getString(R.string.untitled_note)
+            getString(if (state.draft.bodyDocument.isPackingList) R.string.untitled_packing_list else R.string.untitled_note)
         }
         val document = state.draft.bodyDocument
         val protectedLines = document.blocks.count { it.isReadOnly }
@@ -497,6 +505,20 @@ class NoteEditorFragment : Fragment() {
             state.saveStatus == EditorSaveStatus.FAILED
         val interactionEnabled = !state.isClosing && !state.isProtectionSaving
         val editorEnabled = interactionEnabled && !document.isReadOnly
+        currentBinding.packingStatusRow.isVisible = document.isPackingList
+        val packingItems = document.blocks.filter { it.type == NoteBlockType.CHECKLIST_ITEM && it.text.isNotBlank() }
+        currentBinding.packingProgress.text = getString(
+            R.string.packing_progress, packingItems.count { it.isChecked }, packingItems.size,
+        )
+        currentBinding.packingResetButton.isEnabled = editorEnabled &&
+            document.blocks.any { it.isChecked && !it.isReadOnly }
+        currentBinding.titleContainer.hint = getString(
+            if (document.isPackingList) R.string.packing_name_hint else R.string.note_title_hint,
+        )
+        currentBinding.addParagraphButton.isVisible = !document.isPackingList
+        currentBinding.addChecklistButton.setText(
+            if (document.isPackingList) R.string.packing_add_item else R.string.add_checklist_item,
+        )
         currentBinding.undoButton.isEnabled = editorEnabled && state.canUndo
         currentBinding.redoButton.isEnabled = editorEnabled && state.canRedo
         currentBinding.titleInput.isEnabled = editorEnabled

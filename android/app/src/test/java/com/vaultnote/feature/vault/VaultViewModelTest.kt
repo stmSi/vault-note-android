@@ -35,6 +35,36 @@ class VaultViewModelTest {
     val mainDispatcherRule = VaultMainDispatcherRule()
 
     @Test
+    fun `packing selection is immediate and creates packing lists on restored pages`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val savedState = SavedStateHandle()
+            val repository = WindowedFakeRepository(itemCount = 150)
+            val viewModel = VaultViewModel(repository, savedState)
+            viewModel.selectSection(VaultSection.PACKING)
+            // Navigation reads this before the screen starts collecting its list.
+            assertEquals(VaultSection.PACKING, viewModel.currentSection())
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+                viewModel.uiState.collect {}
+            }
+            runCurrent()
+            val content = viewModel.uiState.value as VaultUiState.Content
+            assertEquals(VaultSection.PACKING, content.section)
+            assertEquals(true, content.hasNextPage)
+            viewModel.nextPage()
+            runCurrent()
+            assertEquals(50, (viewModel.uiState.value as VaultUiState.Content).items.size)
+            val restored = VaultViewModel(repository, savedState)
+            assertEquals(VaultSection.PACKING, restored.currentSection())
+            val events = mutableListOf<VaultEvent>()
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+                restored.events.collect(events::add)
+            }
+            restored.createNote()
+            runCurrent()
+            assertEquals(VaultEvent.OpenEditor("new-packing-list"), events.single())
+        }
+
+    @Test
     fun `section and bounded page survive ViewModel recreation`() =
         runTest(mainDispatcherRule.dispatcher) {
             val savedState = SavedStateHandle(
@@ -146,6 +176,12 @@ class VaultViewModelTest {
 
         override fun observeActiveItems(limit: Int, offset: Int): Flow<List<VaultItemSummary>> =
             window(limit, offset)
+
+        override fun observePackingLists(limit: Int, offset: Int): Flow<List<VaultItemSummary>> =
+            window(limit, offset)
+
+        override suspend fun createPackingList(): RepositoryResult<String> =
+            RepositoryResult.Success("new-packing-list")
 
         override fun observeArchivedItems(limit: Int, offset: Int): Flow<List<VaultItemSummary>> =
             window(limit, offset)

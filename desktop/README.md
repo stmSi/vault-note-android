@@ -4,6 +4,7 @@ This directory contains the Tauri 2 desktop client. Rust owns persistence, SQL, 
 
 ## Included
 
+- A Packing tab with separate named lists, per-item checkboxes, packed counts, item removal, and confirmed reset for reuse. Packing lists save in the vault and participate in backup and sync; both clients understand the version-3 note document marker.
 - Active, archived, and trashed note lists with loading, empty, content, and error states.
 - Plain-text note creation/editing with serialized 400 ms autosave and explicit retry state.
 - Pin, favorite, archive, soft-delete, restore, attachment import/export, and filename search.

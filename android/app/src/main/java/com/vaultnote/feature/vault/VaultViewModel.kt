@@ -30,6 +30,7 @@ import kotlinx.coroutines.launch
 
 enum class VaultSection {
     ACTIVE,
+    PACKING,
     ARCHIVED,
     TRASH,
 }
@@ -136,6 +137,8 @@ internal class VaultViewModel(
         updateQuery(current.copy(section = section, pageIndex = 0))
     }
 
+    fun currentSection(): VaultSection = queryState.value.section
+
     fun nextPage() {
         val current = uiState.value as? VaultUiState.Content ?: return
         if (!current.hasNextPage) return
@@ -150,11 +153,13 @@ internal class VaultViewModel(
     }
 
     fun createNote() {
-        if (queryState.value.section != VaultSection.ACTIVE) return
+        val section = queryState.value.section
+        if (section != VaultSection.ACTIVE && section != VaultSection.PACKING) return
         if (isCreatingNote) return
         isCreatingNote = true
         viewModelScope.launch {
-            when (val result = repository.createNote()) {
+            val created = if (section == VaultSection.PACKING) repository.createPackingList() else repository.createNote()
+            when (val result = created) {
                 is RepositoryResult.Success -> {
                     result.warning?.let { mutableEvents.send(VaultEvent.ShowError(it)) }
                     mutableEvents.send(VaultEvent.OpenEditor(result.value))
@@ -232,7 +237,7 @@ internal class VaultViewModel(
 
     fun restore(itemId: String, source: VaultSection) {
         val operation: suspend () -> RepositoryResult<Unit> = when (source) {
-            VaultSection.ACTIVE -> return
+            VaultSection.ACTIVE, VaultSection.PACKING -> return
             VaultSection.ARCHIVED -> ({ repository.setArchived(itemId, false) })
             VaultSection.TRASH -> ({ repository.restore(itemId) })
         }
@@ -287,6 +292,7 @@ internal class VaultViewModel(
             .toInt()
         val source = when (section) {
             VaultSection.ACTIVE -> repository.observeActiveItems(queryLimit, offset)
+            VaultSection.PACKING -> repository.observePackingLists(queryLimit, offset)
             VaultSection.ARCHIVED -> repository.observeArchivedItems(queryLimit, offset)
             VaultSection.TRASH -> repository.observeTrashItems(queryLimit, offset)
         }

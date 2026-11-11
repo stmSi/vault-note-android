@@ -27,6 +27,7 @@ internal class NoteBlockAdapter(
     private val blocks = mutableListOf<NoteBlock>()
     private var pendingFocus: PendingFocus? = null
     private var documentReadOnly = false
+    private var packingList = false
     private var interactionEnabled = true
 
     init {
@@ -53,8 +54,10 @@ internal class NoteBlockAdapter(
     }
 
     fun submitDocument(document: NoteBodyDocument) {
-        if (blocks == document.blocks && documentReadOnly == document.isReadOnly) return
+        if (blocks == document.blocks && documentReadOnly == document.isReadOnly &&
+            packingList == document.isPackingList) return
         documentReadOnly = document.isReadOnly
+        packingList = document.isPackingList
         blocks.clear()
         blocks.addAll(document.blocks)
         notifyDataSetChanged()
@@ -108,7 +111,7 @@ internal class NoteBlockAdapter(
         val original = blocks[index]
         blocks[index] = original.copy(text = before)
         val nextType = if (
-            original.type == NoteBlockType.CHECKLIST_ITEM && before.isEmpty() && after.isEmpty()
+            !packingList && original.type == NoteBlockType.CHECKLIST_ITEM && before.isEmpty() && after.isEmpty()
         ) {
             NoteBlockType.PARAGRAPH
         } else {
@@ -145,7 +148,18 @@ internal class NoteBlockAdapter(
     }
 
     private fun dispatchDocument() {
-        onDocumentChanged(NoteBodyDocument(blocks = blocks.toList(), isReadOnly = documentReadOnly))
+        onDocumentChanged(NoteBodyDocument(
+            blocks = blocks.toList(), isReadOnly = documentReadOnly, isPackingList = packingList,
+        ))
+    }
+
+    private fun removePackingItem(blockId: String) {
+        if (!packingList || !canEdit(blockId)) return
+        val index = blocks.indexOfFirst { it.id == blockId }
+        if (index < 0) return
+        blocks.removeAt(index)
+        notifyItemRemoved(index)
+        dispatchDocument()
     }
 
     inner class Holder(
@@ -168,7 +182,9 @@ internal class NoteBlockAdapter(
             rendering = true
             text.setText(block.text)
             text.setSelection(text.text?.length ?: 0)
-            text.hint = if (showBodyHint) {
+            text.hint = if (packingList) {
+                text.context.getString(com.vaultnote.R.string.packing_item_hint)
+            } else if (showBodyHint) {
                 text.context.getString(com.vaultnote.R.string.note_body_hint)
             } else {
                 null
@@ -182,6 +198,12 @@ internal class NoteBlockAdapter(
             text.isCursorVisible = editable
             text.showSoftInputOnFocus = editable
             checkBox.isEnabled = editable
+            checkBox.contentDescription = block.text.ifBlank {
+                text.context.getString(com.vaultnote.R.string.toggle_checklist_item)
+            }
+            removeItemButton.visibility = if (packingList) View.VISIBLE else View.GONE
+            removeItemButton.isEnabled = editable
+            removeItemButton.setOnClickListener { boundId?.let(::removePackingItem) }
             readOnlyButton.setImageResource(
                 if (block.isReadOnly) com.vaultnote.R.drawable.ic_lock else com.vaultnote.R.drawable.ic_lock_open,
             )
@@ -262,6 +284,7 @@ internal class NoteBlockAdapter(
             binding.text.onFocusChangeListener = null
             binding.text.setOnKeyListener(null)
             binding.readOnlyButton.setOnClickListener(null)
+            binding.removeItemButton.setOnClickListener(null)
             boundId = null
         }
     }

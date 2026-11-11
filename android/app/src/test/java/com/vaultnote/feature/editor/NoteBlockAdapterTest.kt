@@ -26,6 +26,32 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class NoteBlockAdapterTest {
     @Test
+    fun `packing edits checks removal and additions preserve list identity`() {
+        var latest: NoteBodyDocument? = null
+        val (recyclerView, adapter) = createEditor { latest = it }
+        adapter.submitDocument(NoteBodyDocument(isPackingList = true, blocks = listOf(
+            NoteBlock("book", NoteBlockType.CHECKLIST_ITEM, "Notebook"),
+            NoteBlock("water", NoteBlockType.CHECKLIST_ITEM, "Water"),
+        )))
+        layout(recyclerView)
+        val bookRow = recyclerView.findViewHolderForAdapterPosition(0)!!.itemView
+        bookRow.findViewById<android.widget.CheckBox>(R.id.check_box).performClick()
+        assertEquals(listOf(true, false), requireNotNull(latest).blocks.map { it.isChecked })
+        editorAt(recyclerView, 1).setText("Water bottle")
+        assertTrue(requireNotNull(latest).isPackingList)
+        assertEquals("Water bottle", requireNotNull(latest).blocks[1].text)
+        bookRow.findViewById<View>(R.id.remove_item_button).performClick()
+        layout(recyclerView)
+        assertEquals("water", requireNotNull(latest).blocks.single().id)
+        adapter.addBlock(NoteBlockType.CHECKLIST_ITEM)
+        layout(recyclerView)
+        editorAt(recyclerView, 1).setText("\n")
+        layout(recyclerView)
+        assertTrue(requireNotNull(latest).isPackingList)
+        assertTrue(requireNotNull(latest).blocks.all { it.type == NoteBlockType.CHECKLIST_ITEM })
+    }
+
+    @Test
     fun `protected line blocks text and checklist changes while new lines remain editable`() {
         val (recyclerView, adapter) = createEditor()
         val document = NoteBodyDocument(blocks = listOf(
@@ -85,11 +111,11 @@ class NoteBlockAdapterTest {
         assertEquals("Passport", editorAt(recyclerView, 2).text.toString())
     }
 
-    private fun createEditor(): Pair<RecyclerView, NoteBlockAdapter> {
+    private fun createEditor(onChanged: (NoteBodyDocument) -> Unit = {}): Pair<RecyclerView, NoteBlockAdapter> {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val context = ContextThemeWrapper(activity, R.style.Theme_VaultNote)
         val recyclerView = RecyclerView(context).apply { layoutManager = LinearLayoutManager(context) }
-        val adapter = NoteBlockAdapter({}, {}, { recyclerView.scrollToPosition(it) })
+        val adapter = NoteBlockAdapter(onChanged, {}, { recyclerView.scrollToPosition(it) })
         recyclerView.adapter = adapter
         activity.setContentView(recyclerView)
         return recyclerView to adapter

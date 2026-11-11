@@ -16,6 +16,14 @@ import com.vaultnote.core.common.NoteBodyCodec
 import com.vaultnote.core.common.AppError
 
 interface VaultRepository {
+    fun observePackingLists(
+        limit: Int = DEFAULT_ACTIVE_ITEM_LIMIT,
+        offset: Int = 0,
+    ): Flow<List<VaultItemSummary>> = flowOf(emptyList())
+
+    suspend fun createPackingList(): RepositoryResult<String> =
+        RepositoryResult.Failure(AppError.InvalidInput("packingList", "unsupported"))
+
     fun observeActiveItems(
         limit: Int = DEFAULT_ACTIVE_ITEM_LIMIT,
         offset: Int = 0,

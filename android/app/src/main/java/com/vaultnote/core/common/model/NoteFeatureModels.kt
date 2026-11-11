@@ -8,9 +8,10 @@ data class NoteBodyDocument(
     val version: Int = CURRENT_VERSION,
     val blocks: List<NoteBlock>,
     val isReadOnly: Boolean = false,
+    val isPackingList: Boolean = false,
 ) {
     companion object {
-        const val CURRENT_VERSION: Int = 2
+        const val CURRENT_VERSION: Int = 3
     }
 }
 
